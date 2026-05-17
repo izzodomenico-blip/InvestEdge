@@ -18,6 +18,14 @@ def _csv(value: str | None, default: list[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _unique(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -25,6 +33,7 @@ class Settings:
     api_version: str
     database_path: Path
     cors_origins: list[str]
+    cors_origin_regex: str | None = None
 
     @property
     def database_url(self) -> str:
@@ -35,15 +44,22 @@ class Settings:
         db_path = Path(os.getenv("INVESTEDGE_DB_PATH", ROOT_DIR / "data" / "investedge.db"))
         if not db_path.is_absolute():
             db_path = ROOT_DIR / db_path
+        app_env = os.getenv("INVESTEDGE_ENV", "local")
+        local_dev_origins = [
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:5174",
+            "http://localhost:5174",
+        ]
+        configured_origins = _csv(os.getenv("INVESTEDGE_CORS_ORIGINS"), [])
         return cls(
             app_name=os.getenv("INVESTEDGE_APP_NAME", "InvestEdge API"),
-            app_env=os.getenv("INVESTEDGE_ENV", "local"),
+            app_env=app_env,
             api_version=os.getenv("INVESTEDGE_API_VERSION", "0.1.0"),
             database_path=db_path,
-            cors_origins=_csv(
-                os.getenv("INVESTEDGE_CORS_ORIGINS"),
-                ["http://localhost:5173", "http://127.0.0.1:5173"],
-            ),
+            cors_origins=_unique([*local_dev_origins, *configured_origins]),
+            cors_origin_regex=os.getenv("INVESTEDGE_CORS_ORIGIN_REGEX")
+            or (r"^http://(localhost|127\.0\.0\.1):517\d+$" if app_env == "local" else None),
         )
 
 

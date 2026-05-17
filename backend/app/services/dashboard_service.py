@@ -49,6 +49,15 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
     assets = list_assets(connection)
     portfolio_summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
     snapshots = portfolio_engine.list_snapshots(connection)[-20:]
+    latest_backtest_row = connection.execute(
+        """
+        SELECT id, name, strategy_name, total_return_percent, max_drawdown,
+            alpha_vs_benchmark, final_value, created_at
+        FROM backtest_runs
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
     sorted_by_score = sorted(
         [asset for asset in assets if asset.score is not None],
         key=lambda asset: asset.score or 0,
@@ -99,4 +108,5 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
             }
             for snapshot in snapshots
         ],
+        latest_backtest=dict(latest_backtest_row) if latest_backtest_row else None,
     )

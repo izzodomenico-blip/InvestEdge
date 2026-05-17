@@ -2,6 +2,10 @@ const API_URL =
   import.meta.env.VITE_API_BASE_URL ??
   "http://127.0.0.1:8001";
 
+if (import.meta.env.DEV) {
+  console.info("[InvestEdge] API_URL", API_URL);
+}
+
 export type Signal = "STRONG_BUY" | "BUY" | "HOLD" | "REDUCE" | "SELL";
 
 export type Reason = {
@@ -64,6 +68,7 @@ export type DashboardResponse = {
   top_assets: Asset[];
   weakest_assets: Asset[];
   risky_assets: Asset[];
+  latest_backtest: BacktestSummary | null;
 };
 
 export type PortfolioPosition = {
@@ -220,6 +225,105 @@ export type TechnicalAnalysis = {
   technical_summary: string;
 };
 
+export type BacktestStrategy = "SCORE_THRESHOLD" | "BUY_AND_HOLD" | "TOP_N_SCORE";
+export type RebalanceFrequency = "DAILY" | "WEEKLY" | "MONTHLY";
+
+export type BacktestRunInput = {
+  name: string;
+  strategy_name: BacktestStrategy;
+  symbols: string[];
+  initial_cash: number;
+  start_date: string;
+  end_date: string;
+  benchmark_symbol: string;
+  buy_threshold: number;
+  sell_threshold: number;
+  max_asset_weight: number;
+  fee_percent: number;
+  stop_loss_percent?: number;
+  take_profit_percent?: number;
+  rebalance_frequency: RebalanceFrequency;
+  top_n?: number;
+};
+
+export type BacktestSummary = {
+  id: number | null;
+  name: string;
+  strategy_name: string;
+  initial_cash: number;
+  start_date: string;
+  end_date: string;
+  benchmark_symbol: string | null;
+  buy_threshold: number;
+  sell_threshold: number;
+  max_asset_weight: number;
+  fee_percent: number;
+  stop_loss_percent: number | null;
+  take_profit_percent: number | null;
+  rebalance_frequency: string;
+  total_return_percent: number;
+  cagr: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  profit_factor: number;
+  total_trades: number;
+  final_value: number;
+  benchmark_return_percent: number;
+  alpha_vs_benchmark: number;
+  created_at: string | null;
+};
+
+export type BacktestEquityPoint = {
+  id: number | null;
+  date: string;
+  portfolio_value: number;
+  cash: number;
+  invested_value: number;
+  drawdown_percent: number;
+  benchmark_value: number | null;
+  benchmark_return_percent: number | null;
+};
+
+export type BacktestTrade = {
+  id: number | null;
+  date: string;
+  symbol: string;
+  order_type: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  fees: number;
+  gross_amount: number;
+  net_amount: number;
+  pnl: number;
+  reason: string | null;
+};
+
+export type BacktestPosition = {
+  id: number | null;
+  symbol: string;
+  quantity: number;
+  average_price: number;
+  final_price: number;
+  final_value: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+};
+
+export type BacktestResult = {
+  backtest_id: number;
+  summary: BacktestSummary;
+  equity_curve: BacktestEquityPoint[];
+  trades: BacktestTrade[];
+  final_positions: BacktestPosition[];
+  benchmark_comparison: {
+    benchmark_symbol: string | null;
+    benchmark_return_percent: number;
+    alpha_vs_benchmark: number;
+    benchmark_final_value: number;
+  };
+};
+
 async function parseError(response: Response) {
   try {
     const payload = await response.json();
@@ -232,8 +336,22 @@ async function parseError(response: Response) {
   return `API request failed: ${response.status}`;
 }
 
+function fetchErrorMessage(path: string, error: unknown) {
+  const targetUrl = `${API_URL}${path}`;
+  const base = error instanceof Error ? error.message : "Failed to fetch";
+  if (import.meta.env.DEV) {
+    return `${base}. API_URL=${API_URL}; request=${targetUrl}; origin=${window.location.origin}`;
+  }
+  return base;
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`);
+  } catch (error) {
+    throw new Error(fetchErrorMessage(path, error));
+  }
 
   if (!response.ok) {
     throw new Error(await parseError(response));
@@ -243,11 +361,33 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(fetchErrorMessage(path, error));
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "DELETE",
+    });
+  } catch (error) {
+    throw new Error(fetchErrorMessage(path, error));
+  }
 
   if (!response.ok) {
     throw new Error(await parseError(response));

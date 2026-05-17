@@ -152,6 +152,77 @@ CREATE TABLE IF NOT EXISTS api_cache (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    initial_cash REAL NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    benchmark_symbol TEXT,
+    buy_threshold REAL NOT NULL DEFAULT 70,
+    sell_threshold REAL NOT NULL DEFAULT 40,
+    max_asset_weight REAL NOT NULL DEFAULT 0.15,
+    fee_percent REAL NOT NULL DEFAULT 0.1,
+    stop_loss_percent REAL,
+    take_profit_percent REAL,
+    rebalance_frequency TEXT NOT NULL DEFAULT 'WEEKLY',
+    total_return_percent REAL NOT NULL DEFAULT 0,
+    cagr REAL NOT NULL DEFAULT 0,
+    max_drawdown REAL NOT NULL DEFAULT 0,
+    sharpe_ratio REAL NOT NULL DEFAULT 0,
+    win_rate REAL NOT NULL DEFAULT 0,
+    profit_factor REAL NOT NULL DEFAULT 0,
+    total_trades INTEGER NOT NULL DEFAULT 0,
+    final_value REAL NOT NULL DEFAULT 0,
+    benchmark_return_percent REAL NOT NULL DEFAULT 0,
+    alpha_vs_benchmark REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS backtest_equity_curve (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    backtest_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    portfolio_value REAL NOT NULL,
+    cash REAL NOT NULL,
+    invested_value REAL NOT NULL,
+    drawdown_percent REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(backtest_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    backtest_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    order_type TEXT NOT NULL CHECK(order_type IN ('BUY', 'SELL')),
+    quantity REAL NOT NULL,
+    price REAL NOT NULL,
+    fees REAL NOT NULL DEFAULT 0,
+    gross_amount REAL NOT NULL DEFAULT 0,
+    net_amount REAL NOT NULL DEFAULT 0,
+    pnl REAL NOT NULL DEFAULT 0,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(backtest_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS backtest_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    backtest_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    average_price REAL NOT NULL,
+    final_price REAL NOT NULL,
+    final_value REAL NOT NULL,
+    realized_pnl REAL NOT NULL DEFAULT 0,
+    unrealized_pnl REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(backtest_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
@@ -160,6 +231,10 @@ CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, gene
 CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
+CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
 """
 
 
@@ -201,6 +276,10 @@ MIGRATIONS = {
         ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
         ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
         ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
+    ],
+    "backtest_runs": [
+        ("benchmark_return_percent", "ALTER TABLE backtest_runs ADD COLUMN benchmark_return_percent REAL NOT NULL DEFAULT 0"),
+        ("alpha_vs_benchmark", "ALTER TABLE backtest_runs ADD COLUMN alpha_vs_benchmark REAL NOT NULL DEFAULT 0"),
     ],
 }
 

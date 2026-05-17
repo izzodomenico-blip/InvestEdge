@@ -8,6 +8,9 @@ from backend.app.database import db_session
 from backend.app.models import (
     AssetCreate,
     AssetOut,
+    BacktestResultOut,
+    BacktestRunIn,
+    BacktestSummaryOut,
     DashboardOut,
     OrderSimulationOut,
     PortfolioInitIn,
@@ -22,6 +25,7 @@ from backend.app.models import (
     TechnicalAnalysisOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
+from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
@@ -32,6 +36,7 @@ from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
 portfolio_engine = PortfolioEngine()
+backtest_engine = BacktestEngine()
 
 
 @router.get("/health")
@@ -112,6 +117,39 @@ def refresh_portfolio() -> PortfolioSummaryOut:
 def get_portfolio_recommendations() -> list[PortfolioRecommendationOut]:
     with db_session() as connection:
         return portfolio_engine.recommendations(connection)
+
+
+@router.post("/backtests/run", response_model=BacktestResultOut)
+def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
+    try:
+        with db_session() as connection:
+            return backtest_engine.run_backtest(connection, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/backtests", response_model=list[BacktestSummaryOut])
+def get_backtests() -> list[BacktestSummaryOut]:
+    with db_session() as connection:
+        return backtest_engine.list_backtests(connection)
+
+
+@router.get("/backtests/{backtest_id}", response_model=BacktestResultOut)
+def get_backtest(backtest_id: int) -> BacktestResultOut:
+    try:
+        with db_session() as connection:
+            return backtest_engine.get_backtest(connection, backtest_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/backtests/{backtest_id}")
+def delete_backtest(backtest_id: int) -> dict[str, int | bool]:
+    with db_session() as connection:
+        deleted = backtest_engine.delete_backtest(connection, backtest_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest non trovato.")
+    return {"deleted": True, "backtest_id": backtest_id}
 
 
 @router.get("/prices/{symbol}", response_model=PriceHistoryOut)

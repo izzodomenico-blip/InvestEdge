@@ -162,6 +162,36 @@ export function DashboardPage() {
         </Panel>
       </div>
 
+      <Panel title="Ultimo backtest">
+        {dashboard.latest_backtest ? (
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Run</p>
+              <p className="mt-1 font-semibold text-white">{dashboard.latest_backtest.name}</p>
+              <p className="mt-1 text-xs text-slate-500">{dashboard.latest_backtest.strategy_name}</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Rendimento</p>
+              <p className={dashboard.latest_backtest.total_return_percent >= 0 ? "mt-1 font-semibold text-emerald-300" : "mt-1 font-semibold text-rose-300"}>
+                {formatPercent(dashboard.latest_backtest.total_return_percent)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Max drawdown</p>
+              <p className="mt-1 font-semibold text-rose-300">{formatPercent(dashboard.latest_backtest.max_drawdown)}</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Alpha vs benchmark</p>
+              <p className={dashboard.latest_backtest.alpha_vs_benchmark >= 0 ? "mt-1 font-semibold text-emerald-300" : "mt-1 font-semibold text-rose-300"}>
+                {formatPercent(dashboard.latest_backtest.alpha_vs_benchmark)}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">Nessun backtest eseguito.</p>
+        )}
+      </Panel>
+
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
         <Panel title="Top score asset">
           <div className="h-80">

@@ -88,6 +88,29 @@ Il motore in `backend/app/services/risk_engine.py` valuta concentrazione e risch
 
 Il segnale tecnico e la lettura dell'asset isolato. La raccomandazione finale considera anche il portafoglio: un asset con segnale BUY puo diventare HOLD o BLOCK_BUY_TOO_CONCENTRATED se pesa gia troppo.
 
+## Backtest Engine
+
+Il motore in `backend/app/services/backtest_engine.py` valida strategie su dati locali SQLite. Non usa broker, API reali, news reali o machine learning.
+
+Le strategie disponibili sono:
+
+- `SCORE_THRESHOLD`: compra asset con score rolling sopra la soglia BUY e vende/riduce sotto la soglia SELL.
+- `BUY_AND_HOLD`: compra all'inizio del periodo e mantiene fino alla fine.
+- `TOP_N_SCORE`: a ogni ribilanciamento mantiene i migliori N asset per score rolling.
+
+Il backtest calcola gli indicatori in modalita rolling usando solo i dati disponibili fino alla data simulata. Questo riduce il look-ahead bias: i segnali di una data passata non usano prezzi futuri.
+
+Metriche prodotte:
+
+- total return, CAGR, max drawdown, Sharpe ratio
+- win rate, profit factor, numero trade, valore finale
+- benchmark return e alpha vs benchmark
+- equity curve, drawdown curve, trade list e posizioni finali
+
+Sono supportati stop loss, take profit, commissioni, cash residuo, peso massimo per asset e frequenza di ribilanciamento `DAILY`, `WEEKLY` o `MONTHLY`.
+
+Attenzione: il backtest e una simulazione su dati storici generati localmente. Non garantisce rendimenti futuri e puo favorire overfitting se si ottimizzano troppe soglie sullo stesso periodo.
+
 ## Avvio backend
 
 ```powershell
@@ -110,6 +133,10 @@ Endpoint iniziali:
 - `GET /portfolio/recommendations`
 - `POST /orders/simulate`
 - `GET /orders`
+- `POST /backtests/run`
+- `GET /backtests`
+- `GET /backtests/{backtest_id}`
+- `DELETE /backtests/{backtest_id}`
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
@@ -139,6 +166,29 @@ POST /orders/simulate
   "fees": 1,
   "note": "Paper trade locale",
   "strategy_tag": "Demo"
+}
+```
+
+Esempio backtest:
+
+```http
+POST /backtests/run
+{
+  "name": "Weekly top score",
+  "strategy_name": "TOP_N_SCORE",
+  "symbols": ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"],
+  "initial_cash": 100000,
+  "start_date": "2025-01-01",
+  "end_date": "2026-05-15",
+  "benchmark_symbol": "SPY",
+  "buy_threshold": 70,
+  "sell_threshold": 40,
+  "max_asset_weight": 0.15,
+  "fee_percent": 0.10,
+  "stop_loss_percent": 8,
+  "take_profit_percent": 25,
+  "rebalance_frequency": "WEEKLY",
+  "top_n": 5
 }
 ```
 
@@ -172,6 +222,6 @@ Il database SQLite viene creato automaticamente in `data/investedge.db` al primo
 
 - provider dati autorizzati in `backend/app/data_providers`
 - news e sentiment reali tramite provider autorizzati
-- backtest piu completo
+- analisi scenario e confronti multi-strategia
 - gestione capitale e pesi avanzata
 - integrazioni broker solo in una fase futura e solo se esplicitamente abilitate

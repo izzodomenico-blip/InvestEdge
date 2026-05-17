@@ -4,6 +4,7 @@ import pytest
 import pandas as pd
 from fastapi.testclient import TestClient
 
+from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.technical_analysis import TechnicalAnalysisService
 
 
@@ -294,3 +295,86 @@ def test_portfolio_recommendations_endpoint(client: TestClient) -> None:
     data = response.json()
     assert len(data) == 25
     assert {"symbol", "technical_signal", "technical_score", "portfolio_weight", "final_recommendation", "reason"} <= set(data[0])
+
+
+def _backtest_payload(strategy_name: str = "SCORE_THRESHOLD") -> dict[str, object]:
+    payload: dict[str, object] = {
+        "name": f"Test {strategy_name}",
+        "strategy_name": strategy_name,
+        "symbols": ["AAPL", "MSFT", "SPY", "QQQ"],
+        "initial_cash": 100000,
+        "start_date": "2025-01-01",
+        "end_date": "2026-05-15",
+        "benchmark_symbol": "SPY",
+        "buy_threshold": 55,
+        "sell_threshold": 40,
+        "max_asset_weight": 0.2,
+        "fee_percent": 0.1,
+        "stop_loss_percent": 8,
+        "take_profit_percent": 25,
+        "rebalance_frequency": "WEEKLY",
+    }
+    if strategy_name == "TOP_N_SCORE":
+        payload["top_n"] = 2
+    return payload
+
+
+def test_run_backtest_score_threshold(client: TestClient) -> None:
+    response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
+
+    assert response.status_code == 200
+    data = response.json()
+    summary = data["summary"]
+    assert data["backtest_id"] > 0
+    assert summary["strategy_name"] == "SCORE_THRESHOLD"
+    assert {"total_return_percent", "cagr", "max_drawdown", "sharpe_ratio", "win_rate", "profit_factor", "final_value"} <= set(summary)
+    assert len(data["equity_curve"]) > 50
+    assert all(trade["quantity"] > 0 and trade["price"] > 0 for trade in data["trades"])
+    assert "alpha_vs_benchmark" in data["benchmark_comparison"]
+
+
+def test_run_backtest_buy_and_hold(client: TestClient) -> None:
+    response = client.post("/backtests/run", json=_backtest_payload("BUY_AND_HOLD"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["strategy_name"] == "BUY_AND_HOLD"
+    assert data["summary"]["total_trades"] >= 1
+    assert data["final_positions"]
+
+
+def test_run_backtest_top_n_score(client: TestClient) -> None:
+    response = client.post("/backtests/run", json=_backtest_payload("TOP_N_SCORE"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["strategy_name"] == "TOP_N_SCORE"
+    assert len(data["equity_curve"]) > 50
+    assert data["summary"]["total_trades"] >= 1
+
+
+def test_backtest_history_and_detail_endpoints(client: TestClient) -> None:
+    run_response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
+    backtest_id = run_response.json()["backtest_id"]
+
+    list_response = client.get("/backtests")
+    detail_response = client.get(f"/backtests/{backtest_id}")
+
+    assert list_response.status_code == 200
+    assert detail_response.status_code == 200
+    assert any(item["id"] == backtest_id for item in list_response.json())
+    assert detail_response.json()["backtest_id"] == backtest_id
+    assert detail_response.json()["trades"] is not None
+
+
+def test_backtest_no_lookahead_on_future_jump() -> None:
+    engine = BacktestEngine()
+    stable_values = [100.0] * 90
+    future_jump = [250.0] * 20
+    full_frame = _price_frame(stable_values + future_jump)
+    truncated_frame = _price_frame(stable_values)
+
+    full_scored = engine.prepare_price_frame_for_backtest(full_frame)
+    truncated_scored = engine.prepare_price_frame_for_backtest(truncated_frame)
+
+    assert full_scored.loc[89, "rolling_score"] == truncated_scored.loc[89, "rolling_score"]

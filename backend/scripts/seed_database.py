@@ -105,6 +105,7 @@ def _reset_seed_data(connection) -> None:
     connection.execute("DELETE FROM simulated_orders")
     connection.execute("DELETE FROM portfolio_positions")
     connection.execute("DELETE FROM portfolio_settings")
+    connection.execute("DELETE FROM backtest_runs")
 
     symbols = [asset["symbol"] for asset in ASSETS]
     placeholders = ",".join("?" for _ in symbols)

@@ -9,6 +9,8 @@ AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
+BacktestStrategy = Literal["SCORE_THRESHOLD", "BUY_AND_HOLD", "TOP_N_SCORE"]
+RebalanceFrequency = Literal["DAILY", "WEEKLY", "MONTHLY"]
 
 
 class AssetCreate(BaseModel):
@@ -120,6 +122,7 @@ class DashboardOut(BaseModel):
     risk_warnings_count: int = 0
     top_position: PortfolioPositionOut | None = None
     portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
+    latest_backtest: dict[str, float | int | str | None] | None = None
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -242,3 +245,101 @@ class PortfolioRecommendationOut(BaseModel):
     portfolio_weight: float
     final_recommendation: str
     reason: str
+
+
+class BacktestRunIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    strategy_name: BacktestStrategy
+    symbols: list[str] = Field(..., min_length=1)
+    initial_cash: float = Field(default=100000, gt=0)
+    start_date: str
+    end_date: str
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
+    buy_threshold: float = Field(default=70, ge=0, le=100)
+    sell_threshold: float = Field(default=40, ge=0, le=100)
+    max_asset_weight: float = Field(default=0.15, gt=0, le=1)
+    fee_percent: float = Field(default=0.1, ge=0, le=5)
+    stop_loss_percent: float | None = Field(default=8, gt=0, le=100)
+    take_profit_percent: float | None = Field(default=25, gt=0, le=500)
+    rebalance_frequency: RebalanceFrequency = "WEEKLY"
+    top_n: int | None = Field(default=5, ge=1, le=25)
+
+
+class BacktestSummaryOut(BaseModel):
+    id: int | None = None
+    name: str
+    strategy_name: str
+    initial_cash: float
+    start_date: str
+    end_date: str
+    benchmark_symbol: str | None = None
+    buy_threshold: float
+    sell_threshold: float
+    max_asset_weight: float
+    fee_percent: float
+    stop_loss_percent: float | None = None
+    take_profit_percent: float | None = None
+    rebalance_frequency: str
+    total_return_percent: float
+    cagr: float
+    max_drawdown: float
+    sharpe_ratio: float
+    win_rate: float
+    profit_factor: float
+    total_trades: int
+    final_value: float
+    benchmark_return_percent: float = 0
+    alpha_vs_benchmark: float = 0
+    created_at: str | None = None
+
+
+class BacktestEquityPointOut(BaseModel):
+    id: int | None = None
+    date: str
+    portfolio_value: float
+    cash: float
+    invested_value: float
+    drawdown_percent: float
+    benchmark_value: float | None = None
+    benchmark_return_percent: float | None = None
+
+
+class BacktestTradeOut(BaseModel):
+    id: int | None = None
+    date: str
+    symbol: str
+    order_type: OrderType
+    quantity: float
+    price: float
+    fees: float
+    gross_amount: float
+    net_amount: float
+    pnl: float
+    reason: str | None = None
+
+
+class BacktestPositionOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    quantity: float
+    average_price: float
+    final_price: float
+    final_value: float
+    realized_pnl: float
+    unrealized_pnl: float
+
+
+class BacktestBenchmarkComparisonOut(BaseModel):
+    benchmark_symbol: str | None = None
+    benchmark_return_percent: float
+    alpha_vs_benchmark: float
+    benchmark_final_value: float
+
+
+class BacktestResultOut(BaseModel):
+    backtest_id: int
+    summary: BacktestSummaryOut
+    equity_curve: list[BacktestEquityPointOut]
+    trades: list[BacktestTradeOut]
+    final_positions: list[BacktestPositionOut]
+    benchmark_comparison: BacktestBenchmarkComparisonOut
