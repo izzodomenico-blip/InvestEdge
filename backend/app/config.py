@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / "backend" / ".env", override=True)
 
 
 def _csv(value: str | None, default: list[str]) -> list[str]:
@@ -34,6 +35,14 @@ class Settings:
     database_path: Path
     cors_origins: list[str]
     cors_origin_regex: str | None = None
+    enable_real_data: bool = False
+    alpha_vantage_api_key: str | None = None
+    coingecko_api_key: str | None = None
+    fred_api_key: str | None = None
+    api_cache_ttl_hours: int = 24
+    alpha_vantage_daily_limit: int = 20
+    coingecko_daily_limit: int = 100
+    fred_daily_limit: int = 100
 
     @property
     def database_url(self) -> str:
@@ -60,6 +69,14 @@ class Settings:
             cors_origins=_unique([*local_dev_origins, *configured_origins]),
             cors_origin_regex=os.getenv("INVESTEDGE_CORS_ORIGIN_REGEX")
             or (r"^http://(localhost|127\.0\.0\.1):517\d+$" if app_env == "local" else None),
+            enable_real_data=os.getenv("ENABLE_REAL_DATA", "false").lower() == "true",
+            alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY") or None,
+            coingecko_api_key=os.getenv("COINGECKO_API_KEY") or None,
+            fred_api_key=os.getenv("FRED_API_KEY") or None,
+            api_cache_ttl_hours=int(os.getenv("API_CACHE_TTL_HOURS", "24")),
+            alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
+            coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
+            fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),
         )
 
 

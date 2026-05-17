@@ -32,23 +32,23 @@ def get_price_history(
         return None
 
     query = """
-        SELECT date, open, high, low, close, adjusted_close, volume, source
+        SELECT date, open, high, low, close, adjusted_close, volume, source, provider, is_real_data, fetched_at
         FROM price_history
         WHERE asset_id = ?
-        ORDER BY date ASC
+        ORDER BY date ASC, is_real_data DESC, id ASC
     """
     params: tuple[object, ...] = (asset["id"],)
     if limit:
         query = """
             SELECT *
             FROM (
-                SELECT date, open, high, low, close, adjusted_close, volume, source
+                SELECT date, open, high, low, close, adjusted_close, volume, source, provider, is_real_data, fetched_at
                 FROM price_history
                 WHERE asset_id = ?
-                ORDER BY date DESC
+                ORDER BY date DESC, is_real_data DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY date ASC
+            ORDER BY date ASC, is_real_data DESC, id ASC
         """
         params = (asset["id"], limit)
 
@@ -75,6 +75,9 @@ def get_price_history(
             adjusted_close=round(float(row["adjusted_close"]), 6),
             volume=round(float(row["volume"]), 2),
             source=str(row["source"]),
+            provider=row.get("provider"),
+            is_real_data=bool(row.get("is_real_data", 0)),
+            fetched_at=row.get("fetched_at"),
             sma_20=_clean_float(row.get("sma_20")),
             sma_50=_clean_float(row.get("sma_50")),
             sma_200=_clean_float(row.get("sma_200")),

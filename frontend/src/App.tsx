@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { AnalysisPage } from "./pages/AnalysisPage";
 import { BacktestPage } from "./pages/BacktestPage";
+import { DataCenterPage } from "./pages/DataCenterPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewsPage } from "./pages/NewsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/analysis" element={<AnalysisPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
+        <Route path="/data" element={<DataCenterPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

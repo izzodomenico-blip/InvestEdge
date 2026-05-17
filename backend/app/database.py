@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS price_history (
     adjusted_close REAL,
     volume REAL,
     source TEXT NOT NULL DEFAULT 'mock',
+    provider TEXT,
+    is_real_data INTEGER NOT NULL DEFAULT 0,
+    fetched_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE,
     UNIQUE(asset_id, date, source)
@@ -147,9 +150,26 @@ CREATE TABLE IF NOT EXISTS api_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cache_key TEXT NOT NULL UNIQUE,
     provider TEXT NOT NULL,
-    payload TEXT NOT NULL,
+    endpoint TEXT,
+    symbol TEXT,
+    request_url_hash TEXT,
+    response_json TEXT,
+    payload TEXT,
+    status TEXT NOT NULL DEFAULT 'OK',
+    last_update TEXT,
     expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS api_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    usage_date TEXT NOT NULL,
+    calls_count INTEGER NOT NULL DEFAULT 0,
+    daily_limit INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(provider, usage_date)
 );
 
 CREATE TABLE IF NOT EXISTS backtest_runs (
@@ -231,6 +251,7 @@ CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, gene
 CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
+CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
@@ -276,6 +297,19 @@ MIGRATIONS = {
         ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
         ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
         ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
+    ],
+    "price_history": [
+        ("provider", "ALTER TABLE price_history ADD COLUMN provider TEXT"),
+        ("is_real_data", "ALTER TABLE price_history ADD COLUMN is_real_data INTEGER NOT NULL DEFAULT 0"),
+        ("fetched_at", "ALTER TABLE price_history ADD COLUMN fetched_at TEXT"),
+    ],
+    "api_cache": [
+        ("endpoint", "ALTER TABLE api_cache ADD COLUMN endpoint TEXT"),
+        ("symbol", "ALTER TABLE api_cache ADD COLUMN symbol TEXT"),
+        ("request_url_hash", "ALTER TABLE api_cache ADD COLUMN request_url_hash TEXT"),
+        ("response_json", "ALTER TABLE api_cache ADD COLUMN response_json TEXT"),
+        ("status", "ALTER TABLE api_cache ADD COLUMN status TEXT NOT NULL DEFAULT 'OK'"),
+        ("last_update", "ALTER TABLE api_cache ADD COLUMN last_update TEXT"),
     ],
     "backtest_runs": [
         ("benchmark_return_percent", "ALTER TABLE backtest_runs ADD COLUMN benchmark_return_percent REAL NOT NULL DEFAULT 0"),
@@ -365,6 +399,8 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date)"
     )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date)")
 
 
 @contextmanager

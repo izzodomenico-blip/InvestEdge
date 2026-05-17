@@ -10,10 +10,13 @@ from backend.app.services.technical_analysis import TechnicalAnalysisService
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "investedge.db"))
-
     from backend.app.config import get_settings
 
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "investedge.db"))
+    monkeypatch.setenv("ENABLE_REAL_DATA", "false")
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
+    monkeypatch.setenv("COINGECKO_API_KEY", "")
+    monkeypatch.setenv("FRED_API_KEY", "")
     get_settings.cache_clear()
 
     from backend.scripts.seed_database import seed_database
@@ -75,6 +78,7 @@ def test_dashboard_after_seed(client: TestClient) -> None:
     assert data["signals_count"] == 25
     assert data["price_points_count"] >= 14000
     assert data["latest_signals"]
+    assert data["data_status"]["data_mode"] == "SEED"
 
 
 def _price_frame(values: list[float]) -> pd.DataFrame:
@@ -378,3 +382,142 @@ def test_backtest_no_lookahead_on_future_jump() -> None:
     truncated_scored = engine.prepare_price_frame_for_backtest(truncated_frame)
 
     assert full_scored.loc[89, "rolling_score"] == truncated_scored.loc[89, "rolling_score"]
+
+
+def test_api_cache_save_and_read(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        provider = AlphaVantageProvider(get_settings(), connection)
+        request_url = "https://example.test/query?symbol=AAPL"
+        payload = {"Time Series (Daily)": {"2026-05-15": {"4. close": "100"}}}
+        provider.save_to_cache("daily", "AAPL", request_url, payload)
+
+        assert provider.get_from_cache("daily", "AAPL", request_url) == payload
+
+
+def test_api_rate_limit_guard(client: TestClient) -> None:
+    from datetime import date
+
+    from backend.app.config import get_settings
+    from backend.app.data_providers.base import RateLimitExceeded
+    from backend.app.data_providers.coingecko import CoinGeckoProvider
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        provider = CoinGeckoProvider(get_settings(), connection)
+        today = date.today().isoformat()
+        connection.execute(
+            """
+            INSERT INTO api_usage (provider, usage_date, calls_count, daily_limit)
+            VALUES (?, ?, ?, ?)
+            """,
+            (provider.provider_name, today, provider.daily_limit, provider.daily_limit),
+        )
+
+        with pytest.raises(RateLimitExceeded):
+            provider.check_rate_limit()
+
+
+def test_provider_registry(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.provider_registry import ProviderRegistry
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        registry = ProviderRegistry(get_settings(), connection)
+
+        assert registry.provider_for_asset_type("stock").provider_name == "alpha_vantage"
+        assert registry.provider_for_asset_type("crypto").provider_name == "coingecko"
+        assert registry.provider_for_asset_type("macro").provider_name == "fred"
+
+
+def test_refresh_asset_with_real_data_disabled(client: TestClient) -> None:
+    response = client.post("/data/refresh/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["used_fallback"] is True
+    assert data["rows_inserted"] == 0
+    assert "Dati reali disattivati" in data["message"]
+
+
+def test_refresh_asset_fallback_when_api_key_missing(client: TestClient, monkeypatch) -> None:
+    from backend.app.config import get_settings
+
+    monkeypatch.setenv("ENABLE_REAL_DATA", "true")
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
+    get_settings.cache_clear()
+
+    response = client.post("/data/refresh/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["used_fallback"] is True
+    assert "API key non configurata" in data["message"]
+
+    monkeypatch.setenv("ENABLE_REAL_DATA", "false")
+    get_settings.cache_clear()
+
+
+def test_data_status_endpoint(client: TestClient) -> None:
+    response = client.get("/data/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["enable_real_data"] is False
+    assert data["data_mode"] == "SEED"
+    assert {provider["provider"] for provider in data["provider_status"]} >= {"alpha_vantage", "coingecko", "fred"}
+    assert data["cache_stats"]["entries"] >= 0
+
+
+def test_asset_data_status_endpoint(client: TestClient) -> None:
+    response = client.get("/data/status/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "AAPL"
+    assert data["last_source"] == "seed"
+    assert data["is_real_data"] is False
+    assert "seed/demo" in data["message"]
+
+
+def test_data_refresh_endpoint_uses_fallback(client: TestClient) -> None:
+    response = client.post("/data/refresh/BTC")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "BTC"
+    assert data["provider"] == "coingecko"
+    assert data["used_fallback"] is True
+
+
+def test_repeated_refresh_does_not_duplicate_price_history(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        before = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM price_history ph
+            JOIN assets a ON a.id = ph.asset_id
+            WHERE a.symbol = 'AAPL'
+            """
+        ).fetchone()["count"]
+
+    client.post("/data/refresh/AAPL")
+    client.post("/data/refresh/AAPL")
+
+    with db_session() as connection:
+        after = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM price_history ph
+            JOIN assets a ON a.id = ph.asset_id
+            WHERE a.symbol = 'AAPL'
+            """
+        ).fetchone()["count"]
+
+    assert after == before

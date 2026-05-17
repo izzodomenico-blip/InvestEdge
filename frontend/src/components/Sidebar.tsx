@@ -3,6 +3,7 @@ import {
   BarChart3,
   BriefcaseBusiness,
   CandlestickChart,
+  Database,
   Gauge,
   Newspaper,
   Repeat2,
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/backtest", label: "Backtest", icon: BarChart3 },
+  { to: "/data", label: "Dati", icon: Database },
 ];
 
 export function Sidebar() {

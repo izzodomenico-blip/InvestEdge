@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf"]
+AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
@@ -28,6 +28,11 @@ class AssetOut(AssetCreate):
     id: int
     last_price: float | None = None
     daily_change_pct: float | None = None
+    last_source: str | None = None
+    provider: str | None = None
+    is_real_data: bool = False
+    last_price_date: str | None = None
+    last_fetch_at: str | None = None
     score: float | None = None
     signal: SignalType | None = None
     confidence: str | None = None
@@ -44,6 +49,9 @@ class PricePointOut(BaseModel):
     adjusted_close: float
     volume: float
     source: str
+    provider: str | None = None
+    is_real_data: bool = False
+    fetched_at: str | None = None
     sma_20: float | None = None
     sma_50: float | None = None
     sma_200: float | None = None
@@ -123,6 +131,7 @@ class DashboardOut(BaseModel):
     top_position: PortfolioPositionOut | None = None
     portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
     latest_backtest: dict[str, float | int | str | None] | None = None
+    data_status: dict[str, object] = Field(default_factory=dict)
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -343,3 +352,55 @@ class BacktestResultOut(BaseModel):
     trades: list[BacktestTradeOut]
     final_positions: list[BacktestPositionOut]
     benchmark_comparison: BacktestBenchmarkComparisonOut
+
+
+class DataProviderStatusOut(BaseModel):
+    provider: str
+    enabled: bool
+    api_key_configured: bool
+    daily_limit: int
+    calls_today: int
+    supports: list[str] = Field(default_factory=list)
+
+
+class ApiUsageOut(BaseModel):
+    provider: str
+    usage_date: str
+    calls_count: int
+    daily_limit: int
+    updated_at: str | None = None
+
+
+class DataStatusOut(BaseModel):
+    enable_real_data: bool
+    provider_status: list[DataProviderStatusOut]
+    api_usage: list[ApiUsageOut]
+    cache_stats: dict[str, int]
+    global_last_update: str | None = None
+    data_mode: Literal["SEED", "MIXED", "REAL"]
+
+
+class AssetDataStatusOut(BaseModel):
+    symbol: str
+    last_price_date: str | None = None
+    last_source: str | None = None
+    provider: str | None = None
+    is_real_data: bool = False
+    last_fetch_at: str | None = None
+    cache_status: str
+    message: str
+
+
+class DataRefreshResultOut(BaseModel):
+    symbol: str
+    provider: str | None = None
+    rows_inserted: int
+    rows_updated: int
+    used_cache: bool
+    used_fallback: bool
+    message: str
+
+
+class DataRefreshAllOut(BaseModel):
+    summary: dict[str, int]
+    results: list[DataRefreshResultOut]

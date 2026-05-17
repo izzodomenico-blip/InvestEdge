@@ -4,11 +4,13 @@ import sqlite3
 
 from backend.app.models import DashboardOut
 from backend.app.services.assets_service import list_assets
+from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signals_service import list_signals
 
 
 portfolio_engine = PortfolioEngine()
+market_data_service = MarketDataService()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
@@ -109,4 +111,5 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
             for snapshot in snapshots
         ],
         latest_backtest=dict(latest_backtest_row) if latest_backtest_row else None,
+        data_status=market_data_service.get_global_status(connection),
     )

@@ -115,6 +115,32 @@ export function DashboardPage() {
         <MetricCard label="P/L totale" value={formatCurrency(dashboard.total_pnl, "EUR")} delta={formatPercent(dashboard.total_pnl_percent)} tone={dashboard.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
       </div>
 
+      <Panel title="Stato dati">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Modalita</p>
+            <p className={dashboard.data_status.data_mode === "SEED" ? "mt-1 font-semibold text-amber-300" : "mt-1 font-semibold text-emerald-300"}>
+              {dashboard.data_status.data_mode}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {dashboard.data_status.enable_real_data ? "Real data abilitati" : "Dati reali disattivati. Stai usando dati seed/demo."}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Ultimo aggiornamento</p>
+            <p className="mt-1 font-semibold text-white">{dashboard.data_status.global_last_update ?? "N/D"}</p>
+            <p className="mt-1 text-xs text-slate-500">Nessuna chiamata API automatica</p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Provider disponibili</p>
+            <p className="mt-1 font-semibold text-cyan-200">
+              {dashboard.data_status.provider_status.filter((provider) => provider.api_key_configured).length}/{dashboard.data_status.provider_status.length}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">{dashboard.data_status.provider_status.map((provider) => provider.provider).join(", ")}</p>
+          </div>
+        </div>
+      </Panel>
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Strong buy" value={`${dashboard.signal_breakdown.STRONG_BUY ?? 0}`} delta="Segnali tecnici ad alta forza" tone="green" icon={TrendingUp} />
         <MetricCard label="Buy" value={`${dashboard.signal_breakdown.BUY ?? 0}`} delta="Setup favorevoli" tone="cyan" icon={TrendingUp} />

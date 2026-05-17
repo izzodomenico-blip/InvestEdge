@@ -28,6 +28,16 @@ function recommendationTone(value: string | null | undefined) {
   return "border-slate-700 bg-slate-900 text-slate-300";
 }
 
+function sourceTone(asset: Asset) {
+  if (asset.is_real_data) {
+    return "border-emerald-300/20 bg-emerald-400/10 text-emerald-200";
+  }
+  if (asset.last_source === "seed") {
+    return "border-amber-300/20 bg-amber-400/10 text-amber-200";
+  }
+  return "border-slate-700 bg-slate-900 text-slate-300";
+}
+
 export function WatchlistPage() {
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -111,7 +121,7 @@ export function WatchlistPage() {
 
         {!loading && !error && assets.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1380px] border-collapse">
+            <table className="w-full min-w-[1560px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
                   <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
@@ -125,6 +135,9 @@ export function WatchlistPage() {
                   <th className="px-3 pb-3 font-medium">Rischio</th>
                   <th className="px-3 pb-3 text-right font-medium">Peso ptf</th>
                   <th className="px-3 pb-3 font-medium">Raccomandazione</th>
+                  <th className="px-3 pb-3 font-medium">Source</th>
+                  <th className="px-3 pb-3 font-medium">Provider</th>
+                  <th className="px-3 pb-3 font-medium">Data prezzo</th>
                   <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
                 </tr>
               </thead>
@@ -162,6 +175,13 @@ export function WatchlistPage() {
                           {recommendation?.reason ?? "Nessuna posizione aperta."}
                         </p>
                       </td>
+                      <td className="px-3 py-4">
+                        <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${sourceTone(asset)}`}>
+                          {asset.is_real_data ? "real" : asset.last_source ?? "N/D"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-4 text-slate-300">{asset.provider ?? "Locale"}</td>
+                      <td className="px-3 py-4 text-slate-400">{asset.last_price_date ?? "N/D"}</td>
                       <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
                         <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
                           {asset.technical_summary ?? "N/D"}

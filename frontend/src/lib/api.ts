@@ -25,6 +25,11 @@ export type Asset = {
   risk_level: string;
   last_price: number | null;
   daily_change_pct: number | null;
+  last_source: string | null;
+  provider: string | null;
+  is_real_data: boolean;
+  last_price_date: string | null;
+  last_fetch_at: string | null;
   score: number | null;
   signal: Signal | null;
   confidence: string | null;
@@ -69,6 +74,7 @@ export type DashboardResponse = {
   weakest_assets: Asset[];
   risky_assets: Asset[];
   latest_backtest: BacktestSummary | null;
+  data_status: DataStatus;
 };
 
 export type PortfolioPosition = {
@@ -186,6 +192,9 @@ export type PricePoint = {
   adjusted_close: number;
   volume: number;
   source: string;
+  provider: string | null;
+  is_real_data: boolean;
+  fetched_at: string | null;
   sma_20: number | null;
   sma_50: number | null;
   sma_200: number | null;
@@ -322,6 +331,58 @@ export type BacktestResult = {
     alpha_vs_benchmark: number;
     benchmark_final_value: number;
   };
+};
+
+export type DataProviderStatus = {
+  provider: string;
+  enabled: boolean;
+  api_key_configured: boolean;
+  daily_limit: number;
+  calls_today: number;
+  supports: string[];
+};
+
+export type ApiUsage = {
+  provider: string;
+  usage_date: string;
+  calls_count: number;
+  daily_limit: number;
+  updated_at: string | null;
+};
+
+export type DataStatus = {
+  enable_real_data: boolean;
+  provider_status: DataProviderStatus[];
+  api_usage: ApiUsage[];
+  cache_stats: Record<string, number>;
+  global_last_update: string | null;
+  data_mode: "SEED" | "MIXED" | "REAL";
+};
+
+export type AssetDataStatus = {
+  symbol: string;
+  last_price_date: string | null;
+  last_source: string | null;
+  provider: string | null;
+  is_real_data: boolean;
+  last_fetch_at: string | null;
+  cache_status: string;
+  message: string;
+};
+
+export type DataRefreshResult = {
+  symbol: string;
+  provider: string | null;
+  rows_inserted: number;
+  rows_updated: number;
+  used_cache: boolean;
+  used_fallback: boolean;
+  message: string;
+};
+
+export type DataRefreshAllResult = {
+  summary: Record<string, number>;
+  results: DataRefreshResult[];
 };
 
 async function parseError(response: Response) {

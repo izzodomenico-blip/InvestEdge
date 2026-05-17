@@ -12,6 +12,11 @@ from backend.app.models import (
     BacktestRunIn,
     BacktestSummaryOut,
     DashboardOut,
+    ApiUsageOut,
+    AssetDataStatusOut,
+    DataRefreshAllOut,
+    DataRefreshResultOut,
+    DataStatusOut,
     OrderSimulationOut,
     PortfolioInitIn,
     PortfolioRecommendationOut,
@@ -27,6 +32,7 @@ from backend.app.models import (
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
+from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.signals_service import list_signals
@@ -37,6 +43,7 @@ from backend.scripts.seed_database import seed_database
 router = APIRouter()
 portfolio_engine = PortfolioEngine()
 backtest_engine = BacktestEngine()
+market_data_service = MarketDataService()
 
 
 @router.get("/health")
@@ -203,6 +210,45 @@ def get_signal(symbol: str) -> SignalOut:
 def dashboard() -> DashboardOut:
     with db_session() as connection:
         return get_dashboard(connection)
+
+
+@router.get("/data/status", response_model=DataStatusOut)
+def data_status() -> DataStatusOut:
+    with db_session() as connection:
+        return DataStatusOut(**market_data_service.get_global_status(connection))
+
+
+@router.get("/data/status/{symbol}", response_model=AssetDataStatusOut)
+def asset_data_status(symbol: str) -> AssetDataStatusOut:
+    try:
+        with db_session() as connection:
+            return AssetDataStatusOut(**market_data_service.get_data_status(connection, symbol))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/data/refresh/{symbol}", response_model=DataRefreshResultOut)
+def refresh_asset_data(symbol: str, force: bool = Query(default=False)) -> DataRefreshResultOut:
+    try:
+        with db_session() as connection:
+            return DataRefreshResultOut(**market_data_service.refresh_asset_prices(connection, symbol, force=force))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/data/refresh-all", response_model=DataRefreshAllOut)
+def refresh_all_data(
+    limit: int | None = Query(default=None, ge=1, le=25),
+    force: bool = Query(default=False),
+) -> DataRefreshAllOut:
+    with db_session() as connection:
+        return DataRefreshAllOut(**market_data_service.refresh_all_watchlist(connection, limit=limit, force=force))
+
+
+@router.get("/data/usage", response_model=list[ApiUsageOut])
+def data_usage() -> list[ApiUsageOut]:
+    with db_session() as connection:
+        return [ApiUsageOut(**row) for row in market_data_service.get_usage(connection)]
 
 
 @router.post("/admin/seed", response_model=SeedSummaryOut)

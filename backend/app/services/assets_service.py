@@ -11,7 +11,7 @@ def _latest_price_metrics(connection: sqlite3.Connection, asset_id: int) -> tupl
         SELECT close
         FROM price_history
         WHERE asset_id = ?
-        ORDER BY date DESC
+        ORDER BY date DESC, is_real_data DESC, id DESC
         LIMIT 2
         """,
         (asset_id,),
@@ -28,6 +28,34 @@ def _latest_price_metrics(connection: sqlite3.Connection, asset_id: int) -> tupl
     return latest, ((latest - previous) / previous) * 100
 
 
+def _latest_price_metadata(connection: sqlite3.Connection, asset_id: int) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT date, source, provider, is_real_data, fetched_at
+        FROM price_history
+        WHERE asset_id = ?
+        ORDER BY date DESC, is_real_data DESC, id DESC
+        LIMIT 1
+        """,
+        (asset_id,),
+    ).fetchone()
+    if row is None:
+        return {
+            "last_source": None,
+            "provider": None,
+            "is_real_data": False,
+            "last_price_date": None,
+            "last_fetch_at": None,
+        }
+    return {
+        "last_source": row["source"],
+        "provider": row["provider"],
+        "is_real_data": bool(row["is_real_data"]),
+        "last_price_date": row["date"],
+        "last_fetch_at": row["fetched_at"],
+    }
+
+
 def _asset_from_row(row: sqlite3.Row) -> AssetOut:
     return AssetOut(
         id=row["id"],
@@ -41,6 +69,11 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         risk_level=row["risk_level"],
         last_price=row["last_price"],
         daily_change_pct=row["daily_change_pct"],
+        last_source=row["last_source"],
+        provider=row["provider"],
+        is_real_data=bool(row["is_real_data"]) if row["is_real_data"] is not None else False,
+        last_price_date=row["last_price_date"],
+        last_fetch_at=row["last_fetch_at"],
         score=row["score"],
         signal=row["signal"],
         confidence=row["confidence"],
@@ -51,6 +84,7 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
 
 def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> AssetOut:
     latest_price, daily_change_pct = _latest_price_metrics(connection, row["id"])
+    price_metadata = _latest_price_metadata(connection, row["id"])
     signal_row = connection.execute(
         """
         SELECT score, signal, confidence, technical_summary
@@ -74,6 +108,11 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         risk_level=row["risk_level"],
         last_price=latest_price,
         daily_change_pct=daily_change_pct,
+        last_source=price_metadata["last_source"],
+        provider=price_metadata["provider"],
+        is_real_data=bool(price_metadata["is_real_data"]),
+        last_price_date=price_metadata["last_price_date"],
+        last_fetch_at=price_metadata["last_fetch_at"],
         score=signal_row["score"] if signal_row else None,
         signal=signal_row["signal"] if signal_row else None,
         confidence=signal_row["confidence"] if signal_row else None,
@@ -97,6 +136,11 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
             a.risk_level,
             a.updated_at,
             latest.close AS last_price,
+            latest.date AS last_price_date,
+            latest.source AS last_source,
+            latest.provider AS provider,
+            latest.is_real_data AS is_real_data,
+            latest.fetched_at AS last_fetch_at,
             CASE
                 WHEN previous.close IS NULL OR previous.close = 0 THEN NULL
                 ELSE ((latest.close - previous.close) / previous.close) * 100

@@ -2,7 +2,7 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato e paper trading. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest e integrazione dati reali opzionale con cache. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
 
 ## Struttura
 
@@ -111,6 +111,43 @@ Sono supportati stop loss, take profit, commissioni, cash residuo, peso massimo 
 
 Attenzione: il backtest e una simulazione su dati storici generati localmente. Non garantisce rendimenti futuri e puo favorire overfitting se si ottimizzano troppe soglie sullo stesso periodo.
 
+## Dati reali con cache
+
+Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente all'apertura della dashboard. I refresh reali partono solo dagli endpoint `/data/refresh/*` o dalla pagina frontend `Dati`.
+
+Provider predisposti:
+
+- `AlphaVantageProvider`: azioni, ETF ed ETF obbligazionari quotati.
+- `CoinGeckoProvider`: cripto mappate BTC, ETH, SOL, BNB, XRP.
+- `FredProvider`: serie macro/tassi e bond proxy, tra cui DGS10, DGS2 e FEDFUNDS.
+
+Modalita dati:
+
+- `SEED`: solo dati locali generati dallo script seed.
+- `MIXED`: storico locale con alcune righe reali aggiornate manualmente.
+- `REAL`: tutte le righe prezzo presenti sono reali.
+
+Regole operative:
+
+- se `ENABLE_REAL_DATA=false`, il backend non chiama API esterne e usa seed/demo;
+- se la cache non e scaduta, il backend usa la cache;
+- se manca una API key, se il provider fallisce o se il limite giornaliero e raggiunto, l'app usa i dati locali;
+- ogni chiamata reale incrementa `api_usage`;
+- le API key non vengono stampate nei log, nel frontend, nei test o in questa documentazione.
+
+Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backend/.env` puo contenere chiavi reali e non deve essere committato.
+
+```env
+ENABLE_REAL_DATA=false
+ALPHA_VANTAGE_API_KEY=
+COINGECKO_API_KEY=
+FRED_API_KEY=
+API_CACHE_TTL_HOURS=24
+ALPHA_VANTAGE_DAILY_LIMIT=20
+COINGECKO_DAILY_LIMIT=100
+FRED_DAILY_LIMIT=100
+```
+
 ## Avvio backend
 
 ```powershell
@@ -137,6 +174,11 @@ Endpoint iniziali:
 - `GET /backtests`
 - `GET /backtests/{backtest_id}`
 - `DELETE /backtests/{backtest_id}`
+- `GET /data/status`
+- `GET /data/status/{symbol}`
+- `POST /data/refresh/{symbol}?force=false`
+- `POST /data/refresh-all?limit=5&force=false`
+- `GET /data/usage`
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
@@ -192,6 +234,26 @@ POST /backtests/run
 }
 ```
 
+Esempio refresh dati:
+
+```http
+POST /data/refresh/AAPL?force=false
+```
+
+Risposta sintetica:
+
+```json
+{
+  "symbol": "AAPL",
+  "provider": "alpha_vantage",
+  "rows_inserted": 0,
+  "rows_updated": 730,
+  "used_cache": false,
+  "used_fallback": false,
+  "message": "Prezzi aggiornati da provider reale."
+}
+```
+
 La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8001/docs`.
 
 ## Avvio frontend
@@ -212,15 +274,21 @@ Il frontend usa `VITE_API_BASE_URL` se presente, con fallback a `http://127.0.0.
 backend\.venv\Scripts\python.exe -m pytest
 ```
 
+Build frontend:
+
+```powershell
+cd frontend
+npm run build
+```
+
 ## Variabili ambiente
 
-Copia `.env.example` in `.env` e modifica i valori se necessario.
+Copia `.env.example` in `.env` e modifica i valori se necessario. Per le chiavi reali usa preferibilmente `backend/.env`, che deve restare locale e non committato.
 
 Il database SQLite viene creato automaticamente in `data/investedge.db` al primo avvio del backend. Se la UI mostra `Database non inizializzato`, esegui il comando seed sopra e ricarica il frontend.
 
 ## Prossime estensioni previste
 
-- provider dati autorizzati in `backend/app/data_providers`
 - news e sentiment reali tramite provider autorizzati
 - analisi scenario e confronti multi-strategia
 - gestione capitale e pesi avanzata

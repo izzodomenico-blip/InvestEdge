@@ -156,6 +156,12 @@ export function AnalysisPage() {
 
       {!loadingAnalysis && prices && analysis && selectedAsset && (
         <>
+          {!latestPoint?.is_real_data && (
+            <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              Dati reali disattivati o non disponibili. Stai usando dati seed/demo per questo asset.
+            </div>
+          )}
+
           <div className="grid gap-4 md:grid-cols-4">
             <article className="rounded-lg border border-slate-800/80 bg-slate-950/60 p-5 shadow-panel">
               <p className="text-xs font-medium uppercase text-slate-500">Ultimo prezzo</p>
@@ -184,6 +190,29 @@ export function AnalysisPage() {
               <p className="mt-3 text-sm text-slate-400">{selectedAsset.sector}</p>
             </article>
           </div>
+
+          <Panel title="Origine dati">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Source</p>
+                <p className={latestPoint?.is_real_data ? "mt-2 font-semibold text-emerald-300" : "mt-2 font-semibold text-amber-300"}>
+                  {latestPoint?.is_real_data ? "real" : latestPoint?.source ?? "N/D"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Provider</p>
+                <p className="mt-2 font-semibold text-white">{latestPoint?.provider ?? selectedAsset.provider ?? "Locale"}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Ultima data prezzo</p>
+                <p className="mt-2 font-semibold text-white">{latestPoint?.date ?? "N/D"}</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Last fetch</p>
+                <p className="mt-2 font-semibold text-white">{latestPoint?.fetched_at ?? "N/D"}</p>
+              </div>
+            </div>
+          </Panel>
 
           <div className="grid gap-6 xl:grid-cols-[1.45fr_0.85fr]">
             <Panel title={`${prices.symbol} - prezzo, medie e Bollinger`}>
