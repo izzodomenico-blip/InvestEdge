@@ -15,6 +15,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.app.database import db_session, init_db
+from backend.app.models import PortfolioInitIn, SimulatedOrderIn
+from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
 
 
@@ -99,6 +101,11 @@ def _generate_price_history(asset: dict[str, Any], index: int) -> list[dict[str,
 
 
 def _reset_seed_data(connection) -> None:
+    connection.execute("DELETE FROM portfolio_snapshots")
+    connection.execute("DELETE FROM simulated_orders")
+    connection.execute("DELETE FROM portfolio_positions")
+    connection.execute("DELETE FROM portfolio_settings")
+
     symbols = [asset["symbol"] for asset in ASSETS]
     placeholders = ",".join("?" for _ in symbols)
     asset_rows = connection.execute(
@@ -121,12 +128,83 @@ def _reset_seed_data(connection) -> None:
     connection.execute(f"DELETE FROM assets WHERE id IN ({id_placeholders})", asset_ids)
 
 
+def _historical_close(connection, symbol: str, days_ago: int) -> float:
+    target_date = (SEED_END_DATE - timedelta(days=days_ago)).isoformat()
+    row = connection.execute(
+        """
+        SELECT ph.close
+        FROM price_history ph
+        JOIN assets a ON a.id = ph.asset_id
+        WHERE a.symbol = ? AND ph.date <= ?
+        ORDER BY ph.date DESC
+        LIMIT 1
+        """,
+        (symbol, target_date),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Prezzo storico non disponibile per {symbol}.")
+    return float(row["close"])
+
+
+def _create_demo_portfolio(connection) -> dict[str, int]:
+    engine = PortfolioEngine()
+    engine.initialize_portfolio(
+        connection,
+        PortfolioInitIn(
+            initial_cash=100000,
+            max_single_asset_weight=25,
+            max_asset_class_weight=55,
+            default_fee_percent=0.1,
+        ),
+    )
+
+    demo_orders = [
+        ("SPY", 40, 330, "Core ETF USA"),
+        ("QQQ", 30, 300, "Growth ETF"),
+        ("AAPL", 50, 260, "Quality stock"),
+        ("MSFT", 25, 220, "Quality stock"),
+        ("NVDA", 80, 180, "Momentum tech"),
+        ("BTC", 0.18, 140, "Crypto satellite"),
+        ("ETH", 2.5, 120, "Crypto satellite"),
+    ]
+
+    for symbol, quantity, days_ago, tag in demo_orders:
+        engine.simulate_order(
+            connection,
+            SimulatedOrderIn(
+                symbol=symbol,
+                order_type="BUY",
+                quantity=quantity,
+                price=_historical_close(connection, symbol, days_ago),
+                note=f"Demo seed paper trade generato a {days_ago} giorni dal seed.",
+                strategy_tag=tag,
+            ),
+        )
+
+    engine.refresh_portfolio(connection, create_snapshot=True)
+    positions_count = connection.execute(
+        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 0"
+    ).fetchone()["count"]
+    orders_count = connection.execute("SELECT COUNT(*) AS count FROM simulated_orders").fetchone()["count"]
+    snapshots_count = connection.execute("SELECT COUNT(*) AS count FROM portfolio_snapshots").fetchone()["count"]
+    return {
+        "portfolio_positions_inserted": positions_count,
+        "simulated_orders_inserted": orders_count,
+        "portfolio_snapshots_inserted": snapshots_count,
+    }
+
+
 def seed_database(reset: bool = False) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
     init_db()
 
     price_rows_inserted = 0
     signals_inserted = 0
+    portfolio_summary = {
+        "portfolio_positions_inserted": 0,
+        "simulated_orders_inserted": 0,
+        "portfolio_snapshots_inserted": 0,
+    }
     scoring_engine = ScoringEngine()
 
     with db_session() as connection:
@@ -240,12 +318,16 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             )
             signals_inserted += 1
 
+        if reset:
+            portfolio_summary = _create_demo_portfolio(connection)
+
     completed_at = datetime.now().isoformat(timespec="seconds")
     return {
         "reset": reset,
         "assets_inserted": len(ASSETS),
         "price_rows_inserted": price_rows_inserted,
         "signals_inserted": signals_inserted,
+        **portfolio_summary,
         "started_at": started_at,
         "completed_at": completed_at,
     }

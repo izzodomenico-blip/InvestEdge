@@ -113,7 +113,7 @@ export function AnalysisPage() {
         </header>
         <Panel title="Database non inizializzato">
           <p className="text-slate-300">Database non inizializzato.</p>
-          <p className="mt-3 text-sm text-slate-500">Esegui `python scripts/seed_database.py --reset` e ricarica la pagina.</p>
+          <p className="mt-3 text-sm text-slate-500">Esegui `backend\.venv\Scripts\python.exe scripts\seed_database.py --reset` e ricarica la pagina.</p>
         </Panel>
       </div>
     );

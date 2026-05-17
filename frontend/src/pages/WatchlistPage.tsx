@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
-import { apiGet, type Asset } from "../lib/api";
+import { apiGet, type Asset, type PortfolioRecommendation } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
 const assetTypeLabels: Record<string, string> = {
@@ -15,9 +15,23 @@ const assetTypeLabels: Record<string, string> = {
   bond_etf: "Bond ETF",
 };
 
+function recommendationTone(value: string | null | undefined) {
+  if (value?.includes("BLOCK") || value === "SELL") {
+    return "border-rose-300/20 bg-rose-400/10 text-rose-200";
+  }
+  if (value === "REDUCE") {
+    return "border-amber-300/20 bg-amber-400/10 text-amber-200";
+  }
+  if (value === "BUY_ALLOWED") {
+    return "border-emerald-300/20 bg-emerald-400/10 text-emerald-200";
+  }
+  return "border-slate-700 bg-slate-900 text-slate-300";
+}
+
 export function WatchlistPage() {
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +41,12 @@ export function WatchlistPage() {
       setLoading(true);
       setError(null);
       try {
-        setAssets(await apiGet<Asset[]>("/assets"));
+        const [assetData, recommendationData] = await Promise.all([
+          apiGet<Asset[]>("/assets"),
+          apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
+        ]);
+        setAssets(assetData);
+        setRecommendations(recommendationData);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Errore durante il caricamento degli asset.");
       } finally {
@@ -49,6 +68,11 @@ export function WatchlistPage() {
         .some((value) => String(value).toLowerCase().includes(normalized)),
     );
   }, [assets, query]);
+
+  const recommendationBySymbol = useMemo(
+    () => new Map(recommendations.map((item) => [item.symbol, item])),
+    [recommendations],
+  );
 
   return (
     <div className="space-y-6">
@@ -81,13 +105,13 @@ export function WatchlistPage() {
         {!loading && !error && assets.length === 0 && (
           <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
             <h2 className="font-semibold text-amber-100">Database non inizializzato</h2>
-            <p className="mt-2 text-sm text-slate-300">Esegui `python scripts/seed_database.py --reset` e ricarica la pagina.</p>
+            <p className="mt-2 text-sm text-slate-300">Esegui `backend\.venv\Scripts\python.exe scripts\seed_database.py --reset` e ricarica la pagina.</p>
           </div>
         )}
 
         {!loading && !error && assets.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] border-collapse">
+            <table className="w-full min-w-[1380px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
                   <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
@@ -99,39 +123,53 @@ export function WatchlistPage() {
                   <th className="px-3 pb-3 text-right font-medium">Score</th>
                   <th className="px-3 pb-3 font-medium">Confidenza</th>
                   <th className="px-3 pb-3 font-medium">Rischio</th>
+                  <th className="px-3 pb-3 text-right font-medium">Peso ptf</th>
+                  <th className="px-3 pb-3 font-medium">Raccomandazione</th>
                   <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {filteredAssets.map((asset) => (
-                  <tr
-                    key={asset.symbol}
-                    onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
-                    className="cursor-pointer align-top text-sm transition hover:bg-cyan-400/5"
-                  >
-                    <td className="px-3 py-4 pl-0">
-                      <p className="font-semibold text-white">{asset.symbol}</p>
-                      <p className="mt-1 text-slate-500">{asset.name}</p>
-                    </td>
-                    <td className="px-3 py-4 text-slate-300">{assetTypeLabels[asset.asset_type] ?? asset.asset_type}</td>
-                    <td className="px-3 py-4 text-slate-400">{asset.sector ?? "-"}</td>
-                    <td className="px-3 py-4 text-right font-medium text-white">
-                      {asset.last_price == null ? "N/D" : formatCurrency(asset.last_price, asset.currency)}
-                    </td>
-                    <td className={`px-3 py-4 text-right font-semibold ${(asset.daily_change_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                      {asset.daily_change_pct == null ? "N/D" : formatPercent(asset.daily_change_pct)}
-                    </td>
-                    <td className="px-3 py-4 text-center">{asset.signal ? <SignalBadge signal={asset.signal} /> : "N/D"}</td>
-                    <td className="px-3 py-4 text-right text-slate-200">{asset.score == null ? "N/D" : `${asset.score.toFixed(1)}/100`}</td>
-                    <td className="px-3 py-4 text-slate-300">{asset.confidence ?? "N/D"}</td>
-                    <td className="px-3 py-4 capitalize text-slate-400">{asset.risk_level.replace("_", " ")}</td>
-                    <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
-                      <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
-                        {asset.technical_summary ?? "N/D"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {filteredAssets.map((asset) => {
+                  const recommendation = recommendationBySymbol.get(asset.symbol);
+                  return (
+                    <tr
+                      key={asset.symbol}
+                      onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
+                      className="cursor-pointer align-top text-sm transition hover:bg-cyan-400/5"
+                    >
+                      <td className="px-3 py-4 pl-0">
+                        <p className="font-semibold text-white">{asset.symbol}</p>
+                        <p className="mt-1 text-slate-500">{asset.name}</p>
+                      </td>
+                      <td className="px-3 py-4 text-slate-300">{assetTypeLabels[asset.asset_type] ?? asset.asset_type}</td>
+                      <td className="px-3 py-4 text-slate-400">{asset.sector ?? "-"}</td>
+                      <td className="px-3 py-4 text-right font-medium text-white">
+                        {asset.last_price == null ? "N/D" : formatCurrency(asset.last_price, asset.currency)}
+                      </td>
+                      <td className={`px-3 py-4 text-right font-semibold ${(asset.daily_change_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {asset.daily_change_pct == null ? "N/D" : formatPercent(asset.daily_change_pct)}
+                      </td>
+                      <td className="px-3 py-4 text-center">{asset.signal ? <SignalBadge signal={asset.signal} /> : "N/D"}</td>
+                      <td className="px-3 py-4 text-right text-slate-200">{asset.score == null ? "N/D" : `${asset.score.toFixed(1)}/100`}</td>
+                      <td className="px-3 py-4 text-slate-300">{asset.confidence ?? "N/D"}</td>
+                      <td className="px-3 py-4 capitalize text-slate-400">{asset.risk_level.replace("_", " ")}</td>
+                      <td className="px-3 py-4 text-right text-cyan-200">{recommendation ? `${recommendation.portfolio_weight.toFixed(2)}%` : "0.00%"}</td>
+                      <td className="px-3 py-4">
+                        <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${recommendationTone(recommendation?.final_recommendation)}`}>
+                          {recommendation?.final_recommendation ?? "HOLD"}
+                        </span>
+                        <p className="mt-2 max-w-56 truncate text-xs text-slate-500" title={recommendation?.reason}>
+                          {recommendation?.reason ?? "Nessuna posizione aperta."}
+                        </p>
+                      </td>
+                      <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
+                        <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
+                          {asset.technical_summary ?? "N/D"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

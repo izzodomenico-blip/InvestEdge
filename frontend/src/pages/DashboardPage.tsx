@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Activity, BadgeDollarSign, BarChart3, Database, ShieldAlert, TrendingUp } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   Cell,
@@ -16,7 +18,7 @@ import { MetricCard } from "../components/MetricCard";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import { apiGet, type DashboardResponse } from "../lib/api";
-import { formatCurrency } from "../lib/format";
+import { formatCurrency, formatPercent } from "../lib/format";
 
 const colors = ["#22D3EE", "#34D399", "#60A5FA", "#F59E0B", "#FB7185", "#A78BFA"];
 
@@ -85,7 +87,7 @@ export function DashboardPage() {
         </header>
         <Panel title="Database non inizializzato">
           <p className="text-slate-300">{dashboard?.message ?? "Database non inizializzato."}</p>
-          <p className="mt-3 text-sm text-slate-500">Esegui `python scripts/seed_database.py --reset` e ricarica la pagina.</p>
+          <p className="mt-3 text-sm text-slate-500">Esegui `backend\.venv\Scripts\python.exe scripts\seed_database.py --reset` e ricarica la pagina.</p>
         </Panel>
       </div>
     );
@@ -108,9 +110,9 @@ export function DashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Asset monitorati" value={`${dashboard.assets_count}`} delta="Universe seed locale" tone="cyan" icon={Activity} />
-        <MetricCard label="Righe prezzo" value={dashboard.price_points_count.toLocaleString("it-IT")} delta="Storico deterministico SQLite" tone="green" icon={Database} />
-        <MetricCard label="Score medio" value={dashboard.average_score?.toFixed(1) ?? "N/D"} delta={`${dashboard.signals_count} segnali calcolati`} tone="amber" icon={BarChart3} />
-        <MetricCard label="Valore portfolio" value={formatCurrency(dashboard.portfolio_value)} delta="In attesa di posizioni personali" tone="rose" icon={BadgeDollarSign} />
+        <MetricCard label="Valore portafoglio" value={formatCurrency(dashboard.portfolio_value, "EUR")} delta={`${dashboard.positions_count} posizioni aperte`} tone="green" icon={BadgeDollarSign} />
+        <MetricCard label="Liquidita" value={formatCurrency(dashboard.cash, "EUR")} delta="Cash paper trading" tone="amber" icon={Database} />
+        <MetricCard label="P/L totale" value={formatCurrency(dashboard.total_pnl, "EUR")} delta={formatPercent(dashboard.total_pnl_percent)} tone={dashboard.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -124,6 +126,40 @@ export function DashboardPage() {
           tone="rose"
           icon={ShieldAlert}
         />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
+        <Panel title="Sintesi portafoglio">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Top posizione</p>
+              <p className="mt-1 font-semibold text-white">{dashboard.top_position?.symbol ?? "N/D"}</p>
+              <p className="mt-1 text-sm text-cyan-200">
+                {dashboard.top_position ? `${dashboard.top_position.weight_percent.toFixed(2)}%` : "0.00%"}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Warning rischio</p>
+              <p className={dashboard.risk_warnings_count > 0 ? "mt-1 font-semibold text-amber-300" : "mt-1 font-semibold text-emerald-300"}>
+                {dashboard.risk_warnings_count}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">Da risk engine</p>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Andamento portafoglio">
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={dashboard.portfolio_snapshots} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
+                <XAxis dataKey="snapshot_date" hide />
+                <YAxis stroke="#64748B" axisLine={false} tickLine={false} width={78} />
+                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatCurrency(Number(value), "EUR"), "Valore"]} />
+                <Area type="monotone" dataKey="total_value" stroke="#22D3EE" fill="#22D3EE" fillOpacity={0.16} strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">

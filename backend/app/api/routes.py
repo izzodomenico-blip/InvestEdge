@@ -9,15 +9,21 @@ from backend.app.models import (
     AssetCreate,
     AssetOut,
     DashboardOut,
-    PortfolioPositionOut,
+    OrderSimulationOut,
+    PortfolioInitIn,
+    PortfolioRecommendationOut,
+    PortfolioSnapshotOut,
+    PortfolioSummaryOut,
     PriceHistoryOut,
     SeedSummaryOut,
     SignalOut,
+    SimulatedOrderIn,
+    SimulatedOrderOut,
     TechnicalAnalysisOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.dashboard_service import get_dashboard
-from backend.app.services.portfolio_service import list_portfolio
+from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.signals_service import list_signals
 from backend.app.services.signals_service import get_signal_by_symbol
@@ -25,6 +31,7 @@ from backend.app.services.technical_analysis_service import get_technical_analys
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
+portfolio_engine = PortfolioEngine()
 
 
 @router.get("/health")
@@ -45,7 +52,7 @@ def get_asset(symbol: str) -> AssetOut:
     if asset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Asset not found. Se il database e vuoto, esegui python scripts/seed_database.py --reset.",
+            detail="Asset not found. Se il database e vuoto, esegui backend\\.venv\\Scripts\\python.exe scripts\\seed_database.py --reset.",
         )
     return asset
 
@@ -62,10 +69,49 @@ def post_asset(payload: AssetCreate) -> AssetOut:
         ) from exc
 
 
-@router.get("/portfolio", response_model=list[PortfolioPositionOut])
-def get_portfolio() -> list[PortfolioPositionOut]:
+@router.get("/portfolio", response_model=PortfolioSummaryOut)
+def get_portfolio() -> PortfolioSummaryOut:
     with db_session() as connection:
-        return list_portfolio(connection)
+        return portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+
+
+@router.post("/portfolio/init", response_model=PortfolioSummaryOut)
+def init_portfolio(payload: PortfolioInitIn) -> PortfolioSummaryOut:
+    with db_session() as connection:
+        return portfolio_engine.initialize_portfolio(connection, payload)
+
+
+@router.post("/orders/simulate", response_model=OrderSimulationOut)
+def simulate_order(payload: SimulatedOrderIn) -> OrderSimulationOut:
+    try:
+        with db_session() as connection:
+            return portfolio_engine.simulate_order(connection, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/orders", response_model=list[SimulatedOrderOut])
+def get_orders() -> list[SimulatedOrderOut]:
+    with db_session() as connection:
+        return portfolio_engine.list_orders(connection)
+
+
+@router.get("/portfolio/snapshots", response_model=list[PortfolioSnapshotOut])
+def get_portfolio_snapshots() -> list[PortfolioSnapshotOut]:
+    with db_session() as connection:
+        return portfolio_engine.list_snapshots(connection)
+
+
+@router.post("/portfolio/refresh", response_model=PortfolioSummaryOut)
+def refresh_portfolio() -> PortfolioSummaryOut:
+    with db_session() as connection:
+        return portfolio_engine.refresh_portfolio(connection, create_snapshot=True)
+
+
+@router.get("/portfolio/recommendations", response_model=list[PortfolioRecommendationOut])
+def get_portfolio_recommendations() -> list[PortfolioRecommendationOut]:
+    with db_session() as connection:
+        return portfolio_engine.recommendations(connection)
 
 
 @router.get("/prices/{symbol}", response_model=PriceHistoryOut)
@@ -75,7 +121,7 @@ def get_prices(symbol: str, limit: int | None = Query(default=None, ge=1, le=100
     if prices is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Prices not found. Se il database e vuoto, esegui python scripts/seed_database.py --reset.",
+            detail="Prices not found. Se il database e vuoto, esegui backend\\.venv\\Scripts\\python.exe scripts\\seed_database.py --reset.",
         )
     if not prices.prices:
         raise HTTPException(
@@ -92,7 +138,7 @@ def technical_analysis(symbol: str) -> TechnicalAnalysisOut:
     if analysis is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Technical analysis not found. Se il database e vuoto, esegui python scripts/seed_database.py --reset.",
+            detail="Technical analysis not found. Se il database e vuoto, esegui backend\\.venv\\Scripts\\python.exe scripts\\seed_database.py --reset.",
         )
     return analysis
 
@@ -110,7 +156,7 @@ def get_signal(symbol: str) -> SignalOut:
     if signal is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Signal not found. Se il database e vuoto, esegui python scripts/seed_database.py --reset.",
+            detail="Signal not found. Se il database e vuoto, esegui backend\\.venv\\Scripts\\python.exe scripts\\seed_database.py --reset.",
         )
     return signal
 

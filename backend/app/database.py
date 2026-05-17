@@ -44,10 +44,20 @@ CREATE TABLE IF NOT EXISTS price_history (
 CREATE TABLE IF NOT EXISTS portfolio_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER NOT NULL,
+    symbol TEXT,
     quantity REAL NOT NULL,
     average_price REAL NOT NULL,
+    invested_amount REAL NOT NULL DEFAULT 0,
+    current_price REAL NOT NULL DEFAULT 0,
+    current_value REAL NOT NULL DEFAULT 0,
+    realized_pnl REAL NOT NULL DEFAULT 0,
+    unrealized_pnl REAL NOT NULL DEFAULT 0,
+    unrealized_pnl_percent REAL NOT NULL DEFAULT 0,
+    weight_percent REAL NOT NULL DEFAULT 0,
+    asset_type TEXT,
     currency TEXT NOT NULL DEFAULT 'USD',
     opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     notes TEXT,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
@@ -55,14 +65,49 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
 CREATE TABLE IF NOT EXISTS simulated_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER NOT NULL,
+    symbol TEXT,
+    order_type TEXT CHECK(order_type IN ('BUY', 'SELL')),
     side TEXT NOT NULL CHECK(side IN ('BUY', 'SELL')),
     quantity REAL NOT NULL,
     price REAL NOT NULL,
     fees REAL NOT NULL DEFAULT 0,
+    gross_amount REAL NOT NULL DEFAULT 0,
+    net_amount REAL NOT NULL DEFAULT 0,
+    order_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    note TEXT,
+    strategy_tag TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status TEXT NOT NULL DEFAULT 'SIMULATED',
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     notes TEXT,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    total_value REAL NOT NULL DEFAULT 0,
+    invested_value REAL NOT NULL DEFAULT 0,
+    cash REAL NOT NULL DEFAULT 0,
+    realized_pnl REAL NOT NULL DEFAULT 0,
+    unrealized_pnl REAL NOT NULL DEFAULT 0,
+    total_pnl REAL NOT NULL DEFAULT 0,
+    total_pnl_percent REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_settings (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    initial_cash REAL NOT NULL DEFAULT 100000,
+    current_cash REAL NOT NULL DEFAULT 100000,
+    max_single_asset_weight REAL NOT NULL DEFAULT 25,
+    max_asset_class_weight REAL NOT NULL DEFAULT 50,
+    default_fee_percent REAL NOT NULL DEFAULT 0.1,
+    crypto_max_weight REAL NOT NULL DEFAULT 15,
+    min_cash_weight REAL NOT NULL DEFAULT 2,
+    max_cash_weight REAL NOT NULL DEFAULT 35,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS signals (
@@ -110,6 +155,7 @@ CREATE TABLE IF NOT EXISTS api_cache (
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
+CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
 CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
@@ -133,6 +179,28 @@ MIGRATIONS = {
         ("indicators_json", "ALTER TABLE signals ADD COLUMN indicators_json TEXT"),
         ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT"),
         ("updated_at", "ALTER TABLE signals ADD COLUMN updated_at TEXT"),
+    ],
+    "portfolio_positions": [
+        ("symbol", "ALTER TABLE portfolio_positions ADD COLUMN symbol TEXT"),
+        ("invested_amount", "ALTER TABLE portfolio_positions ADD COLUMN invested_amount REAL NOT NULL DEFAULT 0"),
+        ("current_price", "ALTER TABLE portfolio_positions ADD COLUMN current_price REAL NOT NULL DEFAULT 0"),
+        ("current_value", "ALTER TABLE portfolio_positions ADD COLUMN current_value REAL NOT NULL DEFAULT 0"),
+        ("realized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN realized_pnl REAL NOT NULL DEFAULT 0"),
+        ("unrealized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0"),
+        ("unrealized_pnl_percent", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl_percent REAL NOT NULL DEFAULT 0"),
+        ("weight_percent", "ALTER TABLE portfolio_positions ADD COLUMN weight_percent REAL NOT NULL DEFAULT 0"),
+        ("asset_type", "ALTER TABLE portfolio_positions ADD COLUMN asset_type TEXT"),
+        ("updated_at", "ALTER TABLE portfolio_positions ADD COLUMN updated_at TEXT"),
+    ],
+    "simulated_orders": [
+        ("symbol", "ALTER TABLE simulated_orders ADD COLUMN symbol TEXT"),
+        ("order_type", "ALTER TABLE simulated_orders ADD COLUMN order_type TEXT"),
+        ("gross_amount", "ALTER TABLE simulated_orders ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0"),
+        ("net_amount", "ALTER TABLE simulated_orders ADD COLUMN net_amount REAL NOT NULL DEFAULT 0"),
+        ("order_date", "ALTER TABLE simulated_orders ADD COLUMN order_date TEXT"),
+        ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
+        ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
+        ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
     ],
 }
 
@@ -214,6 +282,10 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         connection.executescript(SIGNALS_REBUILD_SQL)
         connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at)")
+
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date)"
+    )
 
 
 @contextmanager

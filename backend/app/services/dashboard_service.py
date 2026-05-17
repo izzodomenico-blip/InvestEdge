@@ -4,14 +4,17 @@ import sqlite3
 
 from backend.app.models import DashboardOut
 from backend.app.services.assets_service import list_assets
-from backend.app.services.portfolio_service import portfolio_value
+from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signals_service import list_signals
+
+
+portfolio_engine = PortfolioEngine()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
     assets_count = connection.execute("SELECT COUNT(*) AS count FROM assets").fetchone()["count"]
     positions_count = connection.execute(
-        "SELECT COUNT(*) AS count FROM portfolio_positions"
+        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 0"
     ).fetchone()["count"]
     signals_count = connection.execute("SELECT COUNT(*) AS count FROM signals").fetchone()["count"]
     price_points_count = connection.execute("SELECT COUNT(*) AS count FROM price_history").fetchone()["count"]
@@ -44,6 +47,8 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
 
     latest_signals = list_signals(connection, limit=5)
     assets = list_assets(connection)
+    portfolio_summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+    snapshots = portfolio_engine.list_snapshots(connection)[-20:]
     sorted_by_score = sorted(
         [asset for asset in assets if asset.score is not None],
         key=lambda asset: asset.score or 0,
@@ -56,10 +61,10 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         initialized=initialized,
         message=None
         if initialized
-        else "Database non inizializzato. Esegui il seed con python scripts/seed_database.py --reset.",
+        else "Database non inizializzato. Esegui il seed con backend\\.venv\\Scripts\\python.exe scripts\\seed_database.py --reset.",
         assets_count=assets_count,
         positions_count=positions_count,
-        portfolio_value=portfolio_value(connection),
+        portfolio_value=portfolio_summary.total_value,
         signals_count=signals_count,
         price_points_count=price_points_count,
         average_score=round(float(average_score_row["average_score"]), 2)
@@ -79,4 +84,19 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
             ),
             reverse=True,
         )[:5],
+        cash=portfolio_summary.cash,
+        total_pnl=portfolio_summary.total_pnl,
+        total_pnl_percent=portfolio_summary.total_pnl_percent,
+        risk_warnings_count=len(portfolio_summary.risk_warnings),
+        top_position=portfolio_summary.positions[0] if portfolio_summary.positions else None,
+        portfolio_snapshots=[
+            {
+                "snapshot_date": snapshot.snapshot_date,
+                "total_value": snapshot.total_value,
+                "cash": snapshot.cash,
+                "total_pnl": snapshot.total_pnl,
+                "total_pnl_percent": snapshot.total_pnl_percent,
+            }
+            for snapshot in snapshots
+        ],
     )

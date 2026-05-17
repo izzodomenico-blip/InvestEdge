@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
+OrderType = Literal["BUY", "SELL"]
 
 
 class AssetCreate(BaseModel):
@@ -68,12 +69,19 @@ class PortfolioPositionOut(BaseModel):
     id: int
     asset_id: int
     symbol: str
-    name: str
     asset_type: str
     quantity: float
     average_price: float
+    invested_amount: float
+    current_price: float
+    current_value: float
+    realized_pnl: float
+    unrealized_pnl: float
+    unrealized_pnl_percent: float
+    weight_percent: float
     currency: str
-    market_value: float
+    technical_signal: str | None = None
+    recommendation: str | None = None
 
 
 class SignalOut(BaseModel):
@@ -106,6 +114,12 @@ class DashboardOut(BaseModel):
     top_assets: list[AssetOut] = Field(default_factory=list)
     weakest_assets: list[AssetOut] = Field(default_factory=list)
     risky_assets: list[AssetOut] = Field(default_factory=list)
+    cash: float = 0
+    total_pnl: float = 0
+    total_pnl_percent: float = 0
+    risk_warnings_count: int = 0
+    top_position: PortfolioPositionOut | None = None
+    portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -129,5 +143,102 @@ class SeedSummaryOut(BaseModel):
     assets_inserted: int
     price_rows_inserted: int
     signals_inserted: int
+    portfolio_positions_inserted: int = 0
+    simulated_orders_inserted: int = 0
+    portfolio_snapshots_inserted: int = 0
     started_at: str
     completed_at: str
+
+
+class PortfolioInitIn(BaseModel):
+    initial_cash: float = Field(..., gt=0)
+    max_single_asset_weight: float = Field(default=25, gt=0, le=100)
+    max_asset_class_weight: float = Field(default=50, gt=0, le=100)
+    default_fee_percent: float = Field(default=0.1, ge=0, le=5)
+
+
+class PortfolioSettingsOut(BaseModel):
+    initial_cash: float
+    current_cash: float
+    max_single_asset_weight: float
+    max_asset_class_weight: float
+    default_fee_percent: float
+    crypto_max_weight: float
+    min_cash_weight: float
+    max_cash_weight: float
+
+
+class RiskWarningOut(BaseModel):
+    level: str
+    code: str
+    message: str
+    symbol: str | None = None
+
+
+class PortfolioSummaryOut(BaseModel):
+    cash: float
+    total_value: float
+    invested_value: float
+    realized_pnl: float
+    unrealized_pnl: float
+    total_pnl: float
+    total_pnl_percent: float
+    positions: list[PortfolioPositionOut]
+    allocation_by_asset_type: dict[str, float]
+    allocation_by_currency: dict[str, float]
+    risk_warnings: list[RiskWarningOut]
+    settings: PortfolioSettingsOut
+
+
+class SimulatedOrderIn(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=24)
+    order_type: OrderType
+    quantity: float = Field(..., gt=0)
+    price: float | None = Field(default=None, gt=0)
+    fees: float | None = Field(default=None, ge=0)
+    note: str | None = Field(default=None, max_length=500)
+    strategy_tag: str | None = Field(default=None, max_length=80)
+
+
+class SimulatedOrderOut(BaseModel):
+    id: int
+    asset_id: int
+    symbol: str
+    order_type: OrderType
+    quantity: float
+    price: float
+    fees: float
+    gross_amount: float
+    net_amount: float
+    order_date: str
+    note: str | None = None
+    strategy_tag: str | None = None
+
+
+class OrderSimulationOut(BaseModel):
+    order: SimulatedOrderOut
+    updated_position: PortfolioPositionOut | None
+    updated_portfolio_summary: PortfolioSummaryOut
+    warnings: list[RiskWarningOut]
+
+
+class PortfolioSnapshotOut(BaseModel):
+    id: int
+    snapshot_date: str
+    total_value: float
+    invested_value: float
+    cash: float
+    realized_pnl: float
+    unrealized_pnl: float
+    total_pnl: float
+    total_pnl_percent: float
+    created_at: str
+
+
+class PortfolioRecommendationOut(BaseModel):
+    symbol: str
+    technical_signal: str | None
+    technical_score: float | None
+    portfolio_weight: float
+    final_recommendation: str
+    reason: str
