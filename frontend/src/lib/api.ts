@@ -1,6 +1,14 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+const API_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_API_URL ??
+  "http://127.0.0.1:8001";
 
-export type Signal = "BUY" | "HOLD" | "REDUCE" | "SELL";
+export type Signal = "STRONG_BUY" | "BUY" | "HOLD" | "REDUCE" | "SELL";
+
+export type Reason = {
+  type: "positive" | "negative" | "neutral";
+  message: string;
+};
 
 export type Asset = {
   id: number;
@@ -16,6 +24,8 @@ export type Asset = {
   daily_change_pct: number | null;
   score: number | null;
   signal: Signal | null;
+  confidence: string | null;
+  technical_summary: string | null;
   updated_at: string | null;
 };
 
@@ -26,7 +36,10 @@ export type SignalRecord = {
   signal: Signal;
   score: number;
   risk_level: string | null;
+  confidence: string | null;
   technical_summary: string | null;
+  reasons: Reason[];
+  subscores: Record<string, number>;
   created_at: string;
 };
 
@@ -41,9 +54,11 @@ export type DashboardResponse = {
   average_score: number | null;
   asset_type_breakdown: Record<string, number>;
   risk_breakdown: Record<string, number>;
+  signal_breakdown: Record<string, number>;
   latest_signals: SignalRecord[];
   top_assets: Asset[];
   weakest_assets: Asset[];
+  risky_assets: Asset[];
 };
 
 export type PricePoint = {
@@ -60,9 +75,14 @@ export type PricePoint = {
   sma_200: number | null;
   ema_12: number | null;
   ema_26: number | null;
+  ema_50: number | null;
+  ema_200: number | null;
   rsi_14: number | null;
   macd_line: number | null;
   macd_signal: number | null;
+  macd_histogram: number | null;
+  bollinger_upper: number | null;
+  bollinger_lower: number | null;
 };
 
 export type PriceHistory = {
@@ -71,6 +91,22 @@ export type PriceHistory = {
   asset_type: string;
   currency: string;
   prices: PricePoint[];
+};
+
+export type TechnicalAnalysis = {
+  asset: Asset;
+  latest_price: number | null;
+  indicators: Record<string, number>;
+  conditions: Record<string, boolean>;
+  support_resistance: Record<string, number | null>;
+  subscores: Record<string, number>;
+  score: number;
+  signal: Signal;
+  risk_level: string;
+  confidence: string;
+  reasons: Reason[];
+  summaries: Record<string, string>;
+  technical_summary: string;
 };
 
 async function parseError(response: Response) {

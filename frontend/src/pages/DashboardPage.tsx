@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BadgeDollarSign, BarChart3, Database, PieChart as PieIcon } from "lucide-react";
+import { Activity, BadgeDollarSign, BarChart3, Database, ShieldAlert, TrendingUp } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -113,6 +113,19 @@ export function DashboardPage() {
         <MetricCard label="Valore portfolio" value={formatCurrency(dashboard.portfolio_value)} delta="In attesa di posizioni personali" tone="rose" icon={BadgeDollarSign} />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Strong buy" value={`${dashboard.signal_breakdown.STRONG_BUY ?? 0}`} delta="Segnali tecnici ad alta forza" tone="green" icon={TrendingUp} />
+        <MetricCard label="Buy" value={`${dashboard.signal_breakdown.BUY ?? 0}`} delta="Setup favorevoli" tone="cyan" icon={TrendingUp} />
+        <MetricCard label="Hold" value={`${dashboard.signal_breakdown.HOLD ?? 0}`} delta="Situazioni neutrali" tone="amber" icon={BarChart3} />
+        <MetricCard
+          label="Reduce / Sell"
+          value={`${(dashboard.signal_breakdown.REDUCE ?? 0) + (dashboard.signal_breakdown.SELL ?? 0)}`}
+          delta="Asset con profilo tecnico debole"
+          tone="rose"
+          icon={ShieldAlert}
+        />
+      </div>
+
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
         <Panel title="Top score asset">
           <div className="h-80">
@@ -171,6 +184,42 @@ export function DashboardPage() {
           ))}
         </div>
       </Panel>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Panel title="Top 5 asset per score">
+          <div className="space-y-3">
+            {dashboard.top_assets.map((asset) => (
+              <div key={asset.symbol} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <div>
+                  <p className="font-semibold text-white">{asset.symbol}</p>
+                  <p className="mt-1 text-sm text-slate-500">{asset.technical_summary ?? asset.name}</p>
+                </div>
+                <div className="text-right">
+                  {asset.signal && <SignalBadge signal={asset.signal} />}
+                  <p className="mt-2 text-sm font-semibold text-cyan-200">{asset.score?.toFixed(1)}/100</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Asset piu rischiosi">
+          <div className="space-y-3">
+            {dashboard.risky_assets.map((asset) => (
+              <div key={asset.symbol} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <div>
+                  <p className="font-semibold text-white">{asset.symbol}</p>
+                  <p className="mt-1 text-sm text-slate-500">{asset.name}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold capitalize text-rose-200">{asset.risk_level.replace("_", " ")}</p>
+                  <p className="mt-2 text-xs text-slate-500">{asset.confidence ?? "N/D"} confidence</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

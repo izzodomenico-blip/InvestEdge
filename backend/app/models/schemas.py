@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf"]
-SignalType = Literal["BUY", "HOLD", "REDUCE", "SELL"]
+SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 
 
@@ -27,6 +27,8 @@ class AssetOut(AssetCreate):
     daily_change_pct: float | None = None
     score: float | None = None
     signal: SignalType | None = None
+    confidence: str | None = None
+    technical_summary: str | None = None
     updated_at: str | None = None
 
 
@@ -44,9 +46,14 @@ class PricePointOut(BaseModel):
     sma_200: float | None = None
     ema_12: float | None = None
     ema_26: float | None = None
+    ema_50: float | None = None
+    ema_200: float | None = None
     rsi_14: float | None = None
     macd_line: float | None = None
     macd_signal: float | None = None
+    macd_histogram: float | None = None
+    bollinger_upper: float | None = None
+    bollinger_lower: float | None = None
 
 
 class PriceHistoryOut(BaseModel):
@@ -76,7 +83,10 @@ class SignalOut(BaseModel):
     signal: SignalType
     score: float
     risk_level: str | None = None
+    confidence: str | None = None
     technical_summary: str | None = None
+    reasons: list[dict[str, str]] = Field(default_factory=list)
+    subscores: dict[str, float] = Field(default_factory=dict)
     created_at: str
 
 
@@ -91,9 +101,27 @@ class DashboardOut(BaseModel):
     average_score: float | None = None
     asset_type_breakdown: dict[str, int] = Field(default_factory=dict)
     risk_breakdown: dict[str, int] = Field(default_factory=dict)
+    signal_breakdown: dict[str, int] = Field(default_factory=dict)
     latest_signals: list[SignalOut]
     top_assets: list[AssetOut] = Field(default_factory=list)
     weakest_assets: list[AssetOut] = Field(default_factory=list)
+    risky_assets: list[AssetOut] = Field(default_factory=list)
+
+
+class TechnicalAnalysisOut(BaseModel):
+    asset: AssetOut
+    latest_price: float | None
+    indicators: dict[str, float] = Field(default_factory=dict)
+    conditions: dict[str, bool] = Field(default_factory=dict)
+    support_resistance: dict[str, float | None] = Field(default_factory=dict)
+    subscores: dict[str, float] = Field(default_factory=dict)
+    score: float
+    signal: SignalType
+    risk_level: str
+    confidence: str
+    reasons: list[dict[str, str]] = Field(default_factory=list)
+    summaries: dict[str, str] = Field(default_factory=dict)
+    technical_summary: str
 
 
 class SeedSummaryOut(BaseModel):

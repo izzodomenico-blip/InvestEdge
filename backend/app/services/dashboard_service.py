@@ -33,6 +33,14 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         ORDER BY risk_level
         """
     ).fetchall()
+    signal_rows = connection.execute(
+        """
+        SELECT signal, COUNT(*) AS count
+        FROM signals
+        GROUP BY signal
+        ORDER BY signal
+        """
+    ).fetchall()
 
     latest_signals = list_signals(connection, limit=5)
     assets = list_assets(connection)
@@ -59,7 +67,16 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         else None,
         asset_type_breakdown={row["asset_type"]: row["count"] for row in asset_type_rows},
         risk_breakdown={row["risk_level"]: row["count"] for row in risk_rows},
+        signal_breakdown={row["signal"]: row["count"] for row in signal_rows},
         latest_signals=latest_signals,
         top_assets=sorted_by_score[:5],
         weakest_assets=list(reversed(sorted_by_score[-5:])),
+        risky_assets=sorted(
+            assets,
+            key=lambda asset: (
+                {"very_high": 3, "high": 2, "medium": 1, "low": 0}.get(asset.risk_level.lower(), 0),
+                asset.score or 0,
+            ),
+            reverse=True,
+        )[:5],
     )

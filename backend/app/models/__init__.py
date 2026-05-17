@@ -7,6 +7,7 @@ from backend.app.models.schemas import (
     PricePointOut,
     SeedSummaryOut,
     SignalOut,
+    TechnicalAnalysisOut,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "PricePointOut",
     "SeedSummaryOut",
     "SignalOut",
+    "TechnicalAnalysisOut",
 ]

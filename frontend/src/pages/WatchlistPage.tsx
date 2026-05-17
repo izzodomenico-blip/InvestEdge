@@ -87,7 +87,7 @@ export function WatchlistPage() {
 
         {!loading && !error && assets.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse">
+            <table className="w-full min-w-[1120px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
                   <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
@@ -97,7 +97,9 @@ export function WatchlistPage() {
                   <th className="px-3 pb-3 text-right font-medium">Giorno</th>
                   <th className="px-3 pb-3 text-center font-medium">Segnale</th>
                   <th className="px-3 pb-3 text-right font-medium">Score</th>
-                  <th className="px-3 pb-3 pr-0 font-medium">Rischio</th>
+                  <th className="px-3 pb-3 font-medium">Confidenza</th>
+                  <th className="px-3 pb-3 font-medium">Rischio</th>
+                  <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
@@ -105,7 +107,7 @@ export function WatchlistPage() {
                   <tr
                     key={asset.symbol}
                     onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
-                    className="cursor-pointer text-sm transition hover:bg-cyan-400/5"
+                    className="cursor-pointer align-top text-sm transition hover:bg-cyan-400/5"
                   >
                     <td className="px-3 py-4 pl-0">
                       <p className="font-semibold text-white">{asset.symbol}</p>
@@ -121,7 +123,13 @@ export function WatchlistPage() {
                     </td>
                     <td className="px-3 py-4 text-center">{asset.signal ? <SignalBadge signal={asset.signal} /> : "N/D"}</td>
                     <td className="px-3 py-4 text-right text-slate-200">{asset.score == null ? "N/D" : `${asset.score.toFixed(1)}/100`}</td>
-                    <td className="px-3 py-4 pr-0 capitalize text-slate-400">{asset.risk_level.replace("_", " ")}</td>
+                    <td className="px-3 py-4 text-slate-300">{asset.confidence ?? "N/D"}</td>
+                    <td className="px-3 py-4 capitalize text-slate-400">{asset.risk_level.replace("_", " ")}</td>
+                    <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
+                      <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
+                        {asset.technical_summary ?? "N/D"}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

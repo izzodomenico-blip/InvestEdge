@@ -43,6 +43,8 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         daily_change_pct=row["daily_change_pct"],
         score=row["score"],
         signal=row["signal"],
+        confidence=row["confidence"],
+        technical_summary=row["technical_summary"],
         updated_at=row["updated_at"],
     )
 
@@ -51,7 +53,7 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
     latest_price, daily_change_pct = _latest_price_metrics(connection, row["id"])
     signal_row = connection.execute(
         """
-        SELECT score, signal
+        SELECT score, signal, confidence, technical_summary
         FROM signals
         WHERE asset_id = ?
         ORDER BY created_at DESC, id DESC
@@ -74,6 +76,8 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         daily_change_pct=daily_change_pct,
         score=signal_row["score"] if signal_row else None,
         signal=signal_row["signal"] if signal_row else None,
+        confidence=signal_row["confidence"] if signal_row else None,
+        technical_summary=signal_row["technical_summary"] if signal_row else None,
         updated_at=row["updated_at"],
     )
 
@@ -98,7 +102,9 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
                 ELSE ((latest.close - previous.close) / previous.close) * 100
             END AS daily_change_pct,
             sig.score,
-            sig.signal
+            sig.signal,
+            sig.confidence,
+            sig.technical_summary
         FROM assets a
         LEFT JOIN price_history latest
             ON latest.id = (

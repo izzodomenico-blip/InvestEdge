@@ -216,9 +216,10 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             connection.execute(
                 """
                 INSERT INTO signals (
-                    asset_id, symbol, signal, score, risk_level, technical_summary, rationale, source, generated_at, created_at
+                    asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+                    reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
                 """,
                 (
                     asset_id,
@@ -226,8 +227,13 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
                     score["signal"],
                     score["score"],
                     score["risk_level"],
+                    score["confidence"],
                     score["technical_summary"],
+                    json.dumps(score["reasons"]),
+                    json.dumps(score["subscores"]),
+                    json.dumps(score["indicators"]),
                     score["technical_summary"],
+                    SEED_CREATED_AT,
                     SEED_CREATED_AT,
                     SEED_CREATED_AT,
                 ),

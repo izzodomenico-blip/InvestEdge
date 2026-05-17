@@ -5,6 +5,7 @@ type SignalBadgeProps = {
 };
 
 const styles: Record<Signal, string> = {
+  STRONG_BUY: "border-emerald-200/40 bg-emerald-300/15 text-emerald-200",
   BUY: "border-emerald-300/30 bg-emerald-400/10 text-emerald-300",
   HOLD: "border-cyan-300/30 bg-cyan-400/10 text-cyan-300",
   REDUCE: "border-amber-300/30 bg-amber-400/10 text-amber-300",

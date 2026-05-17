@@ -13,6 +13,7 @@ from backend.app.models import (
     PriceHistoryOut,
     SeedSummaryOut,
     SignalOut,
+    TechnicalAnalysisOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.dashboard_service import get_dashboard
@@ -20,6 +21,7 @@ from backend.app.services.portfolio_service import list_portfolio
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.signals_service import list_signals
 from backend.app.services.signals_service import get_signal_by_symbol
+from backend.app.services.technical_analysis_service import get_technical_analysis
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
@@ -81,6 +83,18 @@ def get_prices(symbol: str, limit: int | None = Query(default=None, ge=1, le=100
             detail="Price history empty for this asset. Esegui il seed del database.",
         )
     return prices
+
+
+@router.get("/technical-analysis/{symbol}", response_model=TechnicalAnalysisOut)
+def technical_analysis(symbol: str) -> TechnicalAnalysisOut:
+    with db_session() as connection:
+        analysis = get_technical_analysis(connection, symbol)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Technical analysis not found. Se il database e vuoto, esegui python scripts/seed_database.py --reset.",
+        )
+    return analysis
 
 
 @router.get("/signals", response_model=list[SignalOut])

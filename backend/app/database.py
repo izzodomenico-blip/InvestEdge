@@ -69,14 +69,19 @@ CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER NOT NULL,
     symbol TEXT,
-    signal TEXT NOT NULL CHECK(signal IN ('BUY', 'HOLD', 'REDUCE', 'SELL')),
+    signal TEXT NOT NULL CHECK(signal IN ('STRONG_BUY', 'BUY', 'HOLD', 'REDUCE', 'SELL')),
     score REAL NOT NULL,
     risk_level TEXT,
+    confidence TEXT,
     technical_summary TEXT,
+    reasons_json TEXT,
+    subscores_json TEXT,
+    indicators_json TEXT,
     rationale TEXT,
     source TEXT NOT NULL DEFAULT 'scoring_engine',
     generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
@@ -106,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
+CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 """
@@ -120,10 +126,59 @@ MIGRATIONS = {
     "signals": [
         ("symbol", "ALTER TABLE signals ADD COLUMN symbol TEXT"),
         ("risk_level", "ALTER TABLE signals ADD COLUMN risk_level TEXT"),
+        ("confidence", "ALTER TABLE signals ADD COLUMN confidence TEXT"),
         ("technical_summary", "ALTER TABLE signals ADD COLUMN technical_summary TEXT"),
-        ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("reasons_json", "ALTER TABLE signals ADD COLUMN reasons_json TEXT"),
+        ("subscores_json", "ALTER TABLE signals ADD COLUMN subscores_json TEXT"),
+        ("indicators_json", "ALTER TABLE signals ADD COLUMN indicators_json TEXT"),
+        ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT"),
+        ("updated_at", "ALTER TABLE signals ADD COLUMN updated_at TEXT"),
     ],
 }
+
+
+SIGNALS_REBUILD_SQL = """
+DROP TABLE IF EXISTS signals_new;
+
+CREATE TABLE signals_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL,
+    symbol TEXT,
+    signal TEXT NOT NULL CHECK(signal IN ('STRONG_BUY', 'BUY', 'HOLD', 'REDUCE', 'SELL')),
+    score REAL NOT NULL,
+    risk_level TEXT,
+    confidence TEXT,
+    technical_summary TEXT,
+    reasons_json TEXT,
+    subscores_json TEXT,
+    indicators_json TEXT,
+    rationale TEXT,
+    source TEXT NOT NULL DEFAULT 'scoring_engine',
+    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);
+
+INSERT INTO signals_new (
+    id, asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+    reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
+)
+SELECT
+    id, asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+    reasons_json,
+    subscores_json,
+    indicators_json,
+    rationale,
+    source,
+    COALESCE(generated_at, CURRENT_TIMESTAMP),
+    COALESCE(created_at, generated_at, CURRENT_TIMESTAMP),
+    COALESCE(updated_at, created_at, generated_at, CURRENT_TIMESTAMP)
+FROM signals;
+
+DROP TABLE signals;
+ALTER TABLE signals_new RENAME TO signals;
+"""
 
 
 def _database_file() -> str:
@@ -151,6 +206,14 @@ def migrate_db(connection: sqlite3.Connection) -> None:
             if column_name not in columns:
                 connection.execute(statement)
                 columns.add(column_name)
+
+    signal_schema = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'signals'"
+    ).fetchone()
+    if signal_schema and "STRONG_BUY" not in signal_schema["sql"]:
+        connection.executescript(SIGNALS_REBUILD_SQL)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at)")
 
 
 @contextmanager

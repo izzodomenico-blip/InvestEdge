@@ -38,7 +38,29 @@ Lo script:
 - rimuove i dati seed precedenti con `--reset`
 - inserisce 25 asset tra azioni USA, ETF, cripto, bond ed ETF obbligazionari
 - genera 2 anni di storico prezzi giornaliero
-- calcola indicatori tecnici e segnali BUY/HOLD/REDUCE/SELL
+- calcola indicatori tecnici avanzati e segnali STRONG_BUY/BUY/HOLD/REDUCE/SELL
+
+## Analisi tecnica
+
+Il motore in `backend/app/services/technical_analysis.py` usa solo pandas e numpy. Gli indicatori disponibili includono:
+
+- medie SMA 10/20/50/100/200 ed EMA 12/26/50/200
+- momentum: RSI 14, MACD, histogram, Stochastic, CCI 20, ROC 12
+- volatilita: Bollinger Bands, ATR 14, volatilita annualizzata 30 giorni, max drawdown
+- trend: ADX 14, +DI, -DI, Supertrend, Ichimoku
+- volume: OBV, volume SMA 20, volume ratio
+- supporti/resistenze tramite pivot locali su high/low
+
+Lo scoring e spiegabile e combina:
+
+- trend_score, peso 30%
+- momentum_score, peso 25%
+- volatility_score, peso 15%
+- volume_score, peso 10%
+- support_resistance_score, peso 10%
+- risk_penalty, peso 10%
+
+Ogni segnale salva score, confidence, risk_level, motivazioni, sotto-score e indicatori usati.
 
 ## Avvio backend
 
@@ -46,7 +68,7 @@ Lo script:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
-uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+backend\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
 Endpoint iniziali:
@@ -56,13 +78,14 @@ Endpoint iniziali:
 - `GET /assets/{symbol}`
 - `POST /assets`
 - `GET /prices/{symbol}`
+- `GET /technical-analysis/{symbol}`
 - `GET /portfolio`
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
 - `POST /admin/seed?reset=true`
 
-La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8000/docs`.
+La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8001/docs`.
 
 ## Avvio frontend
 

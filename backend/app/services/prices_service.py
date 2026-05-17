@@ -80,9 +80,14 @@ def get_price_history(
             sma_200=_clean_float(row.get("sma_200")),
             ema_12=_clean_float(row.get("ema_12")),
             ema_26=_clean_float(row.get("ema_26")),
+            ema_50=_clean_float(row.get("ema_50")),
+            ema_200=_clean_float(row.get("ema_200")),
             rsi_14=_clean_float(row.get("rsi_14")),
             macd_line=_clean_float(row.get("macd_line")),
             macd_signal=_clean_float(row.get("macd_signal")),
+            macd_histogram=_clean_float(row.get("macd_histogram")),
+            bollinger_upper=_clean_float(row.get("bollinger_upper")),
+            bollinger_lower=_clean_float(row.get("bollinger_lower")),
         )
         for _, row in enriched.iterrows()
     ]
