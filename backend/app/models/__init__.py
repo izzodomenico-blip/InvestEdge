@@ -3,6 +3,9 @@ from backend.app.models.schemas import (
     AssetOut,
     DashboardOut,
     PortfolioPositionOut,
+    PriceHistoryOut,
+    PricePointOut,
+    SeedSummaryOut,
     SignalOut,
 )
 
@@ -11,5 +14,8 @@ __all__ = [
     "AssetOut",
     "DashboardOut",
     "PortfolioPositionOut",
+    "PriceHistoryOut",
+    "PricePointOut",
+    "SeedSummaryOut",
     "SignalOut",
 ]

@@ -12,8 +12,9 @@ def _signal_from_row(row: sqlite3.Row) -> SignalOut:
         symbol=row["symbol"],
         signal=row["signal"],
         score=row["score"],
-        rationale=row["rationale"],
-        generated_at=row["generated_at"],
+        risk_level=row["risk_level"],
+        technical_summary=row["technical_summary"],
+        created_at=row["created_at"],
     )
 
 
@@ -23,16 +24,42 @@ def list_signals(connection: sqlite3.Connection, limit: int = 50) -> list[Signal
         SELECT
             s.id,
             s.asset_id,
-            a.symbol,
+            COALESCE(s.symbol, a.symbol) AS symbol,
             s.signal,
             s.score,
-            s.rationale,
-            s.generated_at
+            COALESCE(s.risk_level, a.risk_level) AS risk_level,
+            COALESCE(s.technical_summary, s.rationale) AS technical_summary,
+            COALESCE(s.created_at, s.generated_at) AS created_at
         FROM signals s
         JOIN assets a ON a.id = s.asset_id
-        ORDER BY s.generated_at DESC
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT ?
         """,
         (limit,),
     ).fetchall()
     return [_signal_from_row(row) for row in rows]
+
+
+def get_signal_by_symbol(connection: sqlite3.Connection, symbol: str) -> SignalOut | None:
+    row = connection.execute(
+        """
+        SELECT
+            s.id,
+            s.asset_id,
+            COALESCE(s.symbol, a.symbol) AS symbol,
+            s.signal,
+            s.score,
+            COALESCE(s.risk_level, a.risk_level) AS risk_level,
+            COALESCE(s.technical_summary, s.rationale) AS technical_summary,
+            COALESCE(s.created_at, s.generated_at) AS created_at
+        FROM signals s
+        JOIN assets a ON a.id = s.asset_id
+        WHERE UPPER(a.symbol) = UPPER(?)
+        ORDER BY s.created_at DESC, s.id DESC
+        LIMIT 1
+        """,
+        (symbol,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _signal_from_row(row)

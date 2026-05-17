@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS assets (
     asset_type TEXT NOT NULL,
     exchange TEXT,
     currency TEXT NOT NULL DEFAULT 'USD',
+    sector TEXT,
+    country TEXT,
+    risk_level TEXT NOT NULL DEFAULT 'medium',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(symbol, asset_type)
@@ -65,11 +68,15 @@ CREATE TABLE IF NOT EXISTS simulated_orders (
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER NOT NULL,
+    symbol TEXT,
     signal TEXT NOT NULL CHECK(signal IN ('BUY', 'HOLD', 'REDUCE', 'SELL')),
     score REAL NOT NULL,
+    risk_level TEXT,
+    technical_summary TEXT,
     rationale TEXT,
     source TEXT NOT NULL DEFAULT 'scoring_engine',
     generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
@@ -104,6 +111,21 @@ CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 """
 
 
+MIGRATIONS = {
+    "assets": [
+        ("sector", "ALTER TABLE assets ADD COLUMN sector TEXT"),
+        ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
+        ("risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'medium'"),
+    ],
+    "signals": [
+        ("symbol", "ALTER TABLE signals ADD COLUMN symbol TEXT"),
+        ("risk_level", "ALTER TABLE signals ADD COLUMN risk_level TEXT"),
+        ("technical_summary", "ALTER TABLE signals ADD COLUMN technical_summary TEXT"),
+        ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    ],
+}
+
+
 def _database_file() -> str:
     settings = get_settings()
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +137,20 @@ def get_connection() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON;")
     return connection
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row["name"] for row in rows}
+
+
+def migrate_db(connection: sqlite3.Connection) -> None:
+    for table_name, migrations in MIGRATIONS.items():
+        columns = _table_columns(connection, table_name)
+        for column_name, statement in migrations:
+            if column_name not in columns:
+                connection.execute(statement)
+                columns.add(column_name)
 
 
 @contextmanager
@@ -133,3 +169,4 @@ def db_session() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with get_connection() as connection:
         connection.executescript(SCHEMA)
+        migrate_db(connection)

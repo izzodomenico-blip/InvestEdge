@@ -5,6 +5,29 @@ import sqlite3
 from backend.app.models import AssetCreate, AssetOut
 
 
+def _latest_price_metrics(connection: sqlite3.Connection, asset_id: int) -> tuple[float | None, float | None]:
+    rows = connection.execute(
+        """
+        SELECT close
+        FROM price_history
+        WHERE asset_id = ?
+        ORDER BY date DESC
+        LIMIT 2
+        """,
+        (asset_id,),
+    ).fetchall()
+
+    if not rows:
+        return None, None
+
+    latest = float(rows[0]["close"])
+    if len(rows) < 2 or rows[1]["close"] in (None, 0):
+        return latest, None
+
+    previous = float(rows[1]["close"])
+    return latest, ((latest - previous) / previous) * 100
+
+
 def _asset_from_row(row: sqlite3.Row) -> AssetOut:
     return AssetOut(
         id=row["id"],
@@ -13,25 +36,120 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         asset_type=row["asset_type"],
         exchange=row["exchange"],
         currency=row["currency"],
+        sector=row["sector"],
+        country=row["country"],
+        risk_level=row["risk_level"],
+        last_price=row["last_price"],
+        daily_change_pct=row["daily_change_pct"],
+        score=row["score"],
+        signal=row["signal"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> AssetOut:
+    latest_price, daily_change_pct = _latest_price_metrics(connection, row["id"])
+    signal_row = connection.execute(
+        """
+        SELECT score, signal
+        FROM signals
+        WHERE asset_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (row["id"],),
+    ).fetchone()
+
+    return AssetOut(
+        id=row["id"],
+        symbol=row["symbol"],
+        name=row["name"],
+        asset_type=row["asset_type"],
+        exchange=row["exchange"],
+        currency=row["currency"],
+        sector=row["sector"],
+        country=row["country"],
+        risk_level=row["risk_level"],
+        last_price=latest_price,
+        daily_change_pct=daily_change_pct,
+        score=signal_row["score"] if signal_row else None,
+        signal=signal_row["signal"] if signal_row else None,
+        updated_at=row["updated_at"],
     )
 
 
 def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
     rows = connection.execute(
         """
-        SELECT id, symbol, name, asset_type, exchange, currency
-        FROM assets
-        ORDER BY asset_type, symbol
+        SELECT
+            a.id,
+            a.symbol,
+            a.name,
+            a.asset_type,
+            a.exchange,
+            a.currency,
+            a.sector,
+            a.country,
+            a.risk_level,
+            a.updated_at,
+            latest.close AS last_price,
+            CASE
+                WHEN previous.close IS NULL OR previous.close = 0 THEN NULL
+                ELSE ((latest.close - previous.close) / previous.close) * 100
+            END AS daily_change_pct,
+            sig.score,
+            sig.signal
+        FROM assets a
+        LEFT JOIN price_history latest
+            ON latest.id = (
+                SELECT ph.id
+                FROM price_history ph
+                WHERE ph.asset_id = a.id
+                ORDER BY ph.date DESC
+                LIMIT 1
+            )
+        LEFT JOIN price_history previous
+            ON previous.id = (
+                SELECT ph.id
+                FROM price_history ph
+                WHERE ph.asset_id = a.id
+                ORDER BY ph.date DESC
+                LIMIT 1 OFFSET 1
+            )
+        LEFT JOIN signals sig
+            ON sig.id = (
+                SELECT s.id
+                FROM signals s
+                WHERE s.asset_id = a.id
+                ORDER BY s.created_at DESC, s.id DESC
+                LIMIT 1
+            )
+        ORDER BY a.asset_type, a.symbol
         """
     ).fetchall()
     return [_asset_from_row(row) for row in rows]
 
 
+def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
+    row = connection.execute(
+        """
+        SELECT id, symbol, name, asset_type, exchange, currency, sector, country, risk_level, updated_at
+        FROM assets
+        WHERE UPPER(symbol) = UPPER(?)
+        LIMIT 1
+        """,
+        (symbol,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _asset_from_base_row(connection, row)
+
+
 def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetOut:
     cursor = connection.execute(
         """
-        INSERT INTO assets (symbol, name, asset_type, exchange, currency)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO assets (symbol, name, asset_type, exchange, currency, sector, country, risk_level)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.symbol.upper(),
@@ -39,14 +157,17 @@ def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetO
             payload.asset_type,
             payload.exchange,
             payload.currency.upper(),
+            payload.sector,
+            payload.country,
+            payload.risk_level,
         ),
     )
     row = connection.execute(
         """
-        SELECT id, symbol, name, asset_type, exchange, currency
+        SELECT id, symbol, name, asset_type, exchange, currency, sector, country, risk_level, updated_at
         FROM assets
         WHERE id = ?
         """,
         (cursor.lastrowid,),
     ).fetchone()
-    return _asset_from_row(row)
+    return _asset_from_base_row(connection, row)

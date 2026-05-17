@@ -1,4 +1,4 @@
-import type { Signal } from "../lib/mockData";
+import type { Signal } from "../lib/api";
 
 type SignalBadgeProps = {
   signal: Signal;
