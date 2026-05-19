@@ -17,6 +17,10 @@ from backend.app.models import (
     DataRefreshAllOut,
     DataRefreshResultOut,
     DataStatusOut,
+    NewsItemOut,
+    NewsRefreshResultOut,
+    NewsSentimentSummaryOut,
+    NewsStatusOut,
     OrderSimulationOut,
     PortfolioInitIn,
     PortfolioRecommendationOut,
@@ -33,6 +37,7 @@ from backend.app.services.assets_service import create_asset, get_asset_by_symbo
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.signals_service import list_signals
@@ -44,6 +49,7 @@ router = APIRouter()
 portfolio_engine = PortfolioEngine()
 backtest_engine = BacktestEngine()
 market_data_service = MarketDataService()
+news_engine = NewsEngine()
 
 
 @router.get("/health")
@@ -254,3 +260,44 @@ def data_usage() -> list[ApiUsageOut]:
 @router.post("/admin/seed", response_model=SeedSummaryOut)
 def admin_seed(reset: bool = Query(default=False)) -> SeedSummaryOut:
     return SeedSummaryOut(**seed_database(reset=reset))
+
+
+@router.get("/news", response_model=list[NewsItemOut])
+def list_news(
+    limit: int = Query(default=50, ge=1, le=200),
+    symbol: str | None = Query(default=None, min_length=1, max_length=24),
+) -> list[NewsItemOut]:
+    with db_session() as connection:
+        rows = news_engine.get_market_news(connection, limit=limit, symbol=symbol)
+    return [NewsItemOut(**row) for row in rows]
+
+
+@router.get("/news/status", response_model=NewsStatusOut)
+def news_status() -> NewsStatusOut:
+    with db_session() as connection:
+        payload = news_engine.get_status(connection)
+    return NewsStatusOut(**payload)
+
+
+@router.get("/news/sentiment/{symbol}", response_model=NewsSentimentSummaryOut)
+def news_sentiment(symbol: str, lookback_days: int = Query(default=7, ge=1, le=60)) -> NewsSentimentSummaryOut:
+    with db_session() as connection:
+        summary = news_engine.get_news_sentiment_summary(connection, symbol, lookback_days=lookback_days)
+    return NewsSentimentSummaryOut(**summary)
+
+
+@router.get("/news/{symbol}", response_model=list[NewsItemOut])
+def news_for_symbol(symbol: str, limit: int = Query(default=50, ge=1, le=200)) -> list[NewsItemOut]:
+    with db_session() as connection:
+        rows = news_engine.get_news_for_symbol(connection, symbol, limit=limit)
+    return [NewsItemOut(**row) for row in rows]
+
+
+@router.post("/news/refresh/{symbol}", response_model=NewsRefreshResultOut)
+def refresh_news(symbol: str, force: bool = Query(default=False)) -> NewsRefreshResultOut:
+    try:
+        with db_session() as connection:
+            payload = news_engine.refresh_news_for_symbol(connection, symbol, force=force)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return NewsRefreshResultOut(**payload)

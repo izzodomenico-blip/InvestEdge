@@ -4,7 +4,13 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
-import { apiGet, type Asset, type PriceHistory, type TechnicalAnalysis } from "../lib/api";
+import {
+  apiGet,
+  type Asset,
+  type NewsSentimentSummary,
+  type PriceHistory,
+  type TechnicalAnalysis,
+} from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
 const subscoreLabels: Record<string, string> = {
@@ -40,6 +46,7 @@ export function AnalysisPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [prices, setPrices] = useState<PriceHistory | null>(null);
   const [analysis, setAnalysis] = useState<TechnicalAnalysis | null>(null);
+  const [newsSummary, setNewsSummary] = useState<NewsSentimentSummary | null>(null);
   const [loadingAssets, setLoadingAssets] = useState(true);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,15 +85,18 @@ export function AnalysisPage() {
       setLoadingAnalysis(true);
       setError(null);
       try {
-        const [priceResponse, analysisResponse] = await Promise.all([
+        const [priceResponse, analysisResponse, sentimentResponse] = await Promise.all([
           apiGet<PriceHistory>(`/prices/${selectedSymbol}`),
           apiGet<TechnicalAnalysis>(`/technical-analysis/${selectedSymbol}`),
+          apiGet<NewsSentimentSummary>(`/news/sentiment/${selectedSymbol}?lookback_days=7`).catch(() => null),
         ]);
         setPrices(priceResponse);
         setAnalysis(analysisResponse);
+        setNewsSummary(sentimentResponse);
       } catch (err) {
         setPrices(null);
         setAnalysis(null);
+        setNewsSummary(null);
         setError(err instanceof Error ? err.message : "Asset non trovato o analisi non disponibile.");
       } finally {
         setLoadingAnalysis(false);
@@ -315,6 +325,99 @@ export function AnalysisPage() {
 
           <Panel title="Sintesi tecnica">
             <p className="text-sm leading-6 text-slate-300">{analysis.technical_summary}</p>
+          </Panel>
+
+          <Panel title="News e sentiment asset">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Technical score</p>
+                <p className="mt-2 text-xl font-semibold text-white">
+                  {analysis.technical_score?.toFixed(1) ?? analysis.score.toFixed(1)}/100
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">News score</p>
+                <p
+                  className={`mt-2 text-xl font-semibold ${
+                    analysis.news_score > 0
+                      ? "text-emerald-300"
+                      : analysis.news_score < 0
+                        ? "text-rose-300"
+                        : "text-white"
+                  }`}
+                >
+                  {analysis.news_score >= 0 ? "+" : ""}
+                  {analysis.news_score.toFixed(1)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Max ±{Math.abs(analysis.news_score).toFixed(0)} reale</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Final score</p>
+                <p className="mt-2 text-xl font-semibold text-white">
+                  {(analysis.final_score ?? analysis.score).toFixed(1)}/100
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Sentiment / impact</p>
+                <p className="mt-2 text-sm font-semibold text-white">
+                  {analysis.news_sentiment_label ?? "NEUTRAL"} · {analysis.news_impact_level ?? "LOW"}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">{analysis.news_count} news ultimi 7gg</p>
+              </div>
+            </div>
+
+            {newsSummary && newsSummary.news_count === 0 && (
+              <p className="mt-4 text-sm text-slate-400">
+                Nessuna news recente per questo asset. Aggiorna le news dal modulo News o abilita real news in `.env`.
+              </p>
+            )}
+
+            {newsSummary && newsSummary.latest_news.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {newsSummary.latest_news.map((item) => (
+                  <article key={item.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs uppercase text-slate-500">
+                      {item.source ?? "fonte"} · {item.published_at ?? "N/D"}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-white">{item.title}</p>
+                    {item.summary && <p className="mt-1 text-sm text-slate-300">{item.summary}</p>}
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span
+                        className={`inline-flex rounded-md border px-2 py-1 font-semibold ${
+                          item.sentiment_label === "POSITIVE"
+                            ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
+                            : item.sentiment_label === "NEGATIVE"
+                              ? "border-rose-300/30 bg-rose-400/10 text-rose-200"
+                              : "border-slate-700 bg-slate-900 text-slate-200"
+                        }`}
+                      >
+                        {item.sentiment_label} {item.sentiment_score >= 0 ? "+" : ""}
+                        {item.sentiment_score.toFixed(2)}
+                      </span>
+                      <span className="inline-flex rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-300">
+                        Impact {item.impact_level}
+                      </span>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex rounded-md border border-cyan-300/30 bg-cyan-400/10 px-2 py-1 font-semibold text-cyan-100"
+                        >
+                          Apri
+                        </a>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            {!newsSummary && (
+              <p className="mt-4 text-sm text-slate-400">
+                Caricamento sentiment in corso. Se non arriva, le news potrebbero essere disattivate o il database vuoto.
+              </p>
+            )}
           </Panel>
         </>
       )}

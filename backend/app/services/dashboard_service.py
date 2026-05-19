@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 
-from backend.app.models import DashboardOut
+from backend.app.models import DashboardOut, NewsItemOut
 from backend.app.services.assets_service import list_assets
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signals_service import list_signals
 
 
 portfolio_engine = PortfolioEngine()
 market_data_service = MarketDataService()
+news_engine = NewsEngine()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
@@ -112,4 +114,78 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         ],
         latest_backtest=dict(latest_backtest_row) if latest_backtest_row else None,
         data_status=market_data_service.get_global_status(connection),
+        high_impact_news=_high_impact_news(connection),
+        market_sentiment=_market_sentiment(connection),
     )
+
+
+def _high_impact_news(connection: sqlite3.Connection, limit: int = 5) -> list[NewsItemOut]:
+    rows = connection.execute(
+        """
+        SELECT id, asset_id, symbol, provider, title, summary, url, source, published_at,
+               sentiment_score, sentiment_label, impact_level, relevance_score, created_at
+        FROM news_items
+        WHERE impact_level = 'HIGH'
+        ORDER BY COALESCE(published_at, created_at) DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        NewsItemOut(
+            id=row["id"],
+            asset_id=row["asset_id"],
+            symbol=row["symbol"],
+            provider=row["provider"],
+            title=row["title"],
+            summary=row["summary"],
+            url=row["url"],
+            source=row["source"],
+            published_at=row["published_at"],
+            sentiment_score=float(row["sentiment_score"] or 0.0),
+            sentiment_label=row["sentiment_label"] or "NEUTRAL",
+            impact_level=row["impact_level"] or "LOW",
+            relevance_score=float(row["relevance_score"] or 0.0),
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def _market_sentiment(connection: sqlite3.Connection) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN sentiment_label = 'POSITIVE' THEN 1 ELSE 0 END) AS positive,
+            SUM(CASE WHEN sentiment_label = 'NEGATIVE' THEN 1 ELSE 0 END) AS negative,
+            SUM(CASE WHEN sentiment_label = 'NEUTRAL' THEN 1 ELSE 0 END) AS neutral,
+            AVG(sentiment_score) AS avg_score
+        FROM news_items
+        """
+    ).fetchone()
+    total = int(row["total"] or 0) if row else 0
+    if total == 0:
+        return {
+            "news_count": 0,
+            "average_sentiment_score": 0.0,
+            "sentiment_label": "NEUTRAL",
+            "positive_count": 0,
+            "negative_count": 0,
+            "neutral_count": 0,
+        }
+    average = float(row["avg_score"] or 0.0)
+    if average > 0.1:
+        label = "POSITIVE"
+    elif average < -0.1:
+        label = "NEGATIVE"
+    else:
+        label = "NEUTRAL"
+    return {
+        "news_count": total,
+        "average_sentiment_score": round(average, 3),
+        "sentiment_label": label,
+        "positive_count": int(row["positive"] or 0),
+        "negative_count": int(row["negative"] or 0),
+        "neutral_count": int(row["neutral"] or 0),
+    }

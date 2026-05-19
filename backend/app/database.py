@@ -136,13 +136,20 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE TABLE IF NOT EXISTS news_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER,
+    symbol TEXT,
+    provider TEXT,
     title TEXT NOT NULL,
+    summary TEXT,
     url TEXT,
     source TEXT,
     published_at TEXT,
     sentiment_score REAL,
-    summary TEXT,
+    sentiment_label TEXT,
+    impact_level TEXT,
+    relevance_score REAL,
+    raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
 );
 
@@ -250,6 +257,9 @@ CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(s
 CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
 CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_symbol ON news_items(symbol);
+CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url) WHERE url IS NOT NULL AND url <> '';
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
@@ -314,6 +324,15 @@ MIGRATIONS = {
     "backtest_runs": [
         ("benchmark_return_percent", "ALTER TABLE backtest_runs ADD COLUMN benchmark_return_percent REAL NOT NULL DEFAULT 0"),
         ("alpha_vs_benchmark", "ALTER TABLE backtest_runs ADD COLUMN alpha_vs_benchmark REAL NOT NULL DEFAULT 0"),
+    ],
+    "news_items": [
+        ("symbol", "ALTER TABLE news_items ADD COLUMN symbol TEXT"),
+        ("provider", "ALTER TABLE news_items ADD COLUMN provider TEXT"),
+        ("sentiment_label", "ALTER TABLE news_items ADD COLUMN sentiment_label TEXT"),
+        ("impact_level", "ALTER TABLE news_items ADD COLUMN impact_level TEXT"),
+        ("relevance_score", "ALTER TABLE news_items ADD COLUMN relevance_score REAL"),
+        ("raw_json", "ALTER TABLE news_items ADD COLUMN raw_json TEXT"),
+        ("updated_at", "ALTER TABLE news_items ADD COLUMN updated_at TEXT"),
     ],
 }
 
@@ -401,6 +420,11 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     )
     connection.execute("CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_symbol ON news_items(symbol)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at)")
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url) WHERE url IS NOT NULL AND url <> ''"
+    )
 
 
 @contextmanager

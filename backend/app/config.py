@@ -43,6 +43,10 @@ class Settings:
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
+    enable_real_news: bool = False
+    news_cache_ttl_hours: int = 6
+    news_daily_limit: int = 20
+    news_sentiment_weight: int = 5
 
     @property
     def database_url(self) -> str:
@@ -77,6 +81,10 @@ class Settings:
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),
+            enable_real_news=os.getenv("ENABLE_REAL_NEWS", "false").lower() == "true",
+            news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
+            news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
+            news_sentiment_weight=int(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),
         )
 
 

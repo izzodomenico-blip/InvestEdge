@@ -148,6 +148,70 @@ COINGECKO_DAILY_LIMIT=100
 FRED_DAILY_LIMIT=100
 ```
 
+## News e sentiment base
+
+Lo Step 7 aggiunge un modulo news con sentiment euristico per supportare le decisioni di investimento. Le news sono un supporto decisionale, non una garanzia di previsione, e il sentiment e una stima keyword-based, non un modello di machine learning.
+
+Provider news predisposti:
+
+- `AlphaVantageNewsProvider`: integra Alpha Vantage News & Sentiment se `ENABLE_REAL_NEWS=true` e la API key Alpha Vantage e configurata.
+- `MockNewsProvider`: usato per test, fallback e modalita demo.
+
+Sorgenti news:
+
+- `demo` (mock): generate da `MockNewsProvider`, deterministiche per symbol, usate quando `ENABLE_REAL_NEWS=false`, quando la API key manca, quando il provider fallisce o il limite giornaliero e raggiunto.
+- `cache`: la cache `api_cache` viene condivisa con i provider prezzo distinguendo `provider` e `endpoint`. Il TTL e definito da `NEWS_CACHE_TTL_HOURS`.
+- `real`: news scaricate dal provider reale e salvate in `news_items` con sentiment, impact, relevance e raw payload.
+
+Regole operative:
+
+- nessuna chiamata automatica all'apertura della dashboard: il refresh news parte solo da `POST /news/refresh/{symbol}` o dalla pagina `News`;
+- se `ENABLE_REAL_NEWS=false` il backend ricade su `mock_news` e mostra `News reali disattivate. Stai usando news demo/locali.`;
+- se la API key Alpha Vantage manca, il backend ricade su `mock_news` e mostra `Provider news non configurato.`;
+- se il limite giornaliero e raggiunto, il backend usa news locali e mostra `Limite news giornaliero raggiunto, uso news locali.`;
+- le news vengono deduplicate per `url` (indice unico) e per coppia `title + published_at` quando l'url manca;
+- le API key reali non vengono mai stampate nei log, nel frontend, nei test o in questa documentazione.
+
+Sentiment euristico:
+
+- `sentiment_label`: `POSITIVE`, `NEGATIVE`, `NEUTRAL`;
+- `sentiment_score`: range `-1.0 ... +1.0`;
+- `impact_level`: `LOW`, `MEDIUM`, `HIGH` (rafforzato da keyword critiche come `bankruptcy`, `earnings beat`, `lawsuit`, `guidance cut`);
+- `relevance_score`: range `0 ... 100`;
+- keyword positive: `earnings beat`, `revenue growth`, `raises guidance`, `upgrade`, `partnership`, `approval`, `buyback`, `dividend increase`;
+- keyword negative: `earnings miss`, `revenue decline`, `lawsuit`, `downgrade`, `investigation`, `recall`, `bankruptcy`, `guidance cut`, `regulatory risk`.
+
+News score nello scoring:
+
+- `technical_score` resta invariato e visibile;
+- `news_score` opzionale ricavato dall'aggregato news degli ultimi 7 giorni, limitato a `±NEWS_SENTIMENT_WEIGHT` punti (default ±5);
+- `final_score = clamp(technical_score + news_score, 0, 100)`;
+- se non ci sono news recenti `news_score = 0` e `final_score = technical_score`;
+- i campi `technical_score`, `news_score`, `final_score`, `news_sentiment_label`, `news_impact_level`, `news_count` sono restituiti dall'endpoint `GET /technical-analysis/{symbol}`.
+
+Variabili `.env` per le news:
+
+```env
+ENABLE_REAL_NEWS=false
+NEWS_CACHE_TTL_HOURS=6
+NEWS_DAILY_LIMIT=20
+NEWS_SENTIMENT_WEIGHT=5
+```
+
+Endpoint news:
+
+- `GET /news?limit=50&symbol=...` lista news recenti, opzionalmente filtrate per asset.
+- `GET /news/{symbol}` news per asset.
+- `POST /news/refresh/{symbol}?force=false` aggiorna le news del symbol rispettando cache e rate limit.
+- `GET /news/sentiment/{symbol}?lookback_days=7` aggregato sentiment (count per classe, score medio, impatto, ultime 5 news).
+- `GET /news/status` stato `enable_real_news`, provider, uso API news, cache, ultimo refresh.
+
+Note finali sulle news:
+
+- il sentiment e euristico e basato su keyword, non e una previsione certa ne sostituisce una valutazione fondamentale;
+- non c'e scraping web: il provider reale chiama solo l'endpoint ufficiale Alpha Vantage News & Sentiment;
+- la UI non si blocca se le news falliscono, mostra messaggi di fallback chiari.
+
 ## Avvio backend
 
 ```powershell
@@ -182,6 +246,11 @@ Endpoint iniziali:
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
+- `GET /news?limit=50&symbol=AAPL`
+- `GET /news/{symbol}`
+- `POST /news/refresh/{symbol}?force=false`
+- `GET /news/sentiment/{symbol}?lookback_days=7`
+- `GET /news/status`
 - `POST /admin/seed?reset=true`
 
 Esempio inizializzazione portafoglio:
@@ -289,7 +358,7 @@ Il database SQLite viene creato automaticamente in `data/investedge.db` al primo
 
 ## Prossime estensioni previste
 
-- news e sentiment reali tramite provider autorizzati
 - analisi scenario e confronti multi-strategia
 - gestione capitale e pesi avanzata
+- valutazione fondamentale opzionale a complemento dell'analisi tecnica
 - integrazioni broker solo in una fase futura e solo se esplicitamente abilitate

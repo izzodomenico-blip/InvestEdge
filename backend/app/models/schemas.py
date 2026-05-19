@@ -132,6 +132,8 @@ class DashboardOut(BaseModel):
     portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
     latest_backtest: dict[str, float | int | str | None] | None = None
     data_status: dict[str, object] = Field(default_factory=dict)
+    high_impact_news: list["NewsItemOut"] = Field(default_factory=list)
+    market_sentiment: dict[str, object] = Field(default_factory=dict)
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -148,6 +150,12 @@ class TechnicalAnalysisOut(BaseModel):
     reasons: list[dict[str, str]] = Field(default_factory=list)
     summaries: dict[str, str] = Field(default_factory=dict)
     technical_summary: str
+    technical_score: float | None = None
+    news_score: float = 0.0
+    final_score: float | None = None
+    news_sentiment_label: str | None = None
+    news_impact_level: str | None = None
+    news_count: int = 0
 
 
 class SeedSummaryOut(BaseModel):
@@ -404,3 +412,89 @@ class DataRefreshResultOut(BaseModel):
 class DataRefreshAllOut(BaseModel):
     summary: dict[str, int]
     results: list[DataRefreshResultOut]
+
+
+SentimentLabel = Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]
+ImpactLevel = Literal["LOW", "MEDIUM", "HIGH"]
+
+
+class NewsItemOut(BaseModel):
+    id: int
+    asset_id: int | None = None
+    symbol: str | None = None
+    provider: str | None = None
+    title: str
+    summary: str | None = None
+    url: str | None = None
+    source: str | None = None
+    published_at: str | None = None
+    sentiment_score: float = 0.0
+    sentiment_label: SentimentLabel = "NEUTRAL"
+    impact_level: ImpactLevel = "LOW"
+    relevance_score: float = 0.0
+    created_at: str | None = None
+
+
+class NewsRefreshResultOut(BaseModel):
+    symbol: str
+    provider: str | None = None
+    rows_inserted: int = 0
+    rows_updated: int = 0
+    used_cache: bool = False
+    used_fallback: bool = False
+    message: str
+
+
+class NewsLatestOut(BaseModel):
+    id: int
+    title: str
+    summary: str | None = None
+    url: str | None = None
+    source: str | None = None
+    published_at: str | None = None
+    sentiment_label: SentimentLabel = "NEUTRAL"
+    sentiment_score: float = 0.0
+    impact_level: ImpactLevel = "LOW"
+    relevance_score: float = 0.0
+
+
+class NewsSentimentSummaryOut(BaseModel):
+    symbol: str
+    lookback_days: int
+    news_count: int
+    average_sentiment_score: float
+    sentiment_label: SentimentLabel
+    impact_level: ImpactLevel
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    latest_news: list[NewsLatestOut] = Field(default_factory=list)
+
+
+class NewsProviderStatusOut(BaseModel):
+    provider: str
+    enabled: bool
+    api_key_configured: bool
+    daily_limit: int
+    calls_today: int
+    supports: list[str] = Field(default_factory=list)
+
+
+class NewsDailyUsageOut(BaseModel):
+    provider: str
+    usage_date: str
+    calls_count: int
+    daily_limit: int
+
+
+class NewsStatusOut(BaseModel):
+    enable_real_news: bool
+    provider_status: list[NewsProviderStatusOut]
+    daily_usage: NewsDailyUsageOut
+    cache_status: dict[str, int]
+    last_refresh: str | None = None
+    news_sentiment_weight: int
+    news_cache_ttl_hours: int
+
+
+DashboardOut.model_rebuild()

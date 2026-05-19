@@ -75,6 +75,8 @@ export type DashboardResponse = {
   risky_assets: Asset[];
   latest_backtest: BacktestSummary | null;
   data_status: DataStatus;
+  high_impact_news: NewsItem[];
+  market_sentiment: MarketSentiment;
 };
 
 export type PortfolioPosition = {
@@ -232,6 +234,12 @@ export type TechnicalAnalysis = {
   reasons: Reason[];
   summaries: Record<string, string>;
   technical_summary: string;
+  technical_score: number | null;
+  news_score: number;
+  final_score: number | null;
+  news_sentiment_label: SentimentLabel | null;
+  news_impact_level: ImpactLevel | null;
+  news_count: number;
 };
 
 export type BacktestStrategy = "SCORE_THRESHOLD" | "BUY_AND_HOLD" | "TOP_N_SCORE";
@@ -383,6 +391,97 @@ export type DataRefreshResult = {
 export type DataRefreshAllResult = {
   summary: Record<string, number>;
   results: DataRefreshResult[];
+};
+
+export type SentimentLabel = "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+export type ImpactLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export type NewsItem = {
+  id: number;
+  asset_id: number | null;
+  symbol: string | null;
+  provider: string | null;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  source: string | null;
+  published_at: string | null;
+  sentiment_score: number;
+  sentiment_label: SentimentLabel;
+  impact_level: ImpactLevel;
+  relevance_score: number;
+  created_at: string | null;
+};
+
+export type NewsRefreshResult = {
+  symbol: string;
+  provider: string | null;
+  rows_inserted: number;
+  rows_updated: number;
+  used_cache: boolean;
+  used_fallback: boolean;
+  message: string;
+};
+
+export type NewsLatest = {
+  id: number;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  source: string | null;
+  published_at: string | null;
+  sentiment_label: SentimentLabel;
+  sentiment_score: number;
+  impact_level: ImpactLevel;
+  relevance_score: number;
+};
+
+export type NewsSentimentSummary = {
+  symbol: string;
+  lookback_days: number;
+  news_count: number;
+  average_sentiment_score: number;
+  sentiment_label: SentimentLabel;
+  impact_level: ImpactLevel;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  latest_news: NewsLatest[];
+};
+
+export type NewsProviderStatus = {
+  provider: string;
+  enabled: boolean;
+  api_key_configured: boolean;
+  daily_limit: number;
+  calls_today: number;
+  supports: string[];
+};
+
+export type NewsDailyUsage = {
+  provider: string;
+  usage_date: string;
+  calls_count: number;
+  daily_limit: number;
+};
+
+export type NewsStatus = {
+  enable_real_news: boolean;
+  provider_status: NewsProviderStatus[];
+  daily_usage: NewsDailyUsage;
+  cache_status: Record<string, number>;
+  last_refresh: string | null;
+  news_sentiment_weight: number;
+  news_cache_ttl_hours: number;
+};
+
+export type MarketSentiment = {
+  news_count: number;
+  average_sentiment_score: number;
+  sentiment_label: SentimentLabel;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
 };
 
 async function parseError(response: Response) {

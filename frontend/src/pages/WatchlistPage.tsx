@@ -4,8 +4,20 @@ import { useNavigate } from "react-router-dom";
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
-import { apiGet, type Asset, type PortfolioRecommendation } from "../lib/api";
+import {
+  apiGet,
+  type Asset,
+  type NewsItem,
+  type PortfolioRecommendation,
+  type SentimentLabel,
+  type ImpactLevel,
+} from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
+
+type NewsBadge = {
+  sentiment: SentimentLabel | null;
+  impact: ImpactLevel | null;
+};
 
 const assetTypeLabels: Record<string, string> = {
   stock: "Azione",
@@ -42,6 +54,7 @@ export function WatchlistPage() {
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
+  const [newsBySymbol, setNewsBySymbol] = useState<Map<string, NewsBadge>>(new Map());
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,12 +64,27 @@ export function WatchlistPage() {
       setLoading(true);
       setError(null);
       try {
-        const [assetData, recommendationData] = await Promise.all([
+        const [assetData, recommendationData, newsData] = await Promise.all([
           apiGet<Asset[]>("/assets"),
           apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
+          apiGet<NewsItem[]>("/news?limit=200").catch(() => [] as NewsItem[]),
         ]);
         setAssets(assetData);
         setRecommendations(recommendationData);
+        const aggregated = new Map<string, NewsBadge>();
+        for (const item of newsData) {
+          if (!item.symbol) {
+            continue;
+          }
+          if (aggregated.has(item.symbol)) {
+            continue;
+          }
+          aggregated.set(item.symbol, {
+            sentiment: item.sentiment_label,
+            impact: item.impact_level,
+          });
+        }
+        setNewsBySymbol(aggregated);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Errore durante il caricamento degli asset.");
       } finally {
@@ -121,7 +149,7 @@ export function WatchlistPage() {
 
         {!loading && !error && assets.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1560px] border-collapse">
+            <table className="w-full min-w-[1680px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
                   <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
@@ -138,12 +166,14 @@ export function WatchlistPage() {
                   <th className="px-3 pb-3 font-medium">Source</th>
                   <th className="px-3 pb-3 font-medium">Provider</th>
                   <th className="px-3 pb-3 font-medium">Data prezzo</th>
+                  <th className="px-3 pb-3 font-medium">News</th>
                   <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
                 {filteredAssets.map((asset) => {
                   const recommendation = recommendationBySymbol.get(asset.symbol);
+                  const newsBadge = newsBySymbol.get(asset.symbol);
                   return (
                     <tr
                       key={asset.symbol}
@@ -182,6 +212,26 @@ export function WatchlistPage() {
                       </td>
                       <td className="px-3 py-4 text-slate-300">{asset.provider ?? "Locale"}</td>
                       <td className="px-3 py-4 text-slate-400">{asset.last_price_date ?? "N/D"}</td>
+                      <td className="px-3 py-4">
+                        {newsBadge ? (
+                          <div className="flex flex-col gap-1">
+                            <span
+                              className={`inline-flex w-fit rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+                                newsBadge.sentiment === "POSITIVE"
+                                  ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
+                                  : newsBadge.sentiment === "NEGATIVE"
+                                    ? "border-rose-300/30 bg-rose-400/10 text-rose-200"
+                                    : "border-slate-700 bg-slate-900 text-slate-300"
+                              }`}
+                            >
+                              {newsBadge.sentiment ?? "NEUTRAL"}
+                            </span>
+                            <span className="text-[11px] text-slate-500">Impact {newsBadge.impact ?? "LOW"}</span>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-slate-500">N/D</span>
+                        )}
+                      </td>
                       <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
                         <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
                           {asset.technical_summary ?? "N/D"}

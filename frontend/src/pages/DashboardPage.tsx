@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BadgeDollarSign, BarChart3, Database, ShieldAlert, TrendingUp } from "lucide-react";
+import { Activity, BadgeDollarSign, BarChart3, Database, Newspaper, ShieldAlert, TrendingUp } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -310,6 +310,87 @@ export function DashboardPage() {
               </div>
             ))}
           </div>
+        </Panel>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
+        <Panel title="Ultime news high impact">
+          {dashboard.high_impact_news.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Nessuna news high impact disponibile. Aggiorna le news dal modulo dedicato.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {dashboard.high_impact_news.slice(0, 5).map((item) => (
+                <article key={item.id} className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-4 md:flex-row md:items-start md:justify-between">
+                  <div className="flex gap-3">
+                    <span className="mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-950 text-slate-300">
+                      <Newspaper className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <p className="text-xs uppercase text-slate-500">
+                        {item.symbol ?? "mercato"} · {item.source ?? "fonte"} · {item.published_at ?? "N/D"}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-white">{item.title}</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-flex w-fit rounded-md border px-2 py-1 text-xs font-semibold ${
+                      item.sentiment_label === "POSITIVE"
+                        ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
+                        : item.sentiment_label === "NEGATIVE"
+                          ? "border-rose-300/30 bg-rose-400/10 text-rose-200"
+                          : "border-slate-700 bg-slate-900 text-slate-200"
+                    }`}
+                  >
+                    {item.sentiment_label}
+                  </span>
+                </article>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Sentiment mercato">
+          {dashboard.market_sentiment.news_count === 0 ? (
+            <p className="text-sm text-slate-400">
+              Nessuna news disponibile per stimare il sentiment del mercato.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Average sentiment</p>
+                <p
+                  className={`mt-1 text-2xl font-semibold ${
+                    dashboard.market_sentiment.sentiment_label === "POSITIVE"
+                      ? "text-emerald-300"
+                      : dashboard.market_sentiment.sentiment_label === "NEGATIVE"
+                        ? "text-rose-300"
+                        : "text-slate-200"
+                  }`}
+                >
+                  {dashboard.market_sentiment.average_sentiment_score.toFixed(2)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {dashboard.market_sentiment.sentiment_label} · {dashboard.market_sentiment.news_count} news
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-md border border-emerald-300/20 bg-emerald-400/10 p-2 text-emerald-200">
+                  <p className="font-semibold">{dashboard.market_sentiment.positive_count}</p>
+                  <p>positive</p>
+                </div>
+                <div className="rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-300">
+                  <p className="font-semibold">{dashboard.market_sentiment.neutral_count}</p>
+                  <p>neutral</p>
+                </div>
+                <div className="rounded-md border border-rose-300/20 bg-rose-400/10 p-2 text-rose-200">
+                  <p className="font-semibold">{dashboard.market_sentiment.negative_count}</p>
+                  <p>negative</p>
+                </div>
+              </div>
+            </div>
+          )}
         </Panel>
       </div>
     </div>
