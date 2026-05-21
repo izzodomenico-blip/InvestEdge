@@ -1,0 +1,76 @@
+symbol,name,asset_type,exchange,currency,country,sector,industry,data_provider,notes
+AAPL,Apple Inc.,stock,NASDAQ,USD,USA,Technology,Consumer Electronics,alpha_vantage,Seed demo core
+MSFT,Microsoft Corp.,stock,NASDAQ,USD,USA,Technology,Software,alpha_vantage,Seed demo core
+NVDA,NVIDIA Corp.,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Seed demo core
+AMZN,Amazon.com Inc.,stock,NASDAQ,USD,USA,Consumer Discretionary,Internet Retail,alpha_vantage,Seed demo core
+GOOGL,Alphabet Inc. Class A,stock,NASDAQ,USD,USA,Communication Services,Internet Content,alpha_vantage,Seed demo core
+META,Meta Platforms Inc.,stock,NASDAQ,USD,USA,Communication Services,Social Platforms,alpha_vantage,Seed demo core
+TSLA,Tesla Inc.,stock,NASDAQ,USD,USA,Consumer Discretionary,Automobiles,alpha_vantage,Seed demo core
+JPM,JPMorgan Chase,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Seed demo core
+UNH,UnitedHealth Group,stock,NYSE,USD,USA,Healthcare,Managed Care,alpha_vantage,Seed demo core
+KO,Coca-Cola,stock,NYSE,USD,USA,Consumer Staples,Beverages,alpha_vantage,Seed demo core
+SPY,SPDR S&P 500 ETF Trust,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,Seed demo core
+QQQ,Invesco QQQ Trust,etf,NASDAQ,USD,USA,Technology Growth,US Equity,alpha_vantage,Seed demo core
+VOO,Vanguard S&P 500 ETF,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,Seed demo core
+VWCE,Vanguard FTSE All-World UCITS ETF,etf,XETRA,EUR,Ireland,Global Equity,Global Equity,alpha_vantage,Seed demo core
+AGGH,iShares Core Global Aggregate Bond UCITS ETF,etf,XETRA,EUR,Ireland,Global Bonds,Aggregate Bonds,alpha_vantage,Seed demo core
+BTC,Bitcoin,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Seed demo core
+ETH,Ethereum,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Seed demo core
+SOL,Solana,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Seed demo core
+BNB,BNB,crypto,Crypto,USD,Global,Digital Assets,Exchange Token,coingecko,Seed demo core
+XRP,XRP,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Seed demo core
+IB01,iShares USD Treasury Bond 0-1yr UCITS ETF,bond_etf,LSE,USD,Ireland,Short Treasury,Treasury Bills,alpha_vantage,Seed demo core
+BTP10Y,Italian Government Bond 10Y,bond,MOT,EUR,Italy,Government Bonds,Sovereign Bonds,fred,Seed demo core
+TLT,iShares 20+ Year Treasury Bond ETF,bond_etf,NASDAQ,USD,USA,Long Treasury,Treasury Bonds,alpha_vantage,Seed demo core
+IEF,iShares 7-10 Year Treasury Bond ETF,bond_etf,NASDAQ,USD,USA,Intermediate Treasury,Treasury Bonds,alpha_vantage,Seed demo core
+SHY,iShares 1-3 Year Treasury Bond ETF,bond_etf,NASDAQ,USD,USA,Short Treasury,Treasury Bonds,alpha_vantage,Seed demo core
+BRK.B,Berkshire Hathaway Class B,stock,NYSE,USD,USA,Financials,Conglomerate,alpha_vantage,Core large cap
+LLY,Eli Lilly,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Core large cap
+AVGO,Broadcom Inc.,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Core large cap
+V,Visa Inc.,stock,NYSE,USD,USA,Financials,Payments,alpha_vantage,Core large cap
+MA,Mastercard Inc.,stock,NYSE,USD,USA,Financials,Payments,alpha_vantage,Core large cap
+PG,Procter & Gamble,stock,NYSE,USD,USA,Consumer Staples,Household Products,alpha_vantage,Core defensive
+HD,Home Depot,stock,NYSE,USD,USA,Consumer Discretionary,Home Improvement,alpha_vantage,Core consumer
+COST,Costco Wholesale,stock,NASDAQ,USD,USA,Consumer Staples,Retail,alpha_vantage,Core defensive
+WMT,Walmart,stock,NYSE,USD,USA,Consumer Staples,Retail,alpha_vantage,Core defensive
+ORCL,Oracle Corp.,stock,NYSE,USD,USA,Technology,Software,alpha_vantage,Core technology
+NFLX,Netflix,stock,NASDAQ,USD,USA,Communication Services,Streaming,alpha_vantage,Core communication
+CRM,Salesforce,stock,NYSE,USD,USA,Technology,Software,alpha_vantage,Core technology
+AMD,Advanced Micro Devices,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Core technology
+ADBE,Adobe,stock,NASDAQ,USD,USA,Technology,Software,alpha_vantage,Core technology
+CSCO,Cisco Systems,stock,NASDAQ,USD,USA,Technology,Networking,alpha_vantage,Core technology
+QCOM,Qualcomm,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Core technology
+TXN,Texas Instruments,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Core technology
+IBM,IBM,stock,NYSE,USD,USA,Technology,IT Services,alpha_vantage,Core technology
+JNJ,Johnson & Johnson,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Core healthcare
+MRK,Merck,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Core healthcare
+ABBV,AbbVie,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Core healthcare
+TMO,Thermo Fisher Scientific,stock,NYSE,USD,USA,Healthcare,Life Sciences,alpha_vantage,Core healthcare
+ABT,Abbott Laboratories,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Core healthcare
+XOM,Exxon Mobil,stock,NYSE,USD,USA,Energy,Integrated Oil,alpha_vantage,Core energy
+CVX,Chevron,stock,NYSE,USD,USA,Energy,Integrated Oil,alpha_vantage,Core energy
+PEP,PepsiCo,stock,NASDAQ,USD,USA,Consumer Staples,Beverages,alpha_vantage,Core defensive
+MCD,McDonald's,stock,NYSE,USD,USA,Consumer Discretionary,Restaurants,alpha_vantage,Core consumer
+NKE,Nike,stock,NYSE,USD,USA,Consumer Discretionary,Apparel,alpha_vantage,Core consumer
+BAC,Bank of America,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Core financials
+GS,Goldman Sachs,stock,NYSE,USD,USA,Financials,Capital Markets,alpha_vantage,Core financials
+MS,Morgan Stanley,stock,NYSE,USD,USA,Financials,Capital Markets,alpha_vantage,Core financials
+IWM,iShares Russell 2000 ETF,etf,NYSE Arca,USD,USA,Small Cap,US Equity,alpha_vantage,Core ETF
+DIA,SPDR Dow Jones Industrial Average ETF,etf,NYSE Arca,USD,USA,Large Cap,US Equity,alpha_vantage,Core ETF
+VTI,Vanguard Total Stock Market ETF,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,Core ETF
+VT,Vanguard Total World Stock ETF,etf,NYSE Arca,USD,USA,Global Equity,Global Equity,alpha_vantage,Core ETF
+EFA,iShares MSCI EAFE ETF,etf,NYSE Arca,USD,USA,Developed Markets,International Equity,alpha_vantage,Core ETF
+EEM,iShares MSCI Emerging Markets ETF,etf,NYSE Arca,USD,USA,Emerging Markets,International Equity,alpha_vantage,Core ETF
+VEA,Vanguard FTSE Developed Markets ETF,etf,NYSE Arca,USD,USA,Developed Markets,International Equity,alpha_vantage,Core ETF
+GLD,SPDR Gold Shares,etf,NYSE Arca,USD,USA,Commodities,Gold,alpha_vantage,Core diversifier
+SLV,iShares Silver Trust,etf,NYSE Arca,USD,USA,Commodities,Silver,alpha_vantage,Core diversifier
+XLK,Technology Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Technology,Sector ETF,alpha_vantage,Core sector ETF
+XLF,Financial Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Financials,Sector ETF,alpha_vantage,Core sector ETF
+XLV,Health Care Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Healthcare,Sector ETF,alpha_vantage,Core sector ETF
+XLE,Energy Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Energy,Sector ETF,alpha_vantage,Core sector ETF
+LQD,iShares iBoxx Investment Grade Corporate Bond ETF,bond_etf,NYSE Arca,USD,USA,Corporate Bonds,Investment Grade,alpha_vantage,Core bond ETF
+HYG,iShares iBoxx High Yield Corporate Bond ETF,bond_etf,NYSE Arca,USD,USA,Corporate Bonds,High Yield,alpha_vantage,Core bond ETF
+BND,Vanguard Total Bond Market ETF,bond_etf,NASDAQ,USD,USA,Aggregate Bonds,US Bonds,alpha_vantage,Core bond ETF
+ADA,Cardano,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Core crypto
+DOGE,Dogecoin,crypto,Crypto,USD,Global,Digital Assets,Meme Coin,coingecko,Core crypto
+AVAX,Avalanche,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Core crypto

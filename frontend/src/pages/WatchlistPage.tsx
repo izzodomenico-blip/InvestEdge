@@ -4,15 +4,9 @@ import { useNavigate } from "react-router-dom";
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
-import {
-  apiGet,
-  type Asset,
-  type NewsItem,
-  type PortfolioRecommendation,
-  type SentimentLabel,
-  type ImpactLevel,
-} from "../lib/api";
+import { api, apiGet, type NewsItem, type PortfolioRecommendation, type SentimentLabel, type ImpactLevel, type UniverseAsset, type DataQualityCheck } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
+
 
 type NewsBadge = {
   sentiment: SentimentLabel | null;
@@ -40,7 +34,7 @@ function recommendationTone(value: string | null | undefined) {
   return "border-slate-700 bg-slate-900 text-slate-300";
 }
 
-function sourceTone(asset: Asset) {
+function sourceTone(asset: UniverseAsset) {
   if (asset.is_real_data) {
     return "border-emerald-300/20 bg-emerald-400/10 text-emerald-200";
   }
@@ -52,9 +46,10 @@ function sourceTone(asset: Asset) {
 
 export function WatchlistPage() {
   const navigate = useNavigate();
-  const [assets, setAssets] = useState<Asset[]>([]);
+  const [assets, setAssets] = useState<UniverseAsset[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
   const [newsBySymbol, setNewsBySymbol] = useState<Map<string, NewsBadge>>(new Map());
+  const [qualityBySymbol, setQualityBySymbol] = useState<Map<string, DataQualityCheck>>(new Map());
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +59,15 @@ export function WatchlistPage() {
       setLoading(true);
       setError(null);
       try {
-        const [assetData, recommendationData, newsData] = await Promise.all([
-          apiGet<Asset[]>("/assets"),
+        const [assetData, recommendationData, newsData, qualityData] = await Promise.all([
+          apiGet<UniverseAsset[]>("/universe?active_only=true&limit=1000"),
           apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
           apiGet<NewsItem[]>("/news?limit=200").catch(() => [] as NewsItem[]),
+          api.getAllDataQuality().catch(() => [] as DataQualityCheck[]),
         ]);
-        setAssets(assetData);
+        setAssets(assetData.filter((asset: UniverseAsset) => asset.is_watchlisted || asset.is_portfolio_asset));
         setRecommendations(recommendationData);
+        setQualityBySymbol(new Map(qualityData.map((q: DataQualityCheck) => [q.symbol, q])));
         const aggregated = new Map<string, NewsBadge>();
         for (const item of newsData) {
           if (!item.symbol) {
@@ -119,7 +116,10 @@ export function WatchlistPage() {
           <p className="text-sm font-medium text-cyan-300">Multi-asset</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Watchlist</h1>
         </div>
-        <button className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">
+        <button
+          onClick={() => navigate("/universe")}
+          className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:text-cyan-100"
+        >
           <Plus className="h-4 w-4" aria-hidden="true" />
           Aggiungi asset
         </button>
@@ -149,7 +149,7 @@ export function WatchlistPage() {
 
         {!loading && !error && assets.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1680px] border-collapse">
+            <table className="w-full min-w-[1840px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
                   <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
@@ -164,9 +164,13 @@ export function WatchlistPage() {
                   <th className="px-3 pb-3 text-right font-medium">Peso ptf</th>
                   <th className="px-3 pb-3 font-medium">Raccomandazione</th>
                   <th className="px-3 pb-3 font-medium">Source</th>
+                  <th className="px-3 pb-3 font-medium">Qualità</th>
                   <th className="px-3 pb-3 font-medium">Provider</th>
                   <th className="px-3 pb-3 font-medium">Data prezzo</th>
                   <th className="px-3 pb-3 font-medium">News</th>
+                  <th className="px-3 pb-3 text-right font-medium">ML prob</th>
+                  <th className="px-3 pb-3 font-medium">ML label</th>
+                  <th className="px-3 pb-3 font-medium">ML conf.</th>
                   <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
                 </tr>
               </thead>
@@ -210,6 +214,19 @@ export function WatchlistPage() {
                           {asset.is_real_data ? "real" : asset.last_source ?? "N/D"}
                         </span>
                       </td>
+                      <td className="px-3 py-4">
+                        {qualityBySymbol.get(asset.symbol) ? (
+                          <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-bold ${
+                            qualityBySymbol.get(asset.symbol)!.score >= 80 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' :
+                            qualityBySymbol.get(asset.symbol)!.score >= 50 ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' :
+                            'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                          }`}>
+                            {qualityBySymbol.get(asset.symbol)!.grade} ({qualityBySymbol.get(asset.symbol)!.score.toFixed(0)}%)
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-500">N/D</span>
+                        )}
+                      </td>
                       <td className="px-3 py-4 text-slate-300">{asset.provider ?? "Locale"}</td>
                       <td className="px-3 py-4 text-slate-400">{asset.last_price_date ?? "N/D"}</td>
                       <td className="px-3 py-4">
@@ -232,6 +249,11 @@ export function WatchlistPage() {
                           <span className="text-[11px] text-slate-500">N/D</span>
                         )}
                       </td>
+                      <td className="px-3 py-4 text-right text-cyan-200">
+                        {asset.ml_probability == null ? "N/D" : `${(asset.ml_probability * 100).toFixed(1)}%`}
+                      </td>
+                      <td className="px-3 py-4 text-slate-300">{asset.ml_label ?? "N/D"}</td>
+                      <td className="px-3 py-4 text-slate-400">{asset.ml_confidence ?? "N/D"}</td>
                       <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
                         <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
                           {asset.technical_summary ?? "N/D"}

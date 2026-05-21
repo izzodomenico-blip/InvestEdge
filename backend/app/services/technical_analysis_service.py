@@ -6,6 +6,7 @@ import pandas as pd
 
 from backend.app.models import TechnicalAnalysisOut
 from backend.app.services.assets_service import get_asset_by_symbol
+from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.scoring_engine import ScoringEngine
 
@@ -60,4 +61,5 @@ def get_technical_analysis(connection: sqlite3.Connection, symbol: str) -> Techn
         news_sentiment_label=news_info["news_sentiment_label"],
         news_impact_level=news_info["news_impact_level"],
         news_count=int(news_info["news_count"]),
+        latest_ml_prediction=MLEngine().latest_prediction(connection, asset.symbol),
     )

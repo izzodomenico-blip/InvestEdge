@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CheckCircle2, AlertTriangle, XCircle, Info, ShieldCheck, Zap } from "lucide-react";
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import {
+  api,
   apiGet,
   type Asset,
   type NewsSentimentSummary,
   type PriceHistory,
   type TechnicalAnalysis,
+  type ValidatedSignal,
+  type DataQualityCheck,
 } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
@@ -47,6 +51,8 @@ export function AnalysisPage() {
   const [prices, setPrices] = useState<PriceHistory | null>(null);
   const [analysis, setAnalysis] = useState<TechnicalAnalysis | null>(null);
   const [newsSummary, setNewsSummary] = useState<NewsSentimentSummary | null>(null);
+  const [validatedSignal, setValidatedSignal] = useState<ValidatedSignal | null>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityCheck | null>(null);
   const [loadingAssets, setLoadingAssets] = useState(true);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,18 +91,24 @@ export function AnalysisPage() {
       setLoadingAnalysis(true);
       setError(null);
       try {
-        const [priceResponse, analysisResponse, sentimentResponse] = await Promise.all([
+        const [priceResponse, analysisResponse, sentimentResponse, validationResponse, qualityResponse] = await Promise.all([
           apiGet<PriceHistory>(`/prices/${selectedSymbol}`),
           apiGet<TechnicalAnalysis>(`/technical-analysis/${selectedSymbol}`),
           apiGet<NewsSentimentSummary>(`/news/sentiment/${selectedSymbol}?lookback_days=7`).catch(() => null),
+          api.getAssetValidatedSignal(selectedSymbol).catch(() => null),
+          api.getAssetDataQuality(selectedSymbol).catch(() => null),
         ]);
         setPrices(priceResponse);
         setAnalysis(analysisResponse);
         setNewsSummary(sentimentResponse);
+        setValidatedSignal(validationResponse);
+        setDataQuality(qualityResponse);
       } catch (err) {
         setPrices(null);
         setAnalysis(null);
         setNewsSummary(null);
+        setValidatedSignal(null);
+        setDataQuality(null);
         setError(err instanceof Error ? err.message : "Asset non trovato o analisi non disponibile.");
       } finally {
         setLoadingAnalysis(false);
@@ -325,6 +337,118 @@ export function AnalysisPage() {
 
           <Panel title="Sintesi tecnica">
             <p className="text-sm leading-6 text-slate-300">{analysis.technical_summary}</p>
+          </Panel>
+
+          <Panel title="Signal Validation & Data Quality" icon={<ShieldCheck className="w-5 h-5 text-indigo-400" />}>
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-400">Validazione Operativa</span>
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+                    validatedSignal?.action_suggested === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' :
+                    validatedSignal?.action_suggested === 'WATCH' ? 'bg-amber-500/20 text-amber-400' :
+                    validatedSignal?.action_suggested === 'EXCLUDE' ? 'bg-rose-500/20 text-rose-400' :
+                    'bg-slate-800 text-slate-400'
+                  }`}>
+                    {validatedSignal?.action_suggested || 'N/D'}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-900/60 rounded-lg border border-slate-800">
+                  <p className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Info className="w-3 h-3"/> Rationale di Validazione</p>
+                  <p className="text-sm text-slate-300">{validatedSignal?.reason || 'Analisi di validazione non disponibile.'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-400">Data Quality Score</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-lg font-bold ${
+                      (dataQuality?.score || 0) >= 80 ? 'text-emerald-400' : 
+                      (dataQuality?.score || 0) >= 50 ? 'text-amber-400' : 'text-rose-400'
+                    }`}>
+                      {dataQuality?.score.toFixed(1)}%
+                    </span>
+                    <span className="text-xs text-slate-500">Grade {dataQuality?.grade}</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {dataQuality && Object.entries(dataQuality.checks).map(([check, passed]) => (
+                    <div key={check} className="flex items-center gap-2 text-[10px] text-slate-400">
+                      {passed ? <CheckCircle2 className="w-3 h-3 text-emerald-500"/> : <XCircle className="w-3 h-3 text-rose-500"/>}
+                      <span className="capitalize">{check.replace('_', ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Machine Learning">
+            {analysis.latest_ml_prediction ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs uppercase text-slate-500">Target</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {analysis.latest_ml_prediction.target_type} {analysis.latest_ml_prediction.horizon_days}d
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs uppercase text-slate-500">Probabilita</p>
+                    <p className="mt-2 text-xl font-semibold text-cyan-200">
+                      {(
+                        (analysis.latest_ml_prediction.probability_positive ??
+                          analysis.latest_ml_prediction.probability_outperform ??
+                          analysis.latest_ml_prediction.probability_drawdown ??
+                          0) * 100
+                      ).toFixed(1)}
+                      %
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs uppercase text-slate-500">Label</p>
+                    <p className="mt-2 text-sm font-semibold text-white">{analysis.latest_ml_prediction.predicted_label}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs uppercase text-slate-500">Confidence</p>
+                    <p className="mt-2 text-sm font-semibold text-white">{analysis.latest_ml_prediction.confidence}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                  ML sperimentale, non garanzia di rendimento. Usa questa probabilita insieme a score tecnico, news e rischio.
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="mb-2 text-sm text-slate-400">Feature principali positive</p>
+                    <div className="space-y-2">
+                      {(analysis.latest_ml_prediction.explanation.top_features_positive ?? []).slice(0, 5).map((item) => (
+                        <div key={item.feature} className="flex justify-between rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm">
+                          <span className="text-slate-300">{item.feature}</span>
+                          <span className="text-emerald-300">{item.importance.toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-sm text-slate-400">Warning</p>
+                    {analysis.latest_ml_prediction.warnings.length > 0 ? (
+                      <div className="space-y-2">
+                        {analysis.latest_ml_prediction.warnings.map((warning) => (
+                          <div key={warning} className="rounded-md border border-amber-300/20 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+                            {warning}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-500">Nessun warning ML salvato.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Nessun modello ML disponibile. Addestra un modello da AI Lab.</p>
+            )}
           </Panel>
 
           <Panel title="News e sentiment asset">

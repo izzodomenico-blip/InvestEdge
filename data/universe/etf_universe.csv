@@ -1,0 +1,72 @@
+symbol,name,asset_type,exchange,currency,country,sector,industry,data_provider,notes
+SPY,SPDR S&P 500 ETF Trust,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,ETF universe
+QQQ,Invesco QQQ Trust,etf,NASDAQ,USD,USA,Technology Growth,US Equity,alpha_vantage,ETF universe
+VOO,Vanguard S&P 500 ETF,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,ETF universe
+VTI,Vanguard Total Stock Market ETF,etf,NYSE Arca,USD,USA,Broad Market,US Equity,alpha_vantage,ETF universe
+VT,Vanguard Total World Stock ETF,etf,NYSE Arca,USD,USA,Global Equity,Global Equity,alpha_vantage,ETF universe
+IWM,iShares Russell 2000 ETF,etf,NYSE Arca,USD,USA,Small Cap,US Equity,alpha_vantage,ETF universe
+DIA,SPDR Dow Jones Industrial Average ETF,etf,NYSE Arca,USD,USA,Large Cap,US Equity,alpha_vantage,ETF universe
+EFA,iShares MSCI EAFE ETF,etf,NYSE Arca,USD,USA,Developed Markets,International Equity,alpha_vantage,ETF universe
+EEM,iShares MSCI Emerging Markets ETF,etf,NYSE Arca,USD,USA,Emerging Markets,International Equity,alpha_vantage,ETF universe
+VEA,Vanguard FTSE Developed Markets ETF,etf,NYSE Arca,USD,USA,Developed Markets,International Equity,alpha_vantage,ETF universe
+VGK,Vanguard FTSE Europe ETF,etf,NYSE Arca,USD,USA,Europe Equity,International Equity,alpha_vantage,Candidate ETF
+EWJ,iShares MSCI Japan ETF,etf,NYSE Arca,USD,USA,Japan Equity,International Equity,alpha_vantage,Candidate ETF
+EWZ,iShares MSCI Brazil ETF,etf,NYSE Arca,USD,USA,Brazil Equity,International Equity,alpha_vantage,Candidate ETF
+FXI,iShares China Large-Cap ETF,etf,NYSE Arca,USD,USA,China Equity,International Equity,alpha_vantage,Candidate ETF
+INDA,iShares MSCI India ETF,etf,NYSE Arca,USD,USA,India Equity,International Equity,alpha_vantage,Candidate ETF
+MCHI,iShares MSCI China ETF,etf,NASDAQ,USD,USA,China Equity,International Equity,alpha_vantage,Candidate ETF
+SCHD,Schwab US Dividend Equity ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,ETF universe
+VIG,Vanguard Dividend Appreciation ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,ETF universe
+VYM,Vanguard High Dividend Yield ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,ETF universe
+DGRO,iShares Core Dividend Growth ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,Candidate ETF
+NOBL,ProShares S&P 500 Dividend Aristocrats ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,Candidate ETF
+IJR,iShares Core S&P Small-Cap ETF,etf,NYSE Arca,USD,USA,Small Cap,US Equity,alpha_vantage,ETF universe
+IJH,iShares Core S&P Mid-Cap ETF,etf,NYSE Arca,USD,USA,Mid Cap,US Equity,alpha_vantage,ETF universe
+MDY,SPDR S&P MidCap 400 ETF Trust,etf,NYSE Arca,USD,USA,Mid Cap,US Equity,alpha_vantage,Candidate ETF
+VB,Vanguard Small-Cap ETF,etf,NYSE Arca,USD,USA,Small Cap,US Equity,alpha_vantage,Candidate ETF
+GLD,SPDR Gold Shares,etf,NYSE Arca,USD,USA,Commodities,Gold,alpha_vantage,ETF universe
+SLV,iShares Silver Trust,etf,NYSE Arca,USD,USA,Commodities,Silver,alpha_vantage,ETF universe
+USO,United States Oil Fund,etf,NYSE Arca,USD,USA,Commodities,Oil,alpha_vantage,ETF universe
+DBC,Invesco DB Commodity Index Tracking Fund,etf,NYSE Arca,USD,USA,Commodities,Broad Commodities,alpha_vantage,Candidate ETF
+PDBC,Invesco Optimum Yield Diversified Commodity Strategy ETF,etf,NASDAQ,USD,USA,Commodities,Broad Commodities,alpha_vantage,Candidate ETF
+XLK,Technology Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Technology,Sector ETF,alpha_vantage,ETF universe
+XLF,Financial Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Financials,Sector ETF,alpha_vantage,ETF universe
+XLV,Health Care Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Healthcare,Sector ETF,alpha_vantage,ETF universe
+XLE,Energy Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Energy,Sector ETF,alpha_vantage,ETF universe
+XLY,Consumer Discretionary Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Consumer Discretionary,Sector ETF,alpha_vantage,ETF universe
+XLP,Consumer Staples Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Consumer Staples,Sector ETF,alpha_vantage,ETF universe
+XLU,Utilities Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Utilities,Sector ETF,alpha_vantage,ETF universe
+XLRE,Real Estate Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Real Estate,Sector ETF,alpha_vantage,ETF universe
+XLI,Industrial Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Industrials,Sector ETF,alpha_vantage,ETF universe
+XLB,Materials Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Materials,Sector ETF,alpha_vantage,ETF universe
+XLC,Communication Services Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Communication Services,Sector ETF,alpha_vantage,ETF universe
+SMH,VanEck Semiconductor ETF,etf,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,ETF universe
+SOXX,iShares Semiconductor ETF,etf,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,ETF universe
+IBB,iShares Biotechnology ETF,etf,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,ETF universe
+XBI,SPDR S&P Biotech ETF,etf,NYSE Arca,USD,USA,Healthcare,Biotechnology,alpha_vantage,ETF universe
+KRE,SPDR S&P Regional Banking ETF,etf,NYSE Arca,USD,USA,Financials,Regional Banks,alpha_vantage,ETF universe
+VNQ,Vanguard Real Estate ETF,etf,NYSE Arca,USD,USA,Real Estate,REITs,alpha_vantage,ETF universe
+ARKK,ARK Innovation ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Innovation,alpha_vantage,ETF universe
+ARKG,ARK Genomic Revolution ETF,etf,Cboe,USD,USA,Thematic ETF,Genomics,alpha_vantage,Candidate ETF
+ARKW,ARK Next Generation Internet ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Internet,alpha_vantage,Candidate ETF
+BOTZ,Global X Robotics and Artificial Intelligence ETF,etf,NASDAQ,USD,USA,Thematic ETF,Robotics AI,alpha_vantage,Candidate ETF
+ROBO,ROBO Global Robotics and Automation ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Robotics,alpha_vantage,Candidate ETF
+CIBR,First Trust NASDAQ Cybersecurity ETF,etf,NASDAQ,USD,USA,Thematic ETF,Cybersecurity,alpha_vantage,Candidate ETF
+SKYY,First Trust Cloud Computing ETF,etf,NASDAQ,USD,USA,Thematic ETF,Cloud,alpha_vantage,Candidate ETF
+ICLN,iShares Global Clean Energy ETF,etf,NASDAQ,USD,USA,Thematic ETF,Clean Energy,alpha_vantage,Candidate ETF
+TAN,Invesco Solar ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Solar,alpha_vantage,Candidate ETF
+LIT,Global X Lithium and Battery Tech ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Lithium Batteries,alpha_vantage,Candidate ETF
+BND,Vanguard Total Bond Market ETF,bond_etf,NASDAQ,USD,USA,Aggregate Bonds,US Bonds,alpha_vantage,ETF universe
+AGG,iShares Core US Aggregate Bond ETF,bond_etf,NYSE Arca,USD,USA,Aggregate Bonds,US Bonds,alpha_vantage,Candidate ETF
+LQD,iShares iBoxx Investment Grade Corporate Bond ETF,bond_etf,NYSE Arca,USD,USA,Corporate Bonds,Investment Grade,alpha_vantage,ETF universe
+HYG,iShares iBoxx High Yield Corporate Bond ETF,bond_etf,NYSE Arca,USD,USA,Corporate Bonds,High Yield,alpha_vantage,ETF universe
+JNK,SPDR Bloomberg High Yield Bond ETF,bond_etf,NYSE Arca,USD,USA,Corporate Bonds,High Yield,alpha_vantage,Candidate ETF
+TIP,iShares TIPS Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Inflation Protected,TIPS,alpha_vantage,ETF universe
+TIPS,SPDR Bloomberg 1-10 Year TIPS ETF,bond_etf,NYSE Arca,USD,USA,Treasury Inflation Protected,TIPS,alpha_vantage,ETF universe
+GOVT,iShares US Treasury Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bonds,US Treasuries,alpha_vantage,ETF universe
+BIL,SPDR Bloomberg 1-3 Month T-Bill ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bills,T-Bills,alpha_vantage,ETF universe
+SGOV,iShares 0-3 Month Treasury Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bills,T-Bills,alpha_vantage,ETF universe
+VGSH,Vanguard Short-Term Treasury ETF,bond_etf,NASDAQ,USD,USA,Treasury Bonds,Short Treasuries,alpha_vantage,Candidate ETF
+VGIT,Vanguard Intermediate-Term Treasury ETF,bond_etf,NASDAQ,USD,USA,Treasury Bonds,Intermediate Treasuries,alpha_vantage,Candidate ETF
+VGLT,Vanguard Long-Term Treasury ETF,bond_etf,NASDAQ,USD,USA,Treasury Bonds,Long Treasuries,alpha_vantage,Candidate ETF
+EMB,iShares J.P. Morgan USD Emerging Markets Bond ETF,bond_etf,NASDAQ,USD,USA,Emerging Market Bonds,Sovereign Bonds,alpha_vantage,Candidate ETF

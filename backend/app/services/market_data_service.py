@@ -12,6 +12,7 @@ from backend.app.data_providers import MissingApiKey, ProviderError, ProviderReg
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
+from backend.app.services.universe_service import UniverseService
 
 
 def _now() -> str:
@@ -22,6 +23,7 @@ class MarketDataService:
     def __init__(self) -> None:
         self.scoring_engine = ScoringEngine()
         self.portfolio_engine = PortfolioEngine()
+        self.universe_service = UniverseService()
 
     def get_provider_for_asset(
         self,
@@ -107,14 +109,12 @@ class MarketDataService:
         limit: int | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        query = """
-            SELECT symbol
-            FROM assets
-            ORDER BY asset_type, symbol
-        """
-        rows = connection.execute(query).fetchall()
-        selected_rows = rows[:limit] if limit else rows
-        symbols = [row["symbol"] for row in selected_rows]
+        limit_value = max(1, min(int(limit or 10), 50))
+        candidates = self.universe_service.get_refresh_candidates(connection, limit=limit_value)
+        symbols = [row["symbol"] for row in candidates]
+        if not symbols:
+            rows = connection.execute("SELECT symbol FROM assets ORDER BY asset_type, symbol LIMIT ?", (limit_value,)).fetchall()
+            symbols = [row["symbol"] for row in rows]
         results = [self.refresh_asset_prices(connection, symbol, force=force) for symbol in symbols]
         return {
             "summary": {
@@ -197,6 +197,14 @@ class MarketDataService:
                 placeholders = ",".join("?" for _ in duplicate_ids)
                 connection.execute(f"DELETE FROM price_history WHERE id IN ({placeholders})", duplicate_ids)
 
+        connection.execute(
+            """
+            UPDATE asset_universe
+            SET last_price_refresh_at = ?, data_provider = ?, updated_at = ?
+            WHERE UPPER(symbol) = UPPER(?)
+            """,
+            (now, provider, now, symbol),
+        )
         return inserted, updated
 
     def get_data_status(self, connection: sqlite3.Connection, symbol: str) -> dict[str, Any]:
@@ -279,6 +287,18 @@ class MarketDataService:
         return ProviderRegistry(get_settings(), connection).usage_rows()
 
     def _asset(self, connection: sqlite3.Connection, symbol: str) -> sqlite3.Row | None:
+        row = connection.execute(
+            """
+            SELECT id, symbol, asset_type, risk_level
+            FROM assets
+            WHERE UPPER(symbol) = UPPER(?)
+            LIMIT 1
+            """,
+            (symbol,),
+        ).fetchone()
+        if row is not None:
+            return row
+        self.universe_service.ensure_asset_record(connection, symbol)
         return connection.execute(
             """
             SELECT id, symbol, asset_type, risk_level
@@ -362,6 +382,14 @@ class MarketDataService:
                 now,
                 now,
             ),
+        )
+        connection.execute(
+            """
+            UPDATE asset_universe
+            SET last_signal_refresh_at = ?, updated_at = ?
+            WHERE asset_id = ?
+            """,
+            (now, now, asset_id),
         )
 
     def _refresh_portfolio_if_needed(self, connection: sqlite3.Connection, asset_id: int) -> None:

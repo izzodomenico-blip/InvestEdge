@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BadgeDollarSign, BarChart3, Database, Newspaper, ShieldAlert, TrendingUp } from "lucide-react";
+import { Activity, BadgeDollarSign, BarChart3, Database, Newspaper, ShieldAlert, TrendingUp, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -115,6 +115,31 @@ export function DashboardPage() {
         <MetricCard label="P/L totale" value={formatCurrency(dashboard.total_pnl, "EUR")} delta={formatPercent(dashboard.total_pnl_percent)} tone={dashboard.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
       </div>
 
+      <Panel title="Universe Manager">
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Universe totale</p>
+            <p className="mt-1 font-semibold text-white">{dashboard.universe_summary.total_assets}</p>
+            <p className="mt-1 text-xs text-slate-500">{dashboard.universe_summary.priced_assets_count} con storico prezzi</p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Core universe</p>
+            <p className="mt-1 font-semibold text-cyan-200">{dashboard.universe_summary.core_count}</p>
+            <p className="mt-1 text-xs text-slate-500">Default training ML</p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Watchlist</p>
+            <p className="mt-1 font-semibold text-emerald-300">{dashboard.universe_summary.watchlist_count}</p>
+            <p className="mt-1 text-xs text-slate-500">Asset monitorati in UI</p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Refresh candidates</p>
+            <p className="mt-1 font-semibold text-amber-300">{dashboard.universe_summary.refresh_candidates_count}</p>
+            <p className="mt-1 text-xs text-slate-500">Refresh-all limitato</p>
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="Stato dati">
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
@@ -137,6 +162,77 @@ export function DashboardPage() {
               {dashboard.data_status.provider_status.filter((provider) => provider.api_key_configured).length}/{dashboard.data_status.provider_status.length}
             </p>
             <p className="mt-1 text-xs text-slate-500">{dashboard.data_status.provider_status.map((provider) => provider.provider).join(", ")}</p>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Machine Learning">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">ML status</p>
+            <p className={dashboard.ml_status.ml_ready ? "mt-1 font-semibold text-emerald-300" : "mt-1 font-semibold text-amber-300"}>
+              {dashboard.ml_status.ml_ready ? "READY" : "NO MODEL"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">{dashboard.ml_status.message}</p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Ultimo modello</p>
+            <p className="mt-1 font-semibold text-white">{dashboard.ml_status.latest_model?.model_name ?? "N/D"}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {dashboard.ml_status.latest_model ? `${dashboard.ml_status.latest_model.model_type} ${dashboard.ml_status.latest_model.horizon_days}d` : "Addestra da AI Lab"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Ultima prediction</p>
+            <p className="mt-1 font-semibold text-cyan-200">{dashboard.latest_ml_prediction?.symbol ?? "N/D"}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {dashboard.latest_ml_prediction ? `${dashboard.latest_ml_prediction.predicted_label} · ${dashboard.latest_ml_prediction.confidence}` : "Nessuna prediction salvata"}
+            </p>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="System Audit & Operational Ranking" icon={<ShieldCheck className="w-5 h-5 text-indigo-400" />}>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-slate-500">Health di Sistema</p>
+              {dashboard.system_health?.status === 'healthy' ? 
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : 
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+              }
+            </div>
+            <p className="mt-1 font-semibold text-white capitalize">{dashboard.system_health?.status || 'N/D'}</p>
+            <p className="mt-1 text-xs text-slate-500">DB: {dashboard.system_health?.database}</p>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Top Buy Candidates</p>
+            <div className="mt-2 space-y-1">
+              {dashboard.top_buy_candidates.length > 0 ? (
+                dashboard.top_buy_candidates.slice(0, 3).map(s => (
+                  <div key={s.symbol} className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-indigo-400">{s.symbol}</span>
+                    <span className="text-emerald-400 font-medium">Valid {s.validated_signal}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-slate-600 italic">Nessun candidato BUY validato</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm text-slate-500">Data Quality Warnings</p>
+            <div className="mt-2 space-y-1">
+              {dashboard.data_quality_warnings.length > 0 ? (
+                dashboard.data_quality_warnings.slice(0, 3).map((w, i) => (
+                  <p key={i} className="text-[10px] text-amber-400 font-medium truncate">{w}</p>
+                ))
+              ) : (
+                <p className="text-xs text-emerald-500 font-medium">Tutti i dati sono validi</p>
+              )}
+            </div>
           </div>
         </div>
       </Panel>

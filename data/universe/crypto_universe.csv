@@ -1,0 +1,49 @@
+symbol,name,asset_type,exchange,currency,country,sector,industry,data_provider,notes
+BTC,Bitcoin,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+ETH,Ethereum,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Crypto universe
+SOL,Solana,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Crypto universe
+BNB,BNB,crypto,Crypto,USD,Global,Digital Assets,Exchange Token,coingecko,Crypto universe
+XRP,XRP,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Crypto universe
+ADA,Cardano,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Crypto universe
+DOGE,Dogecoin,crypto,Crypto,USD,Global,Digital Assets,Meme Coin,coingecko,Crypto universe
+AVAX,Avalanche,crypto,Crypto,USD,Global,Digital Assets,Smart Contracts,coingecko,Crypto universe
+DOT,Polkadot,crypto,Crypto,USD,Global,Digital Assets,Interoperability,coingecko,Crypto universe
+LINK,Chainlink,crypto,Crypto,USD,Global,Digital Assets,Oracle Network,coingecko,Crypto universe
+TRX,TRON,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+LTC,Litecoin,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Crypto universe
+BCH,Bitcoin Cash,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Crypto universe
+UNI,Uniswap,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Crypto universe
+NEAR,NEAR Protocol,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+APT,Aptos,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+ATOM,Cosmos,crypto,Crypto,USD,Global,Digital Assets,Interoperability,coingecko,Crypto universe
+ETC,Ethereum Classic,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+FIL,Filecoin,crypto,Crypto,USD,Global,Digital Assets,Storage,coingecko,Crypto universe
+ICP,Internet Computer,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+ARB,Arbitrum,crypto,Crypto,USD,Global,Digital Assets,Layer 2,coingecko,Crypto universe
+OP,Optimism,crypto,Crypto,USD,Global,Digital Assets,Layer 2,coingecko,Crypto universe
+INJ,Injective,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Crypto universe
+TON,Toncoin,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+HBAR,Hedera,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+VET,VeChain,crypto,Crypto,USD,Global,Digital Assets,Supply Chain,coingecko,Crypto universe
+ALGO,Algorand,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+XLM,Stellar,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Crypto universe
+AAVE,Aave,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Crypto universe
+MKR,Maker,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Crypto universe
+RUNE,THORChain,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Crypto universe
+SUI,Sui,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+PEPE,Pepe,crypto,Crypto,USD,Global,Digital Assets,Meme Coin,coingecko,Crypto universe
+SEI,Sei,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Crypto universe
+FET,Fetch.ai,crypto,Crypto,USD,Global,Digital Assets,AI Crypto,coingecko,Crypto universe
+RNDR,Render,crypto,Crypto,USD,Global,Digital Assets,Compute,coingecko,Crypto universe
+LDO,Lido DAO,crypto,Crypto,USD,Global,Digital Assets,Staking,coingecko,Crypto universe
+GRT,The Graph,crypto,Crypto,USD,Global,Digital Assets,Indexing,coingecko,Crypto universe
+MANA,Decentraland,crypto,Crypto,USD,Global,Digital Assets,Metaverse,coingecko,Candidate crypto
+SAND,The Sandbox,crypto,Crypto,USD,Global,Digital Assets,Metaverse,coingecko,Candidate crypto
+AXS,Axie Infinity,crypto,Crypto,USD,Global,Digital Assets,Gaming,coingecko,Candidate crypto
+EGLD,MultiversX,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Candidate crypto
+KAS,Kaspa,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Candidate crypto
+TIA,Celestia,crypto,Crypto,USD,Global,Digital Assets,Data Availability,coingecko,Candidate crypto
+WIF,dogwifhat,crypto,Crypto,USD,Global,Digital Assets,Meme Coin,coingecko,Candidate crypto
+JUP,Jupiter,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Candidate crypto
+PYTH,Pyth Network,crypto,Crypto,USD,Global,Digital Assets,Oracle Network,coingecko,Candidate crypto
+QNT,Quant,crypto,Crypto,USD,Global,Digital Assets,Interoperability,coingecko,Candidate crypto

@@ -1,0 +1,257 @@
+symbol,name,asset_type,exchange,currency,country,sector,industry,data_provider,notes
+A,Agilent Technologies,stock,NYSE,USD,USA,Healthcare,Life Sciences,alpha_vantage,Extended stock
+AAL,American Airlines,stock,NASDAQ,USD,USA,Industrials,Airlines,alpha_vantage,Extended stock
+AEP,American Electric Power,stock,NASDAQ,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+AFL,Aflac,stock,NYSE,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+AIG,American International Group,stock,NYSE,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+AJG,Arthur J. Gallagher,stock,NYSE,USD,USA,Financials,Insurance Brokers,alpha_vantage,Extended stock
+ALGN,Align Technology,stock,NASDAQ,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+AMAT,Applied Materials,stock,NASDAQ,USD,USA,Technology,Semiconductor Equipment,alpha_vantage,Extended stock
+AMP,Ameriprise Financial,stock,NYSE,USD,USA,Financials,Asset Management,alpha_vantage,Extended stock
+AMT,American Tower,stock,NYSE,USD,USA,Real Estate,Telecom REIT,alpha_vantage,Extended stock
+ANET,Arista Networks,stock,NYSE,USD,USA,Technology,Networking,alpha_vantage,Extended stock
+ANSS,Ansys,stock,NASDAQ,USD,USA,Technology,Engineering Software,alpha_vantage,Extended stock
+AON,Aon,stock,NYSE,USD,Ireland,Financials,Insurance Brokers,alpha_vantage,Extended stock
+APD,Air Products and Chemicals,stock,NYSE,USD,USA,Materials,Industrial Gases,alpha_vantage,Extended stock
+APH,Amphenol,stock,NYSE,USD,USA,Technology,Electronic Components,alpha_vantage,Extended stock
+APTV,Aptiv,stock,NYSE,USD,Ireland,Consumer Discretionary,Auto Parts,alpha_vantage,Extended stock
+ARE,Alexandria Real Estate Equities,stock,NYSE,USD,USA,Real Estate,Healthcare REIT,alpha_vantage,Extended stock
+ASML,ASML Holding,stock,NASDAQ,USD,Netherlands,Technology,Semiconductor Equipment,alpha_vantage,Extended ADR
+AZN,AstraZeneca,stock,NASDAQ,USD,United Kingdom,Healthcare,Pharmaceuticals,alpha_vantage,Extended ADR
+BA,Boeing,stock,NYSE,USD,USA,Industrials,Aerospace,alpha_vantage,Extended stock
+BDX,Becton Dickinson,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+BIIB,Biogen,stock,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended stock
+BK,Bank of New York Mellon,stock,NYSE,USD,USA,Financials,Custody Banks,alpha_vantage,Extended stock
+BKNG,Booking Holdings,stock,NASDAQ,USD,USA,Consumer Discretionary,Travel Platforms,alpha_vantage,Extended stock
+BLK,BlackRock,stock,NYSE,USD,USA,Financials,Asset Management,alpha_vantage,Extended stock
+BMY,Bristol Myers Squibb,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Extended stock
+BSX,Boston Scientific,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+C,Citigroup,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Extended stock
+CAT,Caterpillar,stock,NYSE,USD,USA,Industrials,Machinery,alpha_vantage,Extended stock
+CDNS,Cadence Design Systems,stock,NASDAQ,USD,USA,Technology,EDA Software,alpha_vantage,Extended stock
+CEG,Constellation Energy,stock,NASDAQ,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+CI,Cigna Group,stock,NYSE,USD,USA,Healthcare,Managed Care,alpha_vantage,Extended stock
+CL,Colgate-Palmolive,stock,NYSE,USD,USA,Consumer Staples,Household Products,alpha_vantage,Extended stock
+CMCSA,Comcast,stock,NASDAQ,USD,USA,Communication Services,Cable Media,alpha_vantage,Extended stock
+CME,CME Group,stock,NASDAQ,USD,USA,Financials,Exchanges,alpha_vantage,Extended stock
+CMG,Chipotle Mexican Grill,stock,NYSE,USD,USA,Consumer Discretionary,Restaurants,alpha_vantage,Extended stock
+CMI,Cummins,stock,NYSE,USD,USA,Industrials,Engines,alpha_vantage,Extended stock
+CNC,Centene,stock,NYSE,USD,USA,Healthcare,Managed Care,alpha_vantage,Extended stock
+COF,Capital One Financial,stock,NYSE,USD,USA,Financials,Consumer Finance,alpha_vantage,Extended stock
+COP,ConocoPhillips,stock,NYSE,USD,USA,Energy,Exploration Production,alpha_vantage,Extended stock
+COR,Cencora,stock,NYSE,USD,USA,Healthcare,Healthcare Distribution,alpha_vantage,Extended stock
+CPB,Campbell Soup,stock,NASDAQ,USD,USA,Consumer Staples,Packaged Foods,alpha_vantage,Extended stock
+CPAY,Corpay,stock,NYSE,USD,USA,Financials,Payments,alpha_vantage,Extended stock
+CRWD,CrowdStrike,stock,NASDAQ,USD,USA,Technology,Cybersecurity,alpha_vantage,Extended stock
+CSX,CSX,stock,NASDAQ,USD,USA,Industrials,Railroads,alpha_vantage,Extended stock
+CTAS,Cintas,stock,NASDAQ,USD,USA,Industrials,Business Services,alpha_vantage,Extended stock
+CTSH,Cognizant Technology Solutions,stock,NASDAQ,USD,USA,Technology,IT Services,alpha_vantage,Extended stock
+DD,DuPont,stock,NYSE,USD,USA,Materials,Chemicals,alpha_vantage,Extended stock
+DE,Deere,stock,NYSE,USD,USA,Industrials,Agricultural Machinery,alpha_vantage,Extended stock
+DELL,Dell Technologies,stock,NYSE,USD,USA,Technology,Hardware,alpha_vantage,Extended stock
+DG,Dollar General,stock,NYSE,USD,USA,Consumer Staples,Discount Retail,alpha_vantage,Extended stock
+DHR,Danaher,stock,NYSE,USD,USA,Healthcare,Life Sciences,alpha_vantage,Extended stock
+DIS,Walt Disney,stock,NYSE,USD,USA,Communication Services,Entertainment,alpha_vantage,Extended stock
+DLR,Digital Realty Trust,stock,NYSE,USD,USA,Real Estate,Data Center REIT,alpha_vantage,Extended stock
+DOCU,DocuSign,stock,NASDAQ,USD,USA,Technology,Software,alpha_vantage,Extended stock
+DOW,Dow,stock,NYSE,USD,USA,Materials,Chemicals,alpha_vantage,Extended stock
+DXCM,DexCom,stock,NASDAQ,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+EA,Electronic Arts,stock,NASDAQ,USD,USA,Communication Services,Video Games,alpha_vantage,Extended stock
+EBAY,eBay,stock,NASDAQ,USD,USA,Consumer Discretionary,Online Marketplace,alpha_vantage,Extended stock
+ECL,Ecolab,stock,NYSE,USD,USA,Materials,Specialty Chemicals,alpha_vantage,Extended stock
+EL,Estee Lauder,stock,NYSE,USD,USA,Consumer Staples,Personal Care,alpha_vantage,Extended stock
+EMR,Emerson Electric,stock,NYSE,USD,USA,Industrials,Electrical Equipment,alpha_vantage,Extended stock
+ENPH,Enphase Energy,stock,NASDAQ,USD,USA,Technology,Solar Equipment,alpha_vantage,Extended stock
+EQIX,Equinix,stock,NASDAQ,USD,USA,Real Estate,Data Center REIT,alpha_vantage,Extended stock
+ETN,Eaton,stock,NYSE,USD,Ireland,Industrials,Electrical Components,alpha_vantage,Extended stock
+ETSY,Etsy,stock,NASDAQ,USD,USA,Consumer Discretionary,Online Marketplace,alpha_vantage,Extended stock
+EW,Edwards Lifesciences,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+EXC,Exelon,stock,NASDAQ,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+F,Ford Motor,stock,NYSE,USD,USA,Consumer Discretionary,Automobiles,alpha_vantage,Extended stock
+FDX,FedEx,stock,NYSE,USD,USA,Industrials,Air Freight,alpha_vantage,Extended stock
+FI,Fiserv,stock,NYSE,USD,USA,Financials,Payments,alpha_vantage,Extended stock
+FIS,Fidelity National Information Services,stock,NYSE,USD,USA,Financials,Payments Technology,alpha_vantage,Extended stock
+FSLR,First Solar,stock,NASDAQ,USD,USA,Technology,Solar Equipment,alpha_vantage,Extended stock
+FTNT,Fortinet,stock,NASDAQ,USD,USA,Technology,Cybersecurity,alpha_vantage,Extended stock
+GD,General Dynamics,stock,NYSE,USD,USA,Industrials,Defense,alpha_vantage,Extended stock
+GE,GE Aerospace,stock,NYSE,USD,USA,Industrials,Aerospace,alpha_vantage,Extended stock
+GEHC,GE HealthCare Technologies,stock,NASDAQ,USD,USA,Healthcare,Medical Technology,alpha_vantage,Extended stock
+GILD,Gilead Sciences,stock,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended stock
+GM,General Motors,stock,NYSE,USD,USA,Consumer Discretionary,Automobiles,alpha_vantage,Extended stock
+GOOG,Alphabet Inc. Class C,stock,NASDAQ,USD,USA,Communication Services,Internet Content,alpha_vantage,Extended stock
+HCA,HCA Healthcare,stock,NYSE,USD,USA,Healthcare,Hospitals,alpha_vantage,Extended stock
+HON,Honeywell,stock,NASDAQ,USD,USA,Industrials,Industrial Conglomerates,alpha_vantage,Extended stock
+HPE,Hewlett Packard Enterprise,stock,NYSE,USD,USA,Technology,Hardware,alpha_vantage,Extended stock
+HPQ,HP Inc.,stock,NYSE,USD,USA,Technology,Hardware,alpha_vantage,Extended stock
+HUM,Humana,stock,NYSE,USD,USA,Healthcare,Managed Care,alpha_vantage,Extended stock
+ICE,Intercontinental Exchange,stock,NYSE,USD,USA,Financials,Exchanges,alpha_vantage,Extended stock
+IDXX,IDEXX Laboratories,stock,NASDAQ,USD,USA,Healthcare,Diagnostics,alpha_vantage,Extended stock
+ILMN,Illumina,stock,NASDAQ,USD,USA,Healthcare,Genomics,alpha_vantage,Extended stock
+INTC,Intel,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+INTU,Intuit,stock,NASDAQ,USD,USA,Technology,Software,alpha_vantage,Extended stock
+ISRG,Intuitive Surgical,stock,NASDAQ,USD,USA,Healthcare,Medical Robotics,alpha_vantage,Extended stock
+ITW,Illinois Tool Works,stock,NYSE,USD,USA,Industrials,Industrial Machinery,alpha_vantage,Extended stock
+KDP,Keurig Dr Pepper,stock,NASDAQ,USD,USA,Consumer Staples,Beverages,alpha_vantage,Extended stock
+KEY,KeyCorp,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Extended stock
+KHC,Kraft Heinz,stock,NASDAQ,USD,USA,Consumer Staples,Packaged Foods,alpha_vantage,Extended stock
+KLAC,KLA,stock,NASDAQ,USD,USA,Technology,Semiconductor Equipment,alpha_vantage,Extended stock
+LRCX,Lam Research,stock,NASDAQ,USD,USA,Technology,Semiconductor Equipment,alpha_vantage,Extended stock
+LVS,Las Vegas Sands,stock,NYSE,USD,USA,Consumer Discretionary,Casinos,alpha_vantage,Extended stock
+MAR,Marriott International,stock,NASDAQ,USD,USA,Consumer Discretionary,Hotels,alpha_vantage,Extended stock
+MDLZ,Mondelez International,stock,NASDAQ,USD,USA,Consumer Staples,Packaged Foods,alpha_vantage,Extended stock
+MDT,Medtronic,stock,NYSE,USD,Ireland,Healthcare,Medical Devices,alpha_vantage,Extended stock
+MELI,MercadoLibre,stock,NASDAQ,USD,Uruguay,Consumer Discretionary,Ecommerce,alpha_vantage,Extended ADR
+MMM,3M,stock,NYSE,USD,USA,Industrials,Industrial Conglomerates,alpha_vantage,Extended stock
+MNST,Monster Beverage,stock,NASDAQ,USD,USA,Consumer Staples,Beverages,alpha_vantage,Extended stock
+MO,Altria Group,stock,NYSE,USD,USA,Consumer Staples,Tobacco,alpha_vantage,Extended stock
+MPC,Marathon Petroleum,stock,NYSE,USD,USA,Energy,Refining,alpha_vantage,Extended stock
+MRVL,Marvell Technology,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+MU,Micron Technology,stock,NASDAQ,USD,USA,Technology,Memory Semiconductors,alpha_vantage,Extended stock
+NEE,NextEra Energy,stock,NYSE,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+NOC,Northrop Grumman,stock,NYSE,USD,USA,Industrials,Defense,alpha_vantage,Extended stock
+NOW,ServiceNow,stock,NYSE,USD,USA,Technology,Software,alpha_vantage,Extended stock
+NXPI,NXP Semiconductors,stock,NASDAQ,USD,Netherlands,Technology,Semiconductors,alpha_vantage,Extended stock
+O,Realty Income,stock,NYSE,USD,USA,Real Estate,Retail REIT,alpha_vantage,Extended stock
+OXY,Occidental Petroleum,stock,NYSE,USD,USA,Energy,Exploration Production,alpha_vantage,Extended stock
+PANW,Palo Alto Networks,stock,NASDAQ,USD,USA,Technology,Cybersecurity,alpha_vantage,Extended stock
+PAYX,Paychex,stock,NASDAQ,USD,USA,Industrials,Payroll Services,alpha_vantage,Extended stock
+PFE,Pfizer,stock,NYSE,USD,USA,Healthcare,Pharmaceuticals,alpha_vantage,Extended stock
+PLTR,Palantir Technologies,stock,NASDAQ,USD,USA,Technology,Software,alpha_vantage,Extended stock
+PYPL,PayPal,stock,NASDAQ,USD,USA,Financials,Payments,alpha_vantage,Extended stock
+REGN,Regeneron Pharmaceuticals,stock,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended stock
+RIVN,Rivian Automotive,stock,NASDAQ,USD,USA,Consumer Discretionary,Automobiles,alpha_vantage,Extended stock
+ROK,Rockwell Automation,stock,NYSE,USD,USA,Industrials,Automation,alpha_vantage,Extended stock
+ROST,Ross Stores,stock,NASDAQ,USD,USA,Consumer Discretionary,Discount Retail,alpha_vantage,Extended stock
+SBUX,Starbucks,stock,NASDAQ,USD,USA,Consumer Discretionary,Restaurants,alpha_vantage,Extended stock
+SCHW,Charles Schwab,stock,NYSE,USD,USA,Financials,Capital Markets,alpha_vantage,Extended stock
+SHOP,Shopify,stock,NASDAQ,USD,Canada,Technology,Ecommerce Software,alpha_vantage,Extended stock
+SNOW,Snowflake,stock,NYSE,USD,USA,Technology,Data Software,alpha_vantage,Extended stock
+SO,Southern Company,stock,NYSE,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+SPGI,S&P Global,stock,NYSE,USD,USA,Financials,Financial Data,alpha_vantage,Extended stock
+T,AT&T,stock,NYSE,USD,USA,Communication Services,Telecom,alpha_vantage,Extended stock
+TGT,Target,stock,NYSE,USD,USA,Consumer Staples,Retail,alpha_vantage,Extended stock
+TJX,TJX Companies,stock,NYSE,USD,USA,Consumer Discretionary,Off Price Retail,alpha_vantage,Extended stock
+TMUS,T-Mobile US,stock,NASDAQ,USD,USA,Communication Services,Telecom,alpha_vantage,Extended stock
+TRV,Travelers,stock,NYSE,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+UBER,Uber Technologies,stock,NYSE,USD,USA,Industrials,Mobility Platforms,alpha_vantage,Extended stock
+UPS,United Parcel Service,stock,NYSE,USD,USA,Industrials,Logistics,alpha_vantage,Extended stock
+USB,U.S. Bancorp,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Extended stock
+VRTX,Vertex Pharmaceuticals,stock,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended stock
+VZ,Verizon Communications,stock,NYSE,USD,USA,Communication Services,Telecom,alpha_vantage,Extended stock
+WBA,Walgreens Boots Alliance,stock,NASDAQ,USD,USA,Consumer Staples,Pharmacy Retail,alpha_vantage,Extended stock
+WBD,Warner Bros. Discovery,stock,NASDAQ,USD,USA,Communication Services,Media,alpha_vantage,Extended stock
+WFC,Wells Fargo,stock,NYSE,USD,USA,Financials,Banks,alpha_vantage,Extended stock
+WM,Waste Management,stock,NYSE,USD,USA,Industrials,Environmental Services,alpha_vantage,Extended stock
+ZM,Zoom Video Communications,stock,NASDAQ,USD,USA,Technology,Communications Software,alpha_vantage,Extended stock
+ZS,Zscaler,stock,NASDAQ,USD,USA,Technology,Cybersecurity,alpha_vantage,Extended stock
+ADI,Analog Devices,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+ADSK,Autodesk,stock,NASDAQ,USD,USA,Technology,Design Software,alpha_vantage,Extended stock
+ALB,Albemarle,stock,NYSE,USD,USA,Materials,Lithium Chemicals,alpha_vantage,Extended stock
+ALL,Allstate,stock,NYSE,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+AME,Ametek,stock,NYSE,USD,USA,Industrials,Electronic Instruments,alpha_vantage,Extended stock
+AWK,American Water Works,stock,NYSE,USD,USA,Utilities,Water Utilities,alpha_vantage,Extended stock
+CARR,Carrier Global,stock,NYSE,USD,USA,Industrials,HVAC,alpha_vantage,Extended stock
+CB,Chubb,stock,NYSE,USD,Switzerland,Financials,Insurance,alpha_vantage,Extended stock
+CCI,Crown Castle,stock,NYSE,USD,USA,Real Estate,Telecom REIT,alpha_vantage,Extended stock
+CDW,CDW,stock,NASDAQ,USD,USA,Technology,IT Distribution,alpha_vantage,Extended stock
+CHTR,Charter Communications,stock,NASDAQ,USD,USA,Communication Services,Cable Media,alpha_vantage,Extended stock
+CINF,Cincinnati Financial,stock,NASDAQ,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+CPRT,Copart,stock,NASDAQ,USD,USA,Industrials,Auto Auctions,alpha_vantage,Extended stock
+D,Dominion Energy,stock,NYSE,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+DFS,Discover Financial Services,stock,NYSE,USD,USA,Financials,Consumer Finance,alpha_vantage,Extended stock
+DUK,Duke Energy,stock,NYSE,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+ED,Consolidated Edison,stock,NYSE,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+EXPE,Expedia Group,stock,NASDAQ,USD,USA,Consumer Discretionary,Travel Platforms,alpha_vantage,Extended stock
+FAST,Fastenal,stock,NASDAQ,USD,USA,Industrials,Industrial Distribution,alpha_vantage,Extended stock
+FICO,Fair Isaac,stock,NYSE,USD,USA,Technology,Analytics Software,alpha_vantage,Extended stock
+FOX,Fox Corp. Class B,stock,NASDAQ,USD,USA,Communication Services,Media,alpha_vantage,Extended stock
+FOXA,Fox Corp. Class A,stock,NASDAQ,USD,USA,Communication Services,Media,alpha_vantage,Extended stock
+HAL,Halliburton,stock,NYSE,USD,USA,Energy,Oilfield Services,alpha_vantage,Extended stock
+HLT,Hilton Worldwide,stock,NYSE,USD,USA,Consumer Discretionary,Hotels,alpha_vantage,Extended stock
+IR,Ingersoll Rand,stock,NYSE,USD,USA,Industrials,Industrial Machinery,alpha_vantage,Extended stock
+K,Kellanova,stock,NYSE,USD,USA,Consumer Staples,Packaged Foods,alpha_vantage,Extended stock
+LEN,Lennar,stock,NYSE,USD,USA,Consumer Discretionary,Homebuilders,alpha_vantage,Extended stock
+LOW,Lowe's,stock,NYSE,USD,USA,Consumer Discretionary,Home Improvement,alpha_vantage,Extended stock
+LULU,Lululemon Athletica,stock,NASDAQ,USD,USA,Consumer Discretionary,Apparel,alpha_vantage,Extended stock
+LYFT,Lyft,stock,NASDAQ,USD,USA,Industrials,Mobility Platforms,alpha_vantage,Extended stock
+MCHP,Microchip Technology,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+MCO,Moody's,stock,NYSE,USD,USA,Financials,Financial Data,alpha_vantage,Extended stock
+MSI,Motorola Solutions,stock,NYSE,USD,USA,Technology,Communications Equipment,alpha_vantage,Extended stock
+NET,Cloudflare,stock,NYSE,USD,USA,Technology,Cloud Infrastructure,alpha_vantage,Extended stock
+OKTA,Okta,stock,NASDAQ,USD,USA,Technology,Identity Software,alpha_vantage,Extended stock
+ON,ON Semiconductor,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+PCAR,Paccar,stock,NASDAQ,USD,USA,Industrials,Trucks,alpha_vantage,Extended stock
+PDD,PDD Holdings,stock,NASDAQ,USD,China,Consumer Discretionary,Ecommerce,alpha_vantage,Extended ADR
+PGR,Progressive,stock,NYSE,USD,USA,Financials,Insurance,alpha_vantage,Extended stock
+PH,Parker-Hannifin,stock,NYSE,USD,USA,Industrials,Motion Control,alpha_vantage,Extended stock
+PSA,Public Storage,stock,NYSE,USD,USA,Real Estate,Storage REIT,alpha_vantage,Extended stock
+RCL,Royal Caribbean Cruises,stock,NYSE,USD,USA,Consumer Discretionary,Cruise Lines,alpha_vantage,Extended stock
+RMD,ResMed,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+SLB,Schlumberger,stock,NYSE,USD,USA,Energy,Oilfield Services,alpha_vantage,Extended stock
+SQ,Block,stock,NYSE,USD,USA,Financials,Payments,alpha_vantage,Extended stock
+STX,Seagate Technology,stock,NASDAQ,USD,Ireland,Technology,Storage Hardware,alpha_vantage,Extended stock
+SWKS,Skyworks Solutions,stock,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended stock
+SYK,Stryker,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+TEAM,Atlassian,stock,NASDAQ,USD,Australia,Technology,Software,alpha_vantage,Extended stock
+TROW,T. Rowe Price,stock,NASDAQ,USD,USA,Financials,Asset Management,alpha_vantage,Extended stock
+VLO,Valero Energy,stock,NYSE,USD,USA,Energy,Refining,alpha_vantage,Extended stock
+WDAY,Workday,stock,NASDAQ,USD,USA,Technology,Human Capital Software,alpha_vantage,Extended stock
+WYNN,Wynn Resorts,stock,NASDAQ,USD,USA,Consumer Discretionary,Casinos,alpha_vantage,Extended stock
+XEL,Xcel Energy,stock,NASDAQ,USD,USA,Utilities,Electric Utilities,alpha_vantage,Extended stock
+YUM,Yum Brands,stock,NYSE,USD,USA,Consumer Discretionary,Restaurants,alpha_vantage,Extended stock
+ZBH,Zimmer Biomet,stock,NYSE,USD,USA,Healthcare,Medical Devices,alpha_vantage,Extended stock
+ARKK,ARK Innovation ETF,etf,NYSE Arca,USD,USA,Thematic ETF,Innovation,alpha_vantage,Extended ETF
+SCHD,Schwab US Dividend Equity ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,Extended ETF
+VIG,Vanguard Dividend Appreciation ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,Extended ETF
+VYM,Vanguard High Dividend Yield ETF,etf,NYSE Arca,USD,USA,Dividend Equity,US Equity,alpha_vantage,Extended ETF
+IJR,iShares Core S&P Small-Cap ETF,etf,NYSE Arca,USD,USA,Small Cap,US Equity,alpha_vantage,Extended ETF
+IJH,iShares Core S&P Mid-Cap ETF,etf,NYSE Arca,USD,USA,Mid Cap,US Equity,alpha_vantage,Extended ETF
+XLY,Consumer Discretionary Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Consumer Discretionary,Sector ETF,alpha_vantage,Extended ETF
+XLP,Consumer Staples Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Consumer Staples,Sector ETF,alpha_vantage,Extended ETF
+XLU,Utilities Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Utilities,Sector ETF,alpha_vantage,Extended ETF
+XLRE,Real Estate Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Real Estate,Sector ETF,alpha_vantage,Extended ETF
+XLI,Industrial Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Industrials,Sector ETF,alpha_vantage,Extended ETF
+XLB,Materials Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Materials,Sector ETF,alpha_vantage,Extended ETF
+XLC,Communication Services Select Sector SPDR Fund,etf,NYSE Arca,USD,USA,Communication Services,Sector ETF,alpha_vantage,Extended ETF
+SMH,VanEck Semiconductor ETF,etf,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended ETF
+SOXX,iShares Semiconductor ETF,etf,NASDAQ,USD,USA,Technology,Semiconductors,alpha_vantage,Extended ETF
+IBB,iShares Biotechnology ETF,etf,NASDAQ,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended ETF
+XBI,SPDR S&P Biotech ETF,etf,NYSE Arca,USD,USA,Healthcare,Biotechnology,alpha_vantage,Extended ETF
+KRE,SPDR S&P Regional Banking ETF,etf,NYSE Arca,USD,USA,Financials,Regional Banks,alpha_vantage,Extended ETF
+VNQ,Vanguard Real Estate ETF,etf,NYSE Arca,USD,USA,Real Estate,REITs,alpha_vantage,Extended ETF
+TIP,iShares TIPS Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Inflation Protected,TIPS,alpha_vantage,Extended bond ETF
+TIPS,SPDR Bloomberg 1-10 Year TIPS ETF,bond_etf,NYSE Arca,USD,USA,Treasury Inflation Protected,TIPS,alpha_vantage,Extended bond ETF
+GOVT,iShares US Treasury Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bonds,US Treasuries,alpha_vantage,Extended bond ETF
+BIL,SPDR Bloomberg 1-3 Month T-Bill ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bills,T-Bills,alpha_vantage,Extended bond ETF
+SGOV,iShares 0-3 Month Treasury Bond ETF,bond_etf,NYSE Arca,USD,USA,Treasury Bills,T-Bills,alpha_vantage,Extended bond ETF
+USO,United States Oil Fund,etf,NYSE Arca,USD,USA,Commodities,Oil,alpha_vantage,Extended commodity ETF
+DOT,Polkadot,crypto,Crypto,USD,Global,Digital Assets,Interoperability,coingecko,Extended crypto
+LINK,Chainlink,crypto,Crypto,USD,Global,Digital Assets,Oracle Network,coingecko,Extended crypto
+TRX,TRON,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+LTC,Litecoin,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Extended crypto
+BCH,Bitcoin Cash,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Extended crypto
+UNI,Uniswap,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Extended crypto
+NEAR,NEAR Protocol,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+APT,Aptos,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+ATOM,Cosmos,crypto,Crypto,USD,Global,Digital Assets,Interoperability,coingecko,Extended crypto
+ETC,Ethereum Classic,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+FIL,Filecoin,crypto,Crypto,USD,Global,Digital Assets,Storage,coingecko,Extended crypto
+ICP,Internet Computer,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+ARB,Arbitrum,crypto,Crypto,USD,Global,Digital Assets,Layer 2,coingecko,Extended crypto
+OP,Optimism,crypto,Crypto,USD,Global,Digital Assets,Layer 2,coingecko,Extended crypto
+INJ,Injective,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Extended crypto
+TON,Toncoin,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+HBAR,Hedera,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+VET,VeChain,crypto,Crypto,USD,Global,Digital Assets,Supply Chain,coingecko,Extended crypto
+ALGO,Algorand,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+XLM,Stellar,crypto,Crypto,USD,Global,Digital Assets,Payments,coingecko,Extended crypto
+AAVE,Aave,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Extended crypto
+MKR,Maker,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Extended crypto
+RUNE,THORChain,crypto,Crypto,USD,Global,Digital Assets,DeFi,coingecko,Extended crypto
+SUI,Sui,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+PEPE,Pepe,crypto,Crypto,USD,Global,Digital Assets,Meme Coin,coingecko,Extended crypto
+SEI,Sei,crypto,Crypto,USD,Global,Digital Assets,Layer 1,coingecko,Extended crypto
+FET,Fetch.ai,crypto,Crypto,USD,Global,Digital Assets,AI Crypto,coingecko,Extended crypto
+RNDR,Render,crypto,Crypto,USD,Global,Digital Assets,Compute,coingecko,Extended crypto
+LDO,Lido DAO,crypto,Crypto,USD,Global,Digital Assets,Staking,coingecko,Extended crypto
+GRT,The Graph,crypto,Crypto,USD,Global,Digital Assets,Indexing,coingecko,Extended crypto

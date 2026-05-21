@@ -5,14 +5,24 @@ import sqlite3
 from backend.app.models import DashboardOut, NewsItemOut
 from backend.app.services.assets_service import list_assets
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signals_service import list_signals
+from backend.app.services.universe_service import UniverseService
+from backend.app.services.data_quality_service import DataQualityService
+from backend.app.services.system_health_service import SystemHealthService
+from backend.app.services.operational_ranking_service import OperationalRankingService
 
 
 portfolio_engine = PortfolioEngine()
 market_data_service = MarketDataService()
 news_engine = NewsEngine()
+ml_engine = MLEngine()
+universe_service = UniverseService()
+data_quality_service = DataQualityService()
+system_health_service = SystemHealthService()
+operational_ranking_service = OperationalRankingService()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
@@ -114,8 +124,20 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         ],
         latest_backtest=dict(latest_backtest_row) if latest_backtest_row else None,
         data_status=market_data_service.get_global_status(connection),
+        universe_summary=universe_service.get_summary(connection),
+        ml_status=ml_engine.get_status(connection),
+        latest_ml_prediction=ml_engine.latest_prediction(connection),
         high_impact_news=_high_impact_news(connection),
         market_sentiment=_market_sentiment(connection),
+        system_health=system_health_service.get_health(connection),
+        top_buy_candidates=operational_ranking_service.get_operational_ranking(
+            connection
+        ).buy_candidates[:5],
+        data_quality_warnings=[
+            f"{q.symbol}: {q.grade} ({q.score:.0f}%)"
+            for q in data_quality_service.list_all_quality(connection)
+            if q.score < 70
+        ],
     )
 
 

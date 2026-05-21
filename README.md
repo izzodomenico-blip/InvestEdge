@@ -2,7 +2,7 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest e integrazione dati reali opzionale con cache. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, integrazione dati reali opzionale con cache, news/sentiment, Universe Manager e Machine Learning leggero. Non include collegamenti reali a broker, ordini reali, deep learning, scraping non autorizzato o trading automatico.
 
 ## Struttura
 
@@ -19,6 +19,7 @@ backend/
 frontend/
   src/
 data/
+  universe/
 docs/
 scripts/
 tests/
@@ -37,9 +38,12 @@ Lo script:
 - crea le tabelle se non esistono
 - rimuove i dati seed precedenti con `--reset`
 - inserisce 25 asset tra azioni USA, ETF, cripto, bond ed ETF obbligazionari
+- importa l'universo investibile statico da `data/universe/`
 - genera 2 anni di storico prezzi giornaliero
 - calcola indicatori tecnici avanzati e segnali STRONG_BUY/BUY/HOLD/REDUCE/SELL
 - con `--reset` inizializza un portafoglio demo da 100000 con ordini simulati su AAPL, MSFT, NVDA, BTC, ETH, SPY e QQQ
+
+I 25 asset seed sono solo la demo minima con storico prezzi generato. Il limite operativo del sistema e definito dal Universe Manager.
 
 ## Analisi tecnica
 
@@ -113,7 +117,7 @@ Attenzione: il backtest e una simulazione su dati storici generati localmente. N
 
 ## Dati reali con cache
 
-Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente all'apertura della dashboard. I refresh reali partono solo dagli endpoint `/data/refresh/*` o dalla pagina frontend `Dati`.
+Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente all'apertura della dashboard. I refresh reali partono solo dagli endpoint `/data/refresh/*`, dalla pagina frontend `Dati` o dalla pagina `Universe`.
 
 Provider predisposti:
 
@@ -134,6 +138,8 @@ Regole operative:
 - se manca una API key, se il provider fallisce o se il limite giornaliero e raggiunto, l'app usa i dati locali;
 - ogni chiamata reale incrementa `api_usage`;
 - le API key non vengono stampate nei log, nel frontend, nei test o in questa documentazione.
+
+`POST /data/refresh-all` non significa "aggiorna tutto l'universo": aggiorna solo i candidati selezionati dal Universe Manager, con default `limit=10` e massimo 50.
 
 Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backend/.env` puo contenere chiavi reali e non deve essere committato.
 
@@ -212,6 +218,86 @@ Note finali sulle news:
 - non c'e scraping web: il provider reale chiama solo l'endpoint ufficiale Alpha Vantage News & Sentiment;
 - la UI non si blocca se le news falliscono, mostra messaggi di fallback chiari.
 
+## Universe Manager
+
+InvestEdge non e limitato ai 25 asset seed. Il seed iniziale crea uno storico prezzi locale solo per 25 asset demo, ma il Universe Manager mantiene un universo investibile piu ampio e scalabile in `asset_universe`.
+
+Livelli disponibili:
+
+- `CORE`: asset principali sempre monitorati, default per training ML; lo statico iniziale contiene 75 asset.
+- `EXTENDED`: asset importanti ma aggiornati meno spesso; lo statico iniziale contiene 256 asset.
+- `CANDIDATE`: asset importati o disponibili per screening, aggiornati solo su richiesta; struttura pronta per 1000+ asset futuri.
+
+File CSV statici:
+
+- `data/universe/core_universe.csv`
+- `data/universe/extended_universe.csv`
+- `data/universe/crypto_universe.csv`
+- `data/universe/etf_universe.csv`
+
+Perche non si aggiorna tutto ogni volta:
+
+- molte API gratuite o retail hanno limiti giornalieri stretti;
+- aggiornare centinaia di asset a ogni apertura UI renderebbe instabile il sistema;
+- `refresh-all` usa solo `get_refresh_candidates(limit)` e il default e 10 asset;
+- la priorita favorisce asset in portafoglio, watchlist, CORE, segnali forti, news high impact, EXTENDED e infine CANDIDATE.
+
+Relazioni operative:
+
+- `Universe`: catalogo scalabile degli asset disponibili.
+- `Watchlist`: mostra solo asset watchlisted o presenti in portafoglio.
+- `Backtest`: puo selezionare da watchlist, CORE o EXTENDED, con limite pratico locale.
+- `ML`: se non passi simboli a `/ml/train`, usa di default il `CORE_UNIVERSE` con storico prezzi disponibile.
+
+Import CSV:
+
+```http
+POST /universe/import
+{
+  "file_name": "extended_universe.csv",
+  "universe_level": "EXTENDED"
+}
+```
+
+## Machine Learning leggero
+
+Lo Step 8 aggiunge un modulo ML probabilistico e spiegabile. Il modello non sostituisce lo score tecnico: produce una probabilita operativa, una confidence e una spiegazione delle feature piu rilevanti.
+
+Modelli supportati:
+
+- `LOGISTIC_REGRESSION`: modello lineare interpretabile con coefficienti per feature.
+- `RANDOM_FOREST`: modello ad alberi leggero con feature importances.
+
+Target supportati:
+
+- `POSITIVE_RETURN`: label 1 se il rendimento futuro a `horizon_days` e maggiore di 0.
+- `OUTPERFORM_BENCHMARK`: label 1 se l'asset batte il benchmark, default `SPY`, sullo stesso orizzonte.
+- `DRAWDOWN_RISK`: label 1 se nei prossimi `horizon_days` il drawdown scende sotto `-8%`.
+
+Feature iniziali:
+
+- tecniche: ritorni 1/5/20 giorni, volatilita 30 giorni, RSI, MACD, percentuale Bollinger, ATR, ADX, distanza da SMA50/SMA200, max drawdown recente e volume ratio;
+- score esistenti: technical_score, trend, momentum, volatility, volume, support/resistance e risk penalty;
+- news opzionali: sentiment 7 giorni, conteggi positive/negative/high impact;
+- portafoglio opzionale: peso asset e raccomandazione corrente codificata.
+
+Controlli anti look-ahead:
+
+- ogni riga con data `T` usa solo prezzi e indicatori calcolabili fino a `T`;
+- il target usa solo dati futuri `T + horizon_days`;
+- lo split train/test e time-based;
+- se `symbols` e vuoto, il training usa il `CORE_UNIVERSE` con dati prezzo disponibili;
+- `EXTENDED_UNIVERSE` va selezionato esplicitamente e conviene limitarlo;
+- il seed non addestra modelli automaticamente e resta veloce.
+
+Differenza tra segnali:
+
+- `technical_score`: lettura tecnica deterministica dell'asset;
+- `news_score`: aggiustamento euristico basato su sentiment news;
+- `ML prediction`: probabilita stimata da dati storici e feature, con confidence e spiegazione.
+
+Avvertenza: il ML e sperimentale, non prevede il prezzo esatto, non garantisce rendimento e puo soffrire di overfitting. Va usato come supporto probabilistico insieme a score tecnico, news e risk management.
+
 ## Avvio backend
 
 ```powershell
@@ -241,8 +327,15 @@ Endpoint iniziali:
 - `GET /data/status`
 - `GET /data/status/{symbol}`
 - `POST /data/refresh/{symbol}?force=false`
-- `POST /data/refresh-all?limit=5&force=false`
+- `POST /data/refresh-all?limit=10&force=false`
 - `GET /data/usage`
+- `GET /universe`
+- `GET /universe/summary`
+- `POST /universe/import`
+- `POST /universe/{symbol}/watchlist`
+- `DELETE /universe/{symbol}/watchlist`
+- `POST /universe/{symbol}/promote`
+- `GET /universe/refresh-candidates`
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
@@ -251,6 +344,14 @@ Endpoint iniziali:
 - `POST /news/refresh/{symbol}?force=false`
 - `GET /news/sentiment/{symbol}?lookback_days=7`
 - `GET /news/status`
+- `GET /ml/status`
+- `POST /ml/train`
+- `GET /ml/models`
+- `GET /ml/models/{model_id}`
+- `POST /ml/predict/{symbol}`
+- `POST /ml/predict-all`
+- `GET /ml/predictions/{symbol}`
+- `GET /ml/training-runs`
 - `POST /admin/seed?reset=true`
 
 Esempio inizializzazione portafoglio:
@@ -323,6 +424,33 @@ Risposta sintetica:
 }
 ```
 
+Esempio training ML:
+
+```http
+POST /ml/train
+{
+  "model_name": "InvestEdge logistic 14d",
+  "model_type": "LOGISTIC_REGRESSION",
+  "target_type": "POSITIVE_RETURN",
+  "horizon_days": 14,
+  "symbols": [],
+  "benchmark_symbol": "SPY",
+  "test_size_time_percent": 25,
+  "min_samples": 200
+}
+```
+
+Con `symbols: []` il backend usa il `CORE_UNIVERSE` filtrato agli asset con storico prezzi locale.
+
+Esempio prediction ML:
+
+```http
+POST /ml/predict/AAPL
+{
+  "model_id": 1
+}
+```
+
 La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8001/docs`.
 
 ## Avvio frontend
@@ -347,7 +475,7 @@ Build frontend:
 
 ```powershell
 cd frontend
-npm run build
+npm.cmd run build
 ```
 
 ## Variabili ambiente

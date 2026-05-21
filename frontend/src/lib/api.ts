@@ -34,6 +34,11 @@ export type Asset = {
   signal: Signal | null;
   confidence: string | null;
   technical_summary: string | null;
+  ml_model_id: number | null;
+  ml_probability: number | null;
+  ml_confidence: string | null;
+  ml_label: string | null;
+  ml_target_type: string | null;
   updated_at: string | null;
 };
 
@@ -75,8 +80,63 @@ export type DashboardResponse = {
   risky_assets: Asset[];
   latest_backtest: BacktestSummary | null;
   data_status: DataStatus;
+  universe_summary: UniverseSummary;
+  ml_status: MLStatus;
+  latest_ml_prediction: MLPrediction | null;
   high_impact_news: NewsItem[];
   market_sentiment: MarketSentiment;
+  system_health: SystemHealth | null;
+  top_buy_candidates: ValidatedSignal[];
+  data_quality_warnings: string[];
+};
+
+export type SystemHealth = {
+  status: "healthy" | "degraded" | "down";
+  database: string;
+  providers: Record<string, string>;
+  cache: string;
+  timestamp: string;
+};
+
+export type DataQualityCheck = {
+  symbol: string;
+  score: number;
+  grade: string;
+  checks: Record<string, boolean>;
+  details: Record<string, string | number | boolean>;
+  is_valid: boolean;
+  last_check: string;
+};
+
+export type ValidatedSignal = {
+  symbol: string;
+  asset_id: number;
+  original_signal: string;
+  validated_signal: string;
+  reason: string;
+  data_quality_score: number;
+  ml_confidence: string | null;
+  news_sentiment: string | null;
+  portfolio_weight: number | null;
+  action_suggested: string;
+  timestamp: string;
+};
+
+export type OperationalRanking = {
+  buy_candidates: ValidatedSignal[];
+  watch_candidates: ValidatedSignal[];
+  reduce_candidates: ValidatedSignal[];
+  excluded_candidates: ValidatedSignal[];
+  updated_at: string;
+};
+
+export type PortfolioAction = {
+  symbol: string;
+  action: string;
+  reason: string;
+  current_weight: number;
+  target_weight: number | null;
+  timestamp: string;
 };
 
 export type PortfolioPosition = {
@@ -240,6 +300,7 @@ export type TechnicalAnalysis = {
   news_sentiment_label: SentimentLabel | null;
   news_impact_level: ImpactLevel | null;
   news_count: number;
+  latest_ml_prediction: MLPrediction | null;
 };
 
 export type BacktestStrategy = "SCORE_THRESHOLD" | "BUY_AND_HOLD" | "TOP_N_SCORE";
@@ -339,6 +400,149 @@ export type BacktestResult = {
     alpha_vs_benchmark: number;
     benchmark_final_value: number;
   };
+};
+
+export type MLModelType = "LOGISTIC_REGRESSION" | "RANDOM_FOREST";
+export type MLTargetType = "POSITIVE_RETURN" | "OUTPERFORM_BENCHMARK" | "DRAWDOWN_RISK";
+
+export type MLTrainingRun = {
+  id: number | null;
+  model_name: string;
+  target_type: string;
+  horizon_days: number;
+  train_start_date: string | null;
+  train_end_date: string | null;
+  test_start_date: string | null;
+  test_end_date: string | null;
+  samples_count: number;
+  accuracy: number | null;
+  precision: number | null;
+  recall: number | null;
+  f1_score: number | null;
+  roc_auc: number | null;
+  created_at: string | null;
+};
+
+export type MLModelSummary = {
+  id: number;
+  model_name: string;
+  model_type: string;
+  target_type: string;
+  horizon_days: number;
+  symbols_scope: string[];
+  features: string[];
+  metrics: Record<string, unknown>;
+  model_path: string | null;
+  trained_at: string | null;
+  created_at: string | null;
+  training_run?: MLTrainingRun | null;
+};
+
+export type MLPrediction = {
+  id: number | null;
+  symbol: string;
+  model_id: number;
+  horizon_days: number;
+  target_type: string;
+  prediction_date: string;
+  probabilities: Record<string, number | null>;
+  probability_positive: number | null;
+  probability_outperform: number | null;
+  probability_drawdown: number | null;
+  predicted_label: string;
+  confidence: string;
+  features_snapshot: Record<string, number>;
+  explanation: {
+    top_features_positive?: Array<{ feature: string; importance: number }>;
+    top_features_negative?: Array<{ feature: string; importance: number }>;
+    feature_values?: Record<string, number>;
+    message?: string;
+    warnings?: string[];
+    [key: string]: unknown;
+  };
+  warnings: string[];
+  created_at: string | null;
+};
+
+export type MLStatus = {
+  models_count: number;
+  latest_model: MLModelSummary | null;
+  latest_training_run: MLTrainingRun | null;
+  available_targets: string[];
+  available_model_types: string[];
+  ml_ready: boolean;
+  message: string;
+};
+
+export type MLTrainInput = {
+  model_name: string;
+  model_type: MLModelType;
+  target_type: MLTargetType;
+  horizon_days: number;
+  symbols: string[];
+  benchmark_symbol: string;
+  test_size_time_percent: number;
+  min_samples: number;
+};
+
+export type UniverseLevel = "CORE" | "EXTENDED" | "CANDIDATE";
+
+export type UniverseAsset = Asset & {
+  asset_id: number | null;
+  industry: string | null;
+  universe_level: UniverseLevel;
+  is_active: boolean;
+  is_watchlisted: boolean;
+  is_portfolio_asset: boolean;
+  refresh_priority: number;
+  refresh_frequency_days: number;
+  last_price_refresh_at: string | null;
+  last_signal_refresh_at: string | null;
+  last_news_refresh_at: string | null;
+  data_provider: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
+export type UniverseSummary = {
+  total_assets: number;
+  core_count: number;
+  extended_count: number;
+  candidate_count: number;
+  active_count: number;
+  watchlist_count: number;
+  portfolio_count: number;
+  priced_assets_count: number;
+  refresh_candidates_count: number;
+  by_asset_type: Record<string, number>;
+  by_country: Record<string, number>;
+  by_exchange: Record<string, number>;
+};
+
+export type UniverseImportInput = {
+  file_name: string;
+  universe_level: UniverseLevel;
+};
+
+export type UniverseImportResult = UniverseImportInput & {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  total_rows: number;
+};
+
+export type MLTrainResult = {
+  model_id: number;
+  training_run: MLTrainingRun;
+  metrics: Record<string, unknown>;
+  features_used: string[];
+  warnings: string[];
+};
+
+export type MLPredictAllResult = {
+  model_id: number;
+  predictions: MLPrediction[];
+  warnings: string[];
 };
 
 export type DataProviderStatus = {
@@ -555,3 +759,14 @@ export async function apiDelete<T>(path: string): Promise<T> {
 
   return response.json() as Promise<T>;
 }
+
+export const api = {
+  getSystemHealth: () => apiGet<SystemHealth>("/system/health"),
+  getSystemAudit: () => apiGet<SystemHealth>("/system/audit"),
+  getAllDataQuality: () => apiGet<DataQualityCheck[]>("/quality/data"),
+  getAssetDataQuality: (symbol: string) => apiGet<DataQualityCheck>(`/quality/data/${symbol}`),
+  getAllValidatedSignals: () => apiGet<ValidatedSignal[]>("/signals/validated"),
+  getAssetValidatedSignal: (symbol: string) => apiGet<ValidatedSignal>(`/signals/validated/${symbol}`),
+  getOperationalRanking: () => apiGet<OperationalRanking>("/ranking/operational"),
+  getPortfolioActions: () => apiGet<PortfolioAction[]>("/portfolio/actions"),
+};

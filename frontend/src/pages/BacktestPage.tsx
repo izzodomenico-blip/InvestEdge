@@ -24,6 +24,7 @@ import {
   type BacktestStrategy,
   type BacktestSummary,
   type RebalanceFrequency,
+  type UniverseAsset,
 } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 import { Activity, BarChart3, BadgeDollarSign, ShieldAlert } from "lucide-react";
@@ -83,22 +84,26 @@ function numberOrUndefined(value: string) {
 
 export function BacktestPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [universeAssets, setUniverseAssets] = useState<UniverseAsset[]>([]);
   const [history, setHistory] = useState<BacktestSummary[]>([]);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assetSource, setAssetSource] = useState<"WATCHLIST" | "CORE" | "EXTENDED">("WATCHLIST");
 
   async function loadData() {
     setLoading(true);
     setError(null);
     try {
-      const [assetData, historyData] = await Promise.all([
+      const [assetData, universeData, historyData] = await Promise.all([
         apiGet<Asset[]>("/assets"),
+        apiGet<UniverseAsset[]>("/universe?active_only=true&limit=1000"),
         apiGet<BacktestSummary[]>("/backtests"),
       ]);
       setAssets(assetData);
+      setUniverseAssets(universeData);
       setHistory(historyData);
       if (historyData[0]) {
         setResult(await apiGet<BacktestResult>(`/backtests/${historyData[0].id}`));
@@ -115,6 +120,13 @@ export function BacktestPage() {
   }, []);
 
   const selectedAssetSet = useMemo(() => new Set(form.symbols), [form.symbols]);
+  const selectableAssets = useMemo(() => {
+    const priced = universeAssets.filter((asset) => asset.last_price != null);
+    if (assetSource === "WATCHLIST") {
+      return priced.filter((asset) => asset.is_watchlisted || asset.is_portfolio_asset);
+    }
+    return priced.filter((asset) => asset.universe_level === assetSource);
+  }, [assetSource, universeAssets]);
 
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -138,6 +150,9 @@ export function BacktestPage() {
     }
     if (form.symbols.length === 0) {
       return "Seleziona almeno un asset.";
+    }
+    if (form.symbols.length > 50) {
+      return "Limite pratico: seleziona al massimo 50 asset per backtest locale.";
     }
     if (!form.start_date || !form.end_date || form.end_date < form.start_date) {
       return "Intervallo date non valido.";
@@ -262,15 +277,30 @@ export function BacktestPage() {
             </div>
 
             <div>
-              <p className="mb-2 text-sm text-slate-400">Asset</p>
+              <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-400">Asset</p>
+                <select
+                  value={assetSource}
+                  onChange={(event) => setAssetSource(event.target.value as "WATCHLIST" | "CORE" | "EXTENDED")}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
+                >
+                  <option value="WATCHLIST">Watchlist / portfolio</option>
+                  <option value="CORE">Core universe</option>
+                  <option value="EXTENDED">Extended universe</option>
+                </select>
+              </div>
+              {assetSource === "EXTENDED" && (
+                <p className="mb-2 text-xs text-amber-300">Extended universe: usa un sottoinsieme ragionevole e solo asset con storico prezzi disponibile.</p>
+              )}
               <div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border border-slate-800 bg-slate-900/40 p-3 sm:grid-cols-2">
-                {assets.map((asset) => (
+                {selectableAssets.map((asset) => (
                   <label key={asset.symbol} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-slate-800/70">
                     <input type="checkbox" checked={selectedAssetSet.has(asset.symbol)} onChange={() => toggleSymbol(asset.symbol)} className="h-4 w-4 accent-cyan-300" />
                     <span className="font-semibold text-white">{asset.symbol}</span>
-                    <span className="truncate text-slate-500">{asset.asset_type}</span>
+                    <span className="truncate text-slate-500">{asset.universe_level} · {asset.asset_type}</span>
                   </label>
                 ))}
+                {selectableAssets.length === 0 && <p className="text-sm text-slate-500">Nessun asset prezzato disponibile per questa sorgente.</p>}
               </div>
             </div>
 

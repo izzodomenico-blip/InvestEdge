@@ -250,6 +250,83 @@ CREATE TABLE IF NOT EXISTS backtest_positions (
     FOREIGN KEY(backtest_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS ml_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_name TEXT NOT NULL,
+    model_type TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    symbols_scope TEXT,
+    features_json TEXT,
+    metrics_json TEXT,
+    model_path TEXT,
+    trained_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ml_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER,
+    symbol TEXT NOT NULL,
+    prediction_date TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    probability_positive REAL,
+    probability_outperform REAL,
+    probability_drawdown REAL,
+    predicted_label TEXT,
+    confidence TEXT,
+    features_snapshot_json TEXT,
+    explanation_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(model_id) REFERENCES ml_models(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS ml_training_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_name TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    train_start_date TEXT,
+    train_end_date TEXT,
+    test_start_date TEXT,
+    test_end_date TEXT,
+    samples_count INTEGER NOT NULL DEFAULT 0,
+    accuracy REAL,
+    precision REAL,
+    recall REAL,
+    f1_score REAL,
+    roc_auc REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS asset_universe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER,
+    symbol TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    exchange TEXT,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    country TEXT,
+    sector TEXT,
+    industry TEXT,
+    universe_level TEXT NOT NULL CHECK(universe_level IN ('CORE', 'EXTENDED', 'CANDIDATE')),
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_watchlisted INTEGER NOT NULL DEFAULT 0,
+    is_portfolio_asset INTEGER NOT NULL DEFAULT 0,
+    refresh_priority INTEGER NOT NULL DEFAULT 0,
+    refresh_frequency_days INTEGER NOT NULL DEFAULT 7,
+    last_price_refresh_at TEXT,
+    last_signal_refresh_at TEXT,
+    last_news_refresh_at TEXT,
+    data_provider TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
@@ -266,6 +343,12 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at
 CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
+CREATE INDEX IF NOT EXISTS idx_ml_models_trained ON ml_models(trained_at);
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol_created ON ml_predictions(symbol, created_at);
+CREATE INDEX IF NOT EXISTS idx_ml_training_runs_created ON ml_training_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_asset_universe_level ON asset_universe(universe_level);
+CREATE INDEX IF NOT EXISTS idx_asset_universe_active_priority ON asset_universe(is_active, refresh_priority);
+CREATE INDEX IF NOT EXISTS idx_asset_universe_watchlist ON asset_universe(is_watchlisted, is_portfolio_asset);
 """
 
 
@@ -424,6 +507,16 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at)")
     connection.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_url_unique ON news_items(url) WHERE url IS NOT NULL AND url <> ''"
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_trained ON ml_models(trained_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol_created ON ml_predictions(symbol, created_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ml_training_runs_created ON ml_training_runs(created_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_asset_universe_level ON asset_universe(universe_level)")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_asset_universe_active_priority ON asset_universe(is_active, refresh_priority)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_asset_universe_watchlist ON asset_universe(is_watchlisted, is_portfolio_asset)"
     )
 
 

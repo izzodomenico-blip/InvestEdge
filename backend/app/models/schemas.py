@@ -11,6 +11,9 @@ RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
 BacktestStrategy = Literal["SCORE_THRESHOLD", "BUY_AND_HOLD", "TOP_N_SCORE"]
 RebalanceFrequency = Literal["DAILY", "WEEKLY", "MONTHLY"]
+MLModelType = Literal["LOGISTIC_REGRESSION", "RANDOM_FOREST"]
+MLTargetType = Literal["POSITIVE_RETURN", "OUTPERFORM_BENCHMARK", "DRAWDOWN_RISK"]
+UniverseLevel = Literal["CORE", "EXTENDED", "CANDIDATE"]
 
 
 class AssetCreate(BaseModel):
@@ -37,6 +40,11 @@ class AssetOut(AssetCreate):
     signal: SignalType | None = None
     confidence: str | None = None
     technical_summary: str | None = None
+    ml_model_id: int | None = None
+    ml_probability: float | None = None
+    ml_confidence: str | None = None
+    ml_label: str | None = None
+    ml_target_type: str | None = None
     updated_at: str | None = None
 
 
@@ -108,6 +116,55 @@ class SignalOut(BaseModel):
     created_at: str
 
 
+class SystemHealthOut(BaseModel):
+    status: Literal["healthy", "degraded", "down"]
+    database: str
+    providers: dict[str, str]
+    cache: str
+    timestamp: str
+
+
+class DataQualityCheckOut(BaseModel):
+    symbol: str
+    score: float
+    grade: str
+    checks: dict[str, bool]
+    details: dict[str, str | int | float]
+    is_valid: bool
+    last_check: str
+
+
+class ValidatedSignalOut(BaseModel):
+    symbol: str
+    asset_id: int
+    original_signal: str
+    validated_signal: str
+    reason: str
+    data_quality_score: float
+    ml_confidence: str | None = None
+    news_sentiment: str | None = None
+    portfolio_weight: float | None = None
+    action_suggested: str
+    timestamp: str
+
+
+class OperationalRankingOut(BaseModel):
+    buy_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
+    watch_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
+    reduce_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
+    excluded_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
+    updated_at: str
+
+
+class PortfolioActionOut(BaseModel):
+    symbol: str
+    action: str
+    reason: str
+    current_weight: float
+    target_weight: float | None = None
+    timestamp: str
+
+
 class DashboardOut(BaseModel):
     initialized: bool
     message: str | None = None
@@ -132,8 +189,14 @@ class DashboardOut(BaseModel):
     portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
     latest_backtest: dict[str, float | int | str | None] | None = None
     data_status: dict[str, object] = Field(default_factory=dict)
+    universe_summary: dict[str, object] = Field(default_factory=dict)
+    ml_status: dict[str, object] = Field(default_factory=dict)
+    latest_ml_prediction: dict[str, object] | None = None
     high_impact_news: list["NewsItemOut"] = Field(default_factory=list)
     market_sentiment: dict[str, object] = Field(default_factory=dict)
+    system_health: SystemHealthOut | None = None
+    top_buy_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
+    data_quality_warnings: list[str] = Field(default_factory=list)
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -156,6 +219,7 @@ class TechnicalAnalysisOut(BaseModel):
     news_sentiment_label: str | None = None
     news_impact_level: str | None = None
     news_count: int = 0
+    latest_ml_prediction: dict[str, object] | None = None
 
 
 class SeedSummaryOut(BaseModel):
@@ -166,6 +230,10 @@ class SeedSummaryOut(BaseModel):
     portfolio_positions_inserted: int = 0
     simulated_orders_inserted: int = 0
     portfolio_snapshots_inserted: int = 0
+    universe_assets_imported: int = 0
+    core_universe_count: int = 0
+    extended_universe_count: int = 0
+    candidate_universe_count: int = 0
     started_at: str
     completed_at: str
 
@@ -360,6 +428,176 @@ class BacktestResultOut(BaseModel):
     trades: list[BacktestTradeOut]
     final_positions: list[BacktestPositionOut]
     benchmark_comparison: BacktestBenchmarkComparisonOut
+
+
+class MLTrainIn(BaseModel):
+    model_name: str = Field(..., min_length=1, max_length=120)
+    model_type: MLModelType
+    target_type: MLTargetType
+    horizon_days: int = Field(default=14, ge=1, le=120)
+    symbols: list[str] = Field(default_factory=list)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
+    test_size_time_percent: float = Field(default=25, ge=10, le=50)
+    min_samples: int = Field(default=200, ge=20, le=100000)
+
+
+class MLPredictIn(BaseModel):
+    model_id: int | None = None
+
+
+class MLTrainingRunOut(BaseModel):
+    id: int | None = None
+    model_name: str
+    target_type: str
+    horizon_days: int
+    train_start_date: str | None = None
+    train_end_date: str | None = None
+    test_start_date: str | None = None
+    test_end_date: str | None = None
+    samples_count: int
+    accuracy: float | None = None
+    precision: float | None = None
+    recall: float | None = None
+    f1_score: float | None = None
+    roc_auc: float | None = None
+    created_at: str | None = None
+
+
+class MLModelSummaryOut(BaseModel):
+    id: int
+    model_name: str
+    model_type: str
+    target_type: str
+    horizon_days: int
+    symbols_scope: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    metrics: dict[str, object] = Field(default_factory=dict)
+    model_path: str | None = None
+    trained_at: str | None = None
+    created_at: str | None = None
+
+
+class MLModelDetailOut(MLModelSummaryOut):
+    training_run: MLTrainingRunOut | None = None
+
+
+class MLPredictionOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    model_id: int
+    horizon_days: int
+    target_type: str
+    prediction_date: str
+    probabilities: dict[str, float | None]
+    probability_positive: float | None = None
+    probability_outperform: float | None = None
+    probability_drawdown: float | None = None
+    predicted_label: str
+    confidence: str
+    features_snapshot: dict[str, float] = Field(default_factory=dict)
+    explanation: dict[str, object] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+
+
+class MLTrainOut(BaseModel):
+    model_id: int
+    training_run: MLTrainingRunOut
+    metrics: dict[str, object]
+    features_used: list[str]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MLPredictAllOut(BaseModel):
+    model_id: int
+    predictions: list[MLPredictionOut]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MLStatusOut(BaseModel):
+    models_count: int
+    latest_model: MLModelSummaryOut | None = None
+    latest_training_run: MLTrainingRunOut | None = None
+    available_targets: list[str]
+    available_model_types: list[str]
+    ml_ready: bool
+    message: str
+
+
+class UniverseAssetOut(BaseModel):
+    id: int
+    asset_id: int | None = None
+    symbol: str
+    name: str
+    asset_type: str
+    exchange: str | None = None
+    currency: str
+    country: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    risk_level: str = "medium"
+    universe_level: UniverseLevel
+    is_active: bool
+    is_watchlisted: bool
+    is_portfolio_asset: bool
+    refresh_priority: int
+    refresh_frequency_days: int
+    last_price_refresh_at: str | None = None
+    last_signal_refresh_at: str | None = None
+    last_news_refresh_at: str | None = None
+    data_provider: str | None = None
+    notes: str | None = None
+    last_price: float | None = None
+    daily_change_pct: float | None = None
+    last_source: str | None = None
+    provider: str | None = None
+    is_real_data: bool = False
+    last_price_date: str | None = None
+    last_fetch_at: str | None = None
+    score: float | None = None
+    signal: SignalType | None = None
+    confidence: str | None = None
+    technical_summary: str | None = None
+    ml_model_id: int | None = None
+    ml_probability: float | None = None
+    ml_confidence: str | None = None
+    ml_label: str | None = None
+    ml_target_type: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class UniverseSummaryOut(BaseModel):
+    total_assets: int
+    core_count: int
+    extended_count: int
+    candidate_count: int
+    active_count: int
+    watchlist_count: int
+    portfolio_count: int
+    priced_assets_count: int
+    refresh_candidates_count: int
+    by_asset_type: dict[str, int] = Field(default_factory=dict)
+    by_country: dict[str, int] = Field(default_factory=dict)
+    by_exchange: dict[str, int] = Field(default_factory=dict)
+
+
+class UniverseImportIn(BaseModel):
+    file_name: str = Field(..., min_length=1, max_length=160)
+    universe_level: UniverseLevel
+
+
+class UniverseImportOut(BaseModel):
+    file_name: str
+    universe_level: UniverseLevel
+    inserted: int
+    updated: int
+    skipped: int
+    total_rows: int
+
+
+class UniversePromoteIn(BaseModel):
+    universe_level: UniverseLevel
 
 
 class DataProviderStatusOut(BaseModel):

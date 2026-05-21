@@ -18,6 +18,7 @@ from backend.app.database import db_session, init_db
 from backend.app.models import PortfolioInitIn, SimulatedOrderIn
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
+from backend.app.services.universe_service import UNIVERSE_DIR, UniverseService
 
 
 FIXED_SEED = 20260517
@@ -106,6 +107,10 @@ def _reset_seed_data(connection) -> None:
     connection.execute("DELETE FROM portfolio_positions")
     connection.execute("DELETE FROM portfolio_settings")
     connection.execute("DELETE FROM backtest_runs")
+    connection.execute("DELETE FROM ml_predictions")
+    connection.execute("DELETE FROM ml_models")
+    connection.execute("DELETE FROM ml_training_runs")
+    connection.execute("DELETE FROM asset_universe")
 
     symbols = [asset["symbol"] for asset in ASSETS]
     placeholders = ",".join("?" for _ in symbols)
@@ -207,6 +212,13 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         "portfolio_snapshots_inserted": 0,
     }
     scoring_engine = ScoringEngine()
+    universe_service = UniverseService()
+    universe_import_summary = {
+        "universe_assets_imported": 0,
+        "core_universe_count": 0,
+        "extended_universe_count": 0,
+        "candidate_universe_count": 0,
+    }
 
     with db_session() as connection:
         if reset:
@@ -319,8 +331,29 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             )
             signals_inserted += 1
 
+        for file_name, level in [
+            ("core_universe.csv", "CORE"),
+            ("extended_universe.csv", "EXTENDED"),
+            ("crypto_universe.csv", "CANDIDATE"),
+            ("etf_universe.csv", "CANDIDATE"),
+        ]:
+            if (UNIVERSE_DIR / file_name).exists():
+                universe_service.import_universe_from_csv(connection, file_name, level)
+
+        universe_service.sync_assets(connection, watchlist_symbols={asset["symbol"] for asset in ASSETS})
+
         if reset:
             portfolio_summary = _create_demo_portfolio(connection)
+            universe_service.sync_assets(connection, watchlist_symbols={asset["symbol"] for asset in ASSETS})
+
+        universe_service.update_refresh_priority(connection)
+        universe_summary = universe_service.get_summary(connection)
+        universe_import_summary = {
+            "universe_assets_imported": universe_summary["total_assets"],
+            "core_universe_count": universe_summary["core_count"],
+            "extended_universe_count": universe_summary["extended_count"],
+            "candidate_universe_count": universe_summary["candidate_count"],
+        }
 
     completed_at = datetime.now().isoformat(timespec="seconds")
     return {
@@ -329,6 +362,7 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         "price_rows_inserted": price_rows_inserted,
         "signals_inserted": signals_inserted,
         **portfolio_summary,
+        **universe_import_summary,
         "started_at": started_at,
         "completed_at": completed_at,
     }

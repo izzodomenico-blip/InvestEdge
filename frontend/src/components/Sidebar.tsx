@@ -2,12 +2,16 @@ import {
   Activity,
   BarChart3,
   BriefcaseBusiness,
+  BrainCircuit,
   CandlestickChart,
   Database,
   Gauge,
+  Layers3,
   Newspaper,
   Repeat2,
   Search,
+  ShieldCheck,
+  TrendingUp,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -17,9 +21,13 @@ const navItems = [
   { to: "/portfolio", label: "Portafoglio", icon: BriefcaseBusiness },
   { to: "/simulator", label: "Simulatore", icon: Repeat2 },
   { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
+  { to: "/ranking", label: "Ranking", icon: TrendingUp },
+  { to: "/audit", label: "Audit", icon: ShieldCheck },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/backtest", label: "Backtest", icon: BarChart3 },
   { to: "/data", label: "Dati", icon: Database },
+  { to: "/universe", label: "Universe", icon: Layers3 },
+  { to: "/ml", label: "AI Lab", icon: BrainCircuit },
 ];
 
 export function Sidebar() {
