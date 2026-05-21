@@ -15,6 +15,14 @@ from backend.app.services.system_health_service import SystemHealthService
 from backend.app.services.operational_ranking_service import OperationalRankingService
 
 
+from backend.app.services.strategy_control_service import StrategyControlService
+from backend.app.services.alert_service import AlertService
+from backend.app.services.scheduler_service import SchedulerService
+from backend.app.services.report_service import ReportService
+from backend.app.services.portfolio_optimizer_service import PortfolioOptimizerService
+from backend.app.services.scenario_service import ScenarioService
+
+
 portfolio_engine = PortfolioEngine()
 market_data_service = MarketDataService()
 news_engine = NewsEngine()
@@ -23,6 +31,12 @@ universe_service = UniverseService()
 data_quality_service = DataQualityService()
 system_health_service = SystemHealthService()
 operational_ranking_service = OperationalRankingService()
+strategy_control_service = StrategyControlService()
+alert_service = AlertService()
+scheduler_service = SchedulerService()
+report_service = ReportService()
+portfolio_optimizer_service = PortfolioOptimizerService()
+scenario_service = ScenarioService()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
@@ -138,6 +152,12 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
             for q in data_quality_service.list_all_quality(connection)
             if q.score < 70
         ],
+        latest_strategy_plan=next(iter(strategy_control_service.list_strategy_plans(connection)), None),
+        open_alerts_summary=alert_service.get_alert_summary(connection),
+        latest_scheduler_run=next(iter(scheduler_service.list_runs(connection, limit=1)), None),
+        latest_operational_report=report_service.get_latest_report(connection),
+        latest_optimization_run=next(iter(portfolio_optimizer_service.list_runs(connection)), None),
+        latest_scenario_run=next(iter(scenario_service.list_runs(connection)), None),
     )
 
 

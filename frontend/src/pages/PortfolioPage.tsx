@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp, Scale } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -55,6 +56,7 @@ function recommendationTone(value: string | null) {
 }
 
 export function PortfolioPage() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
@@ -163,14 +165,23 @@ export function PortfolioPage() {
           <p className="text-sm font-medium text-cyan-300">Paper trading</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Portafoglio</h1>
         </div>
-        <button
-          onClick={() => void refreshPortfolio()}
-          disabled={refreshing}
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
-          Aggiorna prezzi
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate("/optimizer")}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-indigo-300/30 bg-indigo-400/10 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:bg-indigo-400/20"
+          >
+            <Scale className="h-4 w-4" aria-hidden="true" />
+            Ottimizza
+          </button>
+          <button
+            onClick={() => void refreshPortfolio()}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
+            Aggiorna prezzi
+          </button>
+        </div>
       </header>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

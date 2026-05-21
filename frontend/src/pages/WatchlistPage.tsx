@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Bell } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Panel } from "../components/Panel";
@@ -50,6 +50,7 @@ export function WatchlistPage() {
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
   const [newsBySymbol, setNewsBySymbol] = useState<Map<string, NewsBadge>>(new Map());
   const [qualityBySymbol, setQualityBySymbol] = useState<Map<string, DataQualityCheck>>(new Map());
+  const [alertsBySymbol, setAlertsBySymbol] = useState<Map<string, number>>(new Map());
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,15 +60,24 @@ export function WatchlistPage() {
       setLoading(true);
       setError(null);
       try {
-        const [assetData, recommendationData, newsData, qualityData] = await Promise.all([
+        const [assetData, recommendationData, newsData, qualityData, alertSummary] = await Promise.all([
           apiGet<UniverseAsset[]>("/universe?active_only=true&limit=1000"),
           apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
           apiGet<NewsItem[]>("/news?limit=200").catch(() => [] as NewsItem[]),
           api.getAllDataQuality().catch(() => [] as DataQualityCheck[]),
+          api.getAlertSummary().catch(() => null),
         ]);
         setAssets(assetData.filter((asset: UniverseAsset) => asset.is_watchlisted || asset.is_portfolio_asset));
         setRecommendations(recommendationData);
         setQualityBySymbol(new Map(qualityData.map((q: DataQualityCheck) => [q.symbol, q])));
+        
+        const alertMap = new Map<string, number>();
+        alertSummary?.latest_alerts.forEach(a => {
+          if (a.symbol) {
+            alertMap.set(a.symbol, (alertMap.get(a.symbol) || 0) + 1);
+          }
+        });
+        setAlertsBySymbol(alertMap);
         const aggregated = new Map<string, NewsBadge>();
         for (const item of newsData) {
           if (!item.symbol) {
@@ -185,8 +195,15 @@ export function WatchlistPage() {
                       className="cursor-pointer align-top text-sm transition hover:bg-cyan-400/5"
                     >
                       <td className="px-3 py-4 pl-0">
-                        <p className="font-semibold text-white">{asset.symbol}</p>
-                        <p className="mt-1 text-slate-500">{asset.name}</p>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <p className="font-semibold text-white">{asset.symbol}</p>
+                            <p className="mt-1 text-slate-500">{asset.name}</p>
+                          </div>
+                          {alertsBySymbol.get(asset.symbol) && (
+                            <Bell className="w-3 h-3 text-rose-500 animate-pulse" />
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-4 text-slate-300">{assetTypeLabels[asset.asset_type] ?? asset.asset_type}</td>
                       <td className="px-3 py-4 text-slate-400">{asset.sector ?? "-"}</td>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal
+from enum import Enum
+from typing import Literal, Any
 
 from pydantic import BaseModel, Field
 
@@ -165,6 +166,324 @@ class PortfolioActionOut(BaseModel):
     timestamp: str
 
 
+class StrategyPlanConfig(BaseModel):
+    plan_name: str
+    universe_level: str  # CORE, EXTENDED, WATCHLIST
+    strategy_mode: Literal["CONSERVATIVE", "BALANCED", "AGGRESSIVE"]
+    max_positions: int = 10
+    max_single_asset_weight: float = 15.0
+    max_asset_class_weight: float = 40.0
+    min_data_quality_score: float = 70.0
+    min_confidence: str = "MEDIUM"
+    allow_crypto: bool = False
+    max_crypto_weight: float = 5.0
+    require_real_data: bool = False
+    include_ml: bool = True
+    include_news: bool = True
+    rebalance_threshold_percent: float = 2.0
+    cash_reserve_percent: float = 5.0
+    order_generation_mode: Literal["SUGGEST_ONLY", "PAPER_ORDERS"] = "SUGGEST_ONLY"
+
+
+class StrategyPlanItemOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    current_weight: float
+    target_weight: float
+    current_value: float
+    target_value: float
+    delta_value: float
+    suggested_action: str
+    operational_signal: str | None = None
+    confidence: str | None = None
+    data_quality_score: float | None = None
+    reason: str | None = None
+    blocker: str | None = None
+
+
+class StrategyPlanOrderOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    order_type: Literal["BUY", "SELL"]
+    quantity: float
+    estimated_price: float
+    estimated_gross_amount: float
+    estimated_fees: float
+    estimated_net_amount: float
+    reason: str | None = None
+    status: str = "PROPOSED"
+
+
+class StrategyPlanSummaryOut(BaseModel):
+    id: int
+    plan_name: str
+    strategy_mode: str
+    universe_level: str
+    total_current_value: float
+    target_invested_value: float
+    expected_cash_after_plan: float
+    estimated_orders_count: int
+    status: str
+    created_at: str
+
+
+class StrategyPlanFullOut(BaseModel):
+    summary: StrategyPlanSummaryOut
+    config: StrategyPlanConfig
+    items: list[StrategyPlanItemOut]
+    proposed_orders: list[StrategyPlanOrderOut]
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+
+
+class AlertSeverity(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
+class AlertStatus(str, Enum):
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    CLOSED = "CLOSED"
+
+
+class AlertOut(BaseModel):
+    id: int
+    alert_type: str
+    severity: str
+    symbol: str | None = None
+    title: str
+    message: str
+    status: str
+    source_module: str | None = None
+    payload_json: str | None = None
+    created_at: str
+    updated_at: str
+    acknowledged_at: str | None = None
+    closed_at: str | None = None
+
+
+class AlertSummaryOut(BaseModel):
+    open_count: int
+    critical_count: int
+    warning_count: int
+    info_count: int
+    latest_alerts: list[AlertOut]
+    by_type: dict[str, int]
+
+
+class AlertRuleOut(BaseModel):
+    id: int
+    rule_name: str
+    alert_type: str
+    enabled: bool
+    severity: str
+    universe_level: str | None = None
+    symbol: str | None = None
+    threshold_value: float | None = None
+    config_json: str | None = None
+
+
+class AlertRuleToggleIn(BaseModel):
+    enabled: bool
+
+
+class SchedulerRunIn(BaseModel):
+    run_type: Literal["FULL_MANUAL", "DATA_REFRESH", "SIGNALS", "RANKING", "QUALITY", "ALERTS", "REPORT"]
+    limit: int | None = Field(default=None, ge=1, le=50)
+    force: bool = False
+    generate_report: bool = False
+
+
+class SchedulerRunOut(BaseModel):
+    id: int
+    run_type: str
+    status: str
+    started_at: str
+    finished_at: str | None = None
+    duration_seconds: float | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class OperationalReportSummary(BaseModel):
+    system_health: dict[str, Any]
+    data_quality_avg: float
+    buy_candidates_count: int
+    watch_candidates_count: int
+    reduce_candidates_count: int
+    portfolio_value: float
+    risk_warnings_count: int
+    open_alerts_count: int
+
+
+class OperationalReportOut(BaseModel):
+    id: int
+    report_type: str
+    report_date: str
+    title: str
+    summary: OperationalReportSummary
+    markdown_text: str | None = None
+    created_at: str
+
+
+class OptimizationMethod(str, Enum):
+    EQUAL_WEIGHT = "EQUAL_WEIGHT"
+    SCORE_WEIGHTED = "SCORE_WEIGHTED"
+    RISK_ADJUSTED = "RISK_ADJUSTED"
+    CONSERVATIVE_ALLOCATION = "CONSERVATIVE_ALLOCATION"
+    AGGRESSIVE_ALLOCATION = "AGGRESSIVE_ALLOCATION"
+
+
+class OptimizerConfig(BaseModel):
+    run_name: str
+    universe_source: Literal["WATCHLIST", "CORE", "EXTENDED", "OPERATIONAL_BUY_CANDIDATES"]
+    optimization_method: OptimizationMethod
+    initial_capital_mode: Literal["CURRENT_PORTFOLIO", "CUSTOM_CAPITAL"]
+    custom_capital: float | None = None
+    max_positions: int = 15
+    min_position_weight: float = 2.0
+    max_single_asset_weight: float = 15.0
+    max_asset_class_weight: float = 40.0
+    max_crypto_weight: float = 10.0
+    cash_reserve_percent: float = 5.0
+    min_data_quality_score: float = 60.0
+    min_operational_confidence: str = "MEDIUM"
+    require_real_data: bool = False
+    include_ml: bool = True
+    include_news: bool = True
+    rebalance_threshold_percent: float = 1.5
+    allow_sell: bool = True
+    allow_buy: bool = True
+    fee_percent: float = 0.1
+
+
+class OptimizationItemOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    current_weight: float
+    target_weight: float
+    current_value: float
+    target_value: float
+    delta_value: float
+    operational_signal: str | None = None
+    data_quality_score: float | None = None
+    ml_probability: float | None = None
+    news_sentiment: str | None = None
+    risk_level: str | None = None
+    reason: str | None = None
+
+
+class RebalanceOrderOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    order_type: Literal["BUY", "SELL"]
+    quantity: float
+    estimated_price: float
+    estimated_gross_amount: float
+    estimated_fees: float
+    estimated_net_amount: float
+    reason: str | None = None
+    status: str = "PROPOSED"
+
+
+class OptimizationRunSummaryOut(BaseModel):
+    id: int
+    run_name: str
+    optimization_method: str
+    universe_source: str
+    current_total_value: float
+    target_invested_value: float
+    target_cash: float
+    expected_cash_after_rebalance: float
+    estimated_orders_count: int
+    estimated_fees: float
+    estimated_turnover_percent: float
+    created_at: str
+
+
+class OptimizationRunFullOut(BaseModel):
+    summary: OptimizationRunSummaryOut
+    config: OptimizerConfig
+    items: list[OptimizationItemOut]
+    proposed_orders: list[RebalanceOrderOut]
+    risk_summary: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ScenarioType(str, Enum):
+    CUSTOM = "CUSTOM"
+    MARKET_CRASH = "MARKET_CRASH"
+    TECH_SELL_OFF = "TECH_SELL_OFF"
+    CRYPTO_CRASH = "CRYPTO_CRASH"
+    BOND_SHOCK = "BOND_SHOCK"
+    RATE_HIKE = "RATE_HIKE"
+    RECESSION = "RECESSION"
+    INFLATION_SHOCK = "INFLATION_SHOCK"
+    BULL_RALLY = "BULL_RALLY"
+
+
+class ScenarioConfig(BaseModel):
+    scenario_name: str
+    scenario_type: ScenarioType
+    portfolio_source: Literal["CURRENT_PORTFOLIO", "LATEST_OPTIMIZED_PORTFOLIO", "CUSTOM_TARGET"]
+    asset_class_shocks: dict[str, float] = Field(default_factory=dict)
+    symbol_shocks: dict[str, float] = Field(default_factory=dict)
+    include_correlations: bool = False
+    include_ml_risk: bool = False
+    include_news_risk: bool = False
+    include_liquidity_buffer: bool = False
+    confidence_level: Literal[95, 99] = 95
+
+
+class ScenarioAssetImpactOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    asset_type: str
+    current_value: float
+    shock_percent: float
+    stressed_value: float
+    absolute_impact: float
+    percentage_impact: float
+    loss_contribution_percent: float
+
+
+class ScenarioClassImpactOut(BaseModel):
+    id: int | None = None
+    asset_class: str
+    current_value: float
+    shock_percent: float
+    stressed_value: float
+    absolute_impact: float
+    percentage_impact: float
+
+
+class ScenarioRunSummaryOut(BaseModel):
+    id: int
+    scenario_name: str
+    scenario_type: str
+    portfolio_source: str
+    current_portfolio_value: float
+    stressed_portfolio_value: float
+    absolute_loss: float
+    percentage_loss: float
+    risk_level: str
+    created_at: str
+
+
+class ScenarioRunFullOut(BaseModel):
+    summary: ScenarioRunSummaryOut
+    config: ScenarioConfig
+    asset_impacts: list[ScenarioAssetImpactOut]
+    class_impacts: list[ScenarioClassImpactOut]
+    loss_contribution: dict[str, float]
+    mitigation_suggestions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DashboardOut(BaseModel):
     initialized: bool
     message: str | None = None
@@ -186,17 +505,23 @@ class DashboardOut(BaseModel):
     total_pnl_percent: float = 0
     risk_warnings_count: int = 0
     top_position: PortfolioPositionOut | None = None
-    portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
-    latest_backtest: dict[str, float | int | str | None] | None = None
-    data_status: dict[str, object] = Field(default_factory=dict)
-    universe_summary: dict[str, object] = Field(default_factory=dict)
-    ml_status: dict[str, object] = Field(default_factory=dict)
-    latest_ml_prediction: dict[str, object] | None = None
-    high_impact_news: list["NewsItemOut"] = Field(default_factory=list)
-    market_sentiment: dict[str, object] = Field(default_factory=dict)
+    portfolio_snapshots: list[dict[str, Any]] = Field(default_factory=list)
+    latest_backtest: dict[str, Any] | None = None
+    data_status: dict[str, Any] = Field(default_factory=dict)
+    universe_summary: dict[str, Any] = Field(default_factory=dict)
+    ml_status: dict[str, Any] = Field(default_factory=dict)
+    latest_ml_prediction: dict[str, Any] | None = None
+    high_impact_news: list[NewsItemOut] = Field(default_factory=list)
+    market_sentiment: dict[str, Any] = Field(default_factory=dict)
     system_health: SystemHealthOut | None = None
     top_buy_candidates: list[ValidatedSignalOut] = Field(default_factory=list)
     data_quality_warnings: list[str] = Field(default_factory=list)
+    latest_strategy_plan: StrategyPlanSummaryOut | None = None
+    open_alerts_summary: AlertSummaryOut | None = None
+    latest_scheduler_run: SchedulerRunOut | None = None
+    latest_operational_report: OperationalReportOut | None = None
+    latest_optimization_run: OptimizationRunSummaryOut | None = None
+    latest_scenario_run: ScenarioRunSummaryOut | None = None
 
 
 class TechnicalAnalysisOut(BaseModel):

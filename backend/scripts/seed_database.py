@@ -200,6 +200,24 @@ def _create_demo_portfolio(connection) -> dict[str, int]:
     }
 
 
+def _create_default_alert_rules(connection: sqlite3.Connection):
+    rules = [
+        ("DATA_STALE_WARNING", "DATA_STALE_WARNING", "WARNING", 7.0),
+        ("DATA_QUALITY_BAD", "DATA_QUALITY_BAD", "CRITICAL", 50.0),
+        ("SIGNAL_CHANGED", "SIGNAL_CHANGED", "INFO", None),
+        ("PORTFOLIO_CONCENTRATION", "PORTFOLIO_CONCENTRATION", "WARNING", 20.0),
+        ("API_USAGE_HIGH", "API_USAGE_HIGH", "WARNING", 80.0),
+    ]
+    for name, a_type, severity, threshold in rules:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO alert_rules (rule_name, alert_type, severity, threshold_value, enabled)
+            VALUES (?, ?, ?, ?, 1)
+            """,
+            (name, a_type, severity, threshold)
+        )
+
+
 def seed_database(reset: bool = False) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
     init_db()
@@ -223,6 +241,8 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
     with db_session() as connection:
         if reset:
             _reset_seed_data(connection)
+
+        _create_default_alert_rules(connection)
 
         for index, asset in enumerate(ASSETS):
             connection.execute(

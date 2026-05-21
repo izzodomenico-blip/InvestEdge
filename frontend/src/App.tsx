@@ -13,6 +13,12 @@ import { UniversePage } from "./pages/UniversePage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 import { SystemAuditPage } from "./pages/SystemAuditPage";
 import { OperationalRankingPage } from "./pages/OperationalRankingPage";
+import { StrategyControlPage } from "./pages/StrategyControlPage";
+import { AlertCenterPage } from "./pages/AlertCenterPage";
+import { SchedulerPage } from "./pages/SchedulerPage";
+import { ReportsPage } from "./pages/ReportsPage";
+import { PortfolioOptimizerPage } from "./pages/PortfolioOptimizerPage";
+import { ScenarioAnalysisPage } from "./pages/ScenarioAnalysisPage";
 
 export default function App() {
   return (
@@ -26,6 +32,12 @@ export default function App() {
         <Route path="/news" element={<NewsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/ranking" element={<OperationalRankingPage />} />
+        <Route path="/strategy" element={<StrategyControlPage />} />
+        <Route path="/optimizer" element={<PortfolioOptimizerPage />} />
+        <Route path="/scenarios" element={<ScenarioAnalysisPage />} />
+        <Route path="/alerts" element={<AlertCenterPage />} />
+        <Route path="/scheduler" element={<SchedulerPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/audit" element={<SystemAuditPage />} />
         <Route path="/data" element={<DataCenterPage />} />
         <Route path="/universe" element={<UniversePage />} />

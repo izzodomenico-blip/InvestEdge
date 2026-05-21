@@ -12,6 +12,12 @@ import {
   Search,
   ShieldCheck,
   TrendingUp,
+  Settings2,
+  Bell,
+  Clock,
+  FileText,
+  Scale,
+  ShieldAlert,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -22,6 +28,12 @@ const navItems = [
   { to: "/simulator", label: "Simulatore", icon: Repeat2 },
   { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
   { to: "/ranking", label: "Ranking", icon: TrendingUp },
+  { to: "/optimizer", label: "Optimizer", icon: Scale },
+  { to: "/scenarios", label: "Stress Test", icon: ShieldAlert },
+  { to: "/strategy", label: "Strategy Center", icon: Settings2 },
+  { to: "/alerts", label: "Alert Center", icon: Bell },
+  { to: "/scheduler", label: "Operations", icon: Clock },
+  { to: "/reports", label: "Report", icon: FileText },
   { to: "/audit", label: "Audit", icon: ShieldCheck },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/backtest", label: "Backtest", icon: BarChart3 },

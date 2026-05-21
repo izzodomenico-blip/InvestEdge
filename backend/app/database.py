@@ -153,6 +153,203 @@ CREATE TABLE IF NOT EXISTS news_items (
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS strategy_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_name TEXT NOT NULL,
+    strategy_mode TEXT NOT NULL CHECK(strategy_mode IN ('CONSERVATIVE', 'BALANCED', 'AGGRESSIVE')),
+    universe_level TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    total_current_value REAL NOT NULL DEFAULT 0,
+    target_invested_value REAL NOT NULL DEFAULT 0,
+    expected_cash_after_plan REAL NOT NULL DEFAULT 0,
+    estimated_orders_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS strategy_plan_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    current_weight REAL NOT NULL DEFAULT 0,
+    target_weight REAL NOT NULL DEFAULT 0,
+    current_value REAL NOT NULL DEFAULT 0,
+    target_value REAL NOT NULL DEFAULT 0,
+    delta_value REAL NOT NULL DEFAULT 0,
+    suggested_action TEXT NOT NULL,
+    operational_signal TEXT,
+    confidence TEXT,
+    data_quality_score REAL,
+    reason TEXT,
+    blocker TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(plan_id) REFERENCES strategy_plans(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS strategy_plan_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    order_type TEXT NOT NULL CHECK(order_type IN ('BUY', 'SELL')),
+    quantity REAL NOT NULL,
+    estimated_price REAL NOT NULL,
+    estimated_gross_amount REAL NOT NULL,
+    estimated_fees REAL NOT NULL,
+    estimated_net_amount REAL NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'PROPOSED',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(plan_id) REFERENCES strategy_plans(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK(severity IN ('INFO', 'WARNING', 'CRITICAL')),
+    symbol TEXT,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'ACKNOWLEDGED', 'CLOSED')),
+    source_module TEXT,
+    payload_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    acknowledged_at TEXT,
+    closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_name TEXT NOT NULL,
+    alert_type TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    severity TEXT NOT NULL CHECK(severity IN ('INFO', 'WARNING', 'CRITICAL')),
+    universe_level TEXT,
+    symbol TEXT,
+    threshold_value REAL,
+    config_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scheduler_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('SUCCESS', 'WARNING', 'ERROR')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    duration_seconds REAL,
+    summary_json TEXT,
+    errors_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS operational_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_type TEXT NOT NULL CHECK(report_type IN ('DAILY', 'WEEKLY', 'MANUAL')),
+    report_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary_json TEXT,
+    markdown_text TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_optimization_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_name TEXT NOT NULL,
+    optimization_method TEXT NOT NULL,
+    universe_source TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    current_total_value REAL NOT NULL DEFAULT 0,
+    target_invested_value REAL NOT NULL DEFAULT 0,
+    target_cash REAL NOT NULL DEFAULT 0,
+    expected_cash_after_rebalance REAL NOT NULL DEFAULT 0,
+    estimated_orders_count INTEGER NOT NULL DEFAULT 0,
+    estimated_fees REAL NOT NULL DEFAULT 0,
+    estimated_turnover_percent REAL NOT NULL DEFAULT 0,
+    risk_summary_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_optimization_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    current_weight REAL NOT NULL DEFAULT 0,
+    target_weight REAL NOT NULL DEFAULT 0,
+    current_value REAL NOT NULL DEFAULT 0,
+    target_value REAL NOT NULL DEFAULT 0,
+    delta_value REAL NOT NULL DEFAULT 0,
+    operational_signal TEXT,
+    data_quality_score REAL,
+    ml_probability REAL,
+    news_sentiment TEXT,
+    risk_level TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(run_id) REFERENCES portfolio_optimization_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_rebalance_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    order_type TEXT NOT NULL CHECK(order_type IN ('BUY', 'SELL')),
+    quantity REAL NOT NULL,
+    estimated_price REAL NOT NULL,
+    estimated_gross_amount REAL NOT NULL,
+    estimated_fees REAL NOT NULL,
+    estimated_net_amount REAL NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'PROPOSED' CHECK(status IN ('PROPOSED', 'PAPER_CREATED', 'IGNORED')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(run_id) REFERENCES portfolio_optimization_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scenario_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_name TEXT NOT NULL,
+    scenario_type TEXT NOT NULL,
+    portfolio_source TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    current_portfolio_value REAL NOT NULL DEFAULT 0,
+    stressed_portfolio_value REAL NOT NULL DEFAULT 0,
+    absolute_loss REAL NOT NULL DEFAULT 0,
+    percentage_loss REAL NOT NULL DEFAULT 0,
+    risk_level TEXT NOT NULL,
+    summary_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scenario_asset_impacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    current_value REAL NOT NULL DEFAULT 0,
+    shock_percent REAL NOT NULL DEFAULT 0,
+    stressed_value REAL NOT NULL DEFAULT 0,
+    absolute_impact REAL NOT NULL DEFAULT 0,
+    percentage_impact REAL NOT NULL DEFAULT 0,
+    loss_contribution_percent REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(scenario_id) REFERENCES scenario_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scenario_class_impacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id INTEGER NOT NULL,
+    asset_class TEXT NOT NULL,
+    current_value REAL NOT NULL DEFAULT 0,
+    shock_percent REAL NOT NULL DEFAULT 0,
+    stressed_value REAL NOT NULL DEFAULT 0,
+    absolute_impact REAL NOT NULL DEFAULT 0,
+    percentage_impact REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(scenario_id) REFERENCES scenario_runs(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS api_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cache_key TEXT NOT NULL UNIQUE,

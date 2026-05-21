@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CheckCircle2, AlertTriangle, XCircle, Info, ShieldCheck, Zap } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, ShieldCheck, Zap, Bell } from "lucide-react";
 
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
@@ -14,6 +14,7 @@ import {
   type TechnicalAnalysis,
   type ValidatedSignal,
   type DataQualityCheck,
+  type Alert,
 } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
@@ -53,6 +54,7 @@ export function AnalysisPage() {
   const [newsSummary, setNewsSummary] = useState<NewsSentimentSummary | null>(null);
   const [validatedSignal, setValidatedSignal] = useState<ValidatedSignal | null>(null);
   const [dataQuality, setDataQuality] = useState<DataQualityCheck | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(true);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,24 +93,27 @@ export function AnalysisPage() {
       setLoadingAnalysis(true);
       setError(null);
       try {
-        const [priceResponse, analysisResponse, sentimentResponse, validationResponse, qualityResponse] = await Promise.all([
+        const [priceResponse, analysisResponse, sentimentResponse, validationResponse, qualityResponse, alertsResponse] = await Promise.all([
           apiGet<PriceHistory>(`/prices/${selectedSymbol}`),
           apiGet<TechnicalAnalysis>(`/technical-analysis/${selectedSymbol}`),
           apiGet<NewsSentimentSummary>(`/news/sentiment/${selectedSymbol}?lookback_days=7`).catch(() => null),
           api.getAssetValidatedSignal(selectedSymbol).catch(() => null),
           api.getAssetDataQuality(selectedSymbol).catch(() => null),
+          api.listAlerts("OPEN", undefined, selectedSymbol).catch(() => [] as Alert[]),
         ]);
         setPrices(priceResponse);
         setAnalysis(analysisResponse);
         setNewsSummary(sentimentResponse);
         setValidatedSignal(validationResponse);
         setDataQuality(qualityResponse);
+        setAlerts(alertsResponse);
       } catch (err) {
         setPrices(null);
         setAnalysis(null);
         setNewsSummary(null);
         setValidatedSignal(null);
         setDataQuality(null);
+        setAlerts([]);
         setError(err instanceof Error ? err.message : "Asset non trovato o analisi non disponibile.");
       } finally {
         setLoadingAnalysis(false);
@@ -383,6 +388,22 @@ export function AnalysisPage() {
               </div>
             </div>
           </Panel>
+
+          {alerts.length > 0 && (
+            <Panel title="Alert Attivi" icon={<Bell className="w-5 h-5 text-rose-400" />}>
+              <div className="space-y-2">
+                {alerts.map(alert => (
+                  <div key={alert.id} className="p-3 rounded-lg bg-slate-900/40 border border-slate-800 flex gap-3">
+                     {alert.severity === 'CRITICAL' ? <XCircle className="w-4 h-4 text-rose-500 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5" />}
+                     <div>
+                        <p className="text-sm font-bold text-slate-200">{alert.title}</p>
+                        <p className="text-xs text-slate-400">{alert.message}</p>
+                     </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
 
           <Panel title="Machine Learning">
             {analysis.latest_ml_prediction ? (

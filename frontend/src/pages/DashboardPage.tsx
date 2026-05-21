@@ -1,5 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BadgeDollarSign, BarChart3, Database, Newspaper, ShieldAlert, TrendingUp, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { 
+  Activity, 
+  BadgeDollarSign, 
+  BarChart3, 
+  Database, 
+  Newspaper, 
+  ShieldAlert, 
+  TrendingUp, 
+  CheckCircle2, 
+  AlertTriangle, 
+  ShieldCheck, 
+  Settings2,
+  Bell,
+  FileText,
+  Clock,
+  XCircle,
+  Scale
+} from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -31,6 +49,7 @@ const assetTypeLabels: Record<string, string> = {
 };
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -235,6 +254,181 @@ export function DashboardPage() {
             </div>
           </div>
         </div>
+      </Panel>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <Panel title="Alert Center" icon={<Bell className="w-5 h-5 text-rose-400" />}>
+           <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex gap-4">
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-bold">Aperti</p>
+                    <p className="text-xl font-bold text-white">{dashboard.open_alerts_summary?.open_count || 0}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-bold">Critici</p>
+                    <p className="text-xl font-bold text-rose-500">{dashboard.open_alerts_summary?.critical_count || 0}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => navigate('/alerts')}
+                  className="px-3 py-1 bg-slate-800 text-slate-300 rounded text-xs font-bold hover:bg-slate-700 transition-colors"
+                >
+                  Vedi Tutti
+                </button>
+              </div>
+              <div className="space-y-2">
+                {dashboard.open_alerts_summary?.latest_alerts.slice(0, 2).map(alert => (
+                  <div key={alert.id} className="p-2 rounded bg-slate-900/40 border border-slate-800 flex gap-2">
+                    {alert.severity === 'CRITICAL' ? <XCircle className="w-3 h-3 text-rose-500 mt-0.5" /> : <AlertTriangle className="w-3 h-3 text-amber-500 mt-0.5" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-slate-200 truncate">{alert.title}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{alert.message}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+           </div>
+        </Panel>
+
+        <Panel title="Operations & Reports" icon={<Clock className="w-5 h-5 text-emerald-400" />}>
+           <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-500">Ultimo Report</p>
+                  <p className="text-sm font-bold text-slate-200 truncate max-w-[200px]">
+                    {dashboard.latest_operational_report?.title || 'Nessun report'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => navigate('/reports')}
+                    className="p-2 bg-slate-800 text-slate-300 rounded hover:bg-slate-700 transition-colors"
+                    title="Cronologia Report"
+                  >
+                    <FileText className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => navigate('/scheduler')}
+                    className="px-3 py-1 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-bold hover:bg-emerald-600/30 transition-colors"
+                  >
+                    Esegui Ciclo
+                  </button>
+                </div>
+              </div>
+              {dashboard.latest_scheduler_run && (
+                <div className="p-2 rounded bg-slate-900/40 border border-slate-800 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-500">Ultimo Ciclo ({dashboard.latest_scheduler_run.run_type}):</span>
+                  <div className="flex items-center gap-1 font-bold text-emerald-400">
+                    <CheckCircle2 className="w-3 h-3" /> {new Date(dashboard.latest_scheduler_run.started_at).toLocaleTimeString()}
+                  </div>
+                </div>
+              )}
+           </div>
+        </Panel>
+
+        <Panel title="Portfolio Optimizer" icon={<Scale className="w-5 h-5 text-cyan-400" />}>
+           <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-500">Ultima Ottimizzazione</p>
+                  <p className="text-sm font-bold text-slate-200 truncate max-w-[150px]">
+                    {dashboard.latest_optimization_run?.run_name || 'Nessuna run'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => navigate('/optimizer')}
+                    className="px-3 py-1 bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded text-xs font-bold hover:bg-cyan-600/30 transition-colors"
+                  >
+                    Apri Optimizer
+                  </button>
+                </div>
+              </div>
+              {dashboard.latest_optimization_run && (
+                <div className="grid grid-cols-2 gap-2">
+                   <div className="p-2 rounded bg-slate-900/40 border border-slate-800">
+                      <p className="text-[9px] text-slate-500 uppercase font-bold">Turnover</p>
+                      <p className="text-xs font-bold text-white">{formatPercent(dashboard.latest_optimization_run.estimated_turnover_percent / 100)}</p>
+                   </div>
+                   <div className="p-2 rounded bg-slate-900/40 border border-slate-800">
+                      <p className="text-[9px] text-slate-500 uppercase font-bold">Ordini</p>
+                      <p className="text-xs font-bold text-white">{dashboard.latest_optimization_run.estimated_orders_count}</p>
+                   </div>
+                </div>
+              )}
+           </div>
+        </Panel>
+
+        <Panel title="Stress Test Analysis" icon={<ShieldAlert className="w-5 h-5 text-rose-400" />}>
+           <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-500">Ultimo Scenario</p>
+                  <p className="text-sm font-bold text-slate-200 truncate max-w-[150px]">
+                    {dashboard.latest_scenario_run?.scenario_name || 'Nessuno'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => navigate('/scenarios')}
+                    className="px-3 py-1 bg-rose-600/20 text-rose-400 border border-rose-500/30 rounded text-xs font-bold hover:bg-rose-600/30 transition-colors"
+                  >
+                    Apri Scenari
+                  </button>
+                </div>
+              </div>
+              {dashboard.latest_scenario_run && (
+                <div className="grid grid-cols-2 gap-2">
+                   <div className="p-2 rounded bg-slate-900/40 border border-slate-800">
+                      <p className="text-[9px] text-slate-500 uppercase font-bold">Impatto</p>
+                      <p className={`text-xs font-bold ${dashboard.latest_scenario_run.percentage_loss < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {formatPercent(dashboard.latest_scenario_run.percentage_loss / 100)}
+                      </p>
+                   </div>
+                   <div className="p-2 rounded bg-slate-900/40 border border-slate-800">
+                      <p className="text-[9px] text-slate-500 uppercase font-bold">Risk Level</p>
+                      <p className="text-xs font-bold text-white">{dashboard.latest_scenario_run.risk_level}</p>
+                   </div>
+                </div>
+              )}
+           </div>
+        </Panel>
+      </div>
+
+      <Panel title="Ultima Strategia Operativa" icon={<Settings2 className="w-5 h-5 text-indigo-400" />}>
+        {dashboard.latest_strategy_plan ? (
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Nome Piano</p>
+              <p className="mt-1 font-semibold text-white">{dashboard.latest_strategy_plan.plan_name}</p>
+              <p className="mt-1 text-[10px] text-slate-500">Status: {dashboard.latest_strategy_plan.status}</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Target Investimento</p>
+              <p className="mt-1 font-semibold text-indigo-300">{formatCurrency(dashboard.latest_strategy_plan.target_invested_value)}</p>
+              <p className="mt-1 text-[10px] text-slate-500">Ordini stimati: {dashboard.latest_strategy_plan.estimated_orders_count}</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 flex flex-col justify-center">
+               <button 
+                onClick={() => navigate('/strategy')}
+                className="px-4 py-2 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/30 transition-colors text-xs font-bold"
+               >
+                 Dettagli Strategia
+               </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center p-6 text-center">
+            <p className="text-sm text-slate-500 italic">Nessun piano operativo generato di recente.</p>
+            <button 
+              onClick={() => navigate('/strategy')}
+              className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-bold"
+            >
+              Configura Strategia
+            </button>
+          </div>
+        )}
       </Panel>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

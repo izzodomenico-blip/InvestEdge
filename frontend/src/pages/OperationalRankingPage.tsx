@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { TrendingUp, Eye, ArrowDownCircle, XCircle, Info, CheckCircle2 } from "lucide-react";
+import { TrendingUp, Eye, ArrowDownCircle, XCircle, Info, CheckCircle2, Settings2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { api, type OperationalRanking, type ValidatedSignal } from "../lib/api";
 
 export function OperationalRankingPage() {
+  const navigate = useNavigate();
   const [ranking, setRanking] = useState<OperationalRanking | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +50,7 @@ export function OperationalRankingPage() {
           signals={ranking?.buy_candidates || []} 
           icon={<TrendingUp className="w-5 h-5 text-emerald-500" />}
           colorClass="text-emerald-400"
+          onAction={() => navigate('/strategy')}
         />
         
         <RankingSection 
@@ -55,6 +58,7 @@ export function OperationalRankingPage() {
           signals={ranking?.watch_candidates || []} 
           icon={<Eye className="w-5 h-5 text-amber-500" />}
           colorClass="text-amber-400"
+          onAction={() => navigate('/strategy')}
         />
 
         <RankingSection 
@@ -62,6 +66,7 @@ export function OperationalRankingPage() {
           signals={ranking?.reduce_candidates || []} 
           icon={<ArrowDownCircle className="w-5 h-5 text-rose-500" />}
           colorClass="text-rose-400"
+          onAction={() => navigate('/strategy')}
         />
 
         <RankingSection 
@@ -69,22 +74,35 @@ export function OperationalRankingPage() {
           signals={ranking?.excluded_candidates || []} 
           icon={<XCircle className="w-5 h-5 text-slate-500" />}
           colorClass="text-slate-400"
+          onAction={() => navigate('/strategy')}
         />
       </div>
     </div>
   );
 }
 
-function RankingSection({ title, signals, icon, colorClass }: { 
+function RankingSection({ title, signals, icon, colorClass, onAction }: { 
   title: string; 
   signals: ValidatedSignal[]; 
   icon: React.ReactNode;
   colorClass: string;
+  onAction: () => void;
 }) {
   if (signals.length === 0) return null;
 
   return (
-    <Panel title={title} icon={icon}>
+    <Panel 
+      title={title} 
+      icon={icon}
+      action={
+        <button 
+          onClick={onAction}
+          className="px-3 py-1 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/30 transition-colors text-[10px] font-bold flex items-center gap-1"
+        >
+          <Settings2 className="w-3 h-3" /> Crea Piano
+        </button>
+      }
+    >
       <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead>

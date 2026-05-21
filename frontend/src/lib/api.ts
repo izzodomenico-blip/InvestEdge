@@ -88,6 +88,12 @@ export type DashboardResponse = {
   system_health: SystemHealth | null;
   top_buy_candidates: ValidatedSignal[];
   data_quality_warnings: string[];
+  latest_strategy_plan: StrategyPlanSummary | null;
+  open_alerts_summary: AlertSummary | null;
+  latest_scheduler_run: SchedulerRun | null;
+  latest_operational_report: OperationalReport | null;
+  latest_optimization_run: OptimizationRunSummary | null;
+  latest_scenario_run: ScenarioRunSummary | null;
 };
 
 export type SystemHealth = {
@@ -137,6 +143,285 @@ export type PortfolioAction = {
   current_weight: number;
   target_weight: number | null;
   timestamp: string;
+};
+
+export type StrategyPlanConfig = {
+  plan_name: string;
+  universe_level: string;
+  strategy_mode: "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE";
+  max_positions: number;
+  max_single_asset_weight: number;
+  max_asset_class_weight: number;
+  min_data_quality_score: number;
+  min_confidence: string;
+  allow_crypto: boolean;
+  max_crypto_weight: number;
+  require_real_data: boolean;
+  include_ml: boolean;
+  include_news: boolean;
+  rebalance_threshold_percent: number;
+  cash_reserve_percent: number;
+  order_generation_mode: "SUGGEST_ONLY" | "PAPER_ORDERS";
+};
+
+export type StrategyPlanItem = {
+  id?: number;
+  symbol: string;
+  current_weight: number;
+  target_weight: number;
+  current_value: number;
+  target_value: number;
+  delta_value: number;
+  suggested_action: string;
+  operational_signal?: string | null;
+  confidence?: string | null;
+  data_quality_score?: number | null;
+  reason?: string | null;
+  blocker?: string | null;
+};
+
+export type StrategyPlanOrder = {
+  id?: number;
+  symbol: string;
+  order_type: "BUY" | "SELL";
+  quantity: number;
+  estimated_price: number;
+  estimated_gross_amount: number;
+  estimated_fees: number;
+  estimated_net_amount: number;
+  reason?: string | null;
+  status: string;
+};
+
+export type StrategyPlanSummary = {
+  id: number;
+  plan_name: string;
+  strategy_mode: string;
+  universe_level: string;
+  total_current_value: number;
+  target_invested_value: number;
+  expected_cash_after_plan: number;
+  estimated_orders_count: number;
+  status: string;
+  created_at: string;
+};
+
+export type StrategyPlanFull = {
+  summary: StrategyPlanSummary;
+  config: StrategyPlanConfig;
+  items: StrategyPlanItem[];
+  proposed_orders: StrategyPlanOrder[];
+  warnings: string[];
+  blockers: string[];
+};
+
+export type Alert = {
+  id: number;
+  alert_type: string;
+  severity: "INFO" | "WARNING" | "CRITICAL";
+  symbol?: string | null;
+  title: string;
+  message: string;
+  status: "OPEN" | "ACKNOWLEDGED" | "CLOSED";
+  source_module?: string | null;
+  payload_json?: string | null;
+  created_at: string;
+  updated_at: string;
+  acknowledged_at?: string | null;
+  closed_at?: string | null;
+};
+
+export type AlertSummary = {
+  open_count: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  latest_alerts: Alert[];
+  by_type: Record<string, number>;
+};
+
+export type AlertRule = {
+  id: number;
+  rule_name: string;
+  alert_type: string;
+  enabled: boolean;
+  severity: string;
+  universe_level?: string | null;
+  symbol?: string | null;
+  threshold_value?: number | null;
+  config_json?: string | null;
+};
+
+export type SchedulerRun = {
+  id: number;
+  run_type: string;
+  status: "SUCCESS" | "WARNING" | "ERROR";
+  started_at: string;
+  finished_at?: string | null;
+  duration_seconds?: number | null;
+  summary: Record<string, any>;
+  errors: string[];
+  created_at: string;
+};
+
+export type OperationalReportSummary = {
+  system_health: Record<string, any>;
+  data_quality_avg: number;
+  buy_candidates_count: number;
+  watch_candidates_count: number;
+  reduce_candidates_count: number;
+  portfolio_value: number;
+  risk_warnings_count: number;
+  open_alerts_count: number;
+};
+
+export type OperationalReport = {
+  id: number;
+  report_type: string;
+  report_date: string;
+  title: string;
+  summary: OperationalReportSummary;
+  markdown_text?: string | null;
+  created_at: string;
+};
+
+export type OptimizationMethod = "EQUAL_WEIGHT" | "SCORE_WEIGHTED" | "RISK_ADJUSTED" | "CONSERVATIVE_ALLOCATION" | "AGGRESSIVE_ALLOCATION";
+
+export type OptimizerConfig = {
+  run_name: string;
+  universe_source: "WATCHLIST" | "CORE" | "EXTENDED" | "OPERATIONAL_BUY_CANDIDATES";
+  optimization_method: OptimizationMethod;
+  initial_capital_mode: "CURRENT_PORTFOLIO" | "CUSTOM_CAPITAL";
+  custom_capital?: number | null;
+  max_positions: number;
+  min_position_weight: number;
+  max_single_asset_weight: number;
+  max_asset_class_weight: number;
+  max_crypto_weight: number;
+  cash_reserve_percent: number;
+  min_data_quality_score: number;
+  min_operational_confidence: string;
+  require_real_data: boolean;
+  include_ml: boolean;
+  include_news: boolean;
+  rebalance_threshold_percent: number;
+  allow_sell: boolean;
+  allow_buy: boolean;
+  fee_percent: number;
+};
+
+export type OptimizationItem = {
+  id?: number;
+  symbol: string;
+  current_weight: number;
+  target_weight: number;
+  current_value: number;
+  target_value: number;
+  delta_value: number;
+  operational_signal?: string | null;
+  data_quality_score?: number | null;
+  ml_probability?: number | null;
+  news_sentiment?: string | null;
+  risk_level?: string | null;
+  reason?: string | null;
+};
+
+export type RebalanceOrder = {
+  id?: number;
+  symbol: string;
+  order_type: "BUY" | "SELL";
+  quantity: number;
+  estimated_price: number;
+  estimated_gross_amount: number;
+  estimated_fees: number;
+  estimated_net_amount: number;
+  reason?: string | null;
+  status: string;
+};
+
+export type OptimizationRunSummary = {
+  id: number;
+  run_name: string;
+  optimization_method: string;
+  universe_source: string;
+  current_total_value: number;
+  target_invested_value: number;
+  target_cash: number;
+  expected_cash_after_rebalance: number;
+  estimated_orders_count: number;
+  estimated_fees: number;
+  estimated_turnover_percent: number;
+  created_at: string;
+};
+
+export type OptimizationRunFull = {
+  summary: OptimizationRunSummary;
+  config: OptimizerConfig;
+  items: OptimizationItem[];
+  proposed_orders: RebalanceOrder[];
+  risk_summary: Record<string, any>;
+  warnings: string[];
+  blockers: string[];
+};
+
+export type ScenarioType = "CUSTOM" | "MARKET_CRASH" | "TECH_SELL_OFF" | "CRYPTO_CRASH" | "BOND_SHOCK" | "RATE_HIKE" | "RECESSION" | "INFLATION_SHOCK" | "BULL_RALLY";
+
+export type ScenarioConfig = {
+  scenario_name: string;
+  scenario_type: ScenarioType;
+  portfolio_source: "CURRENT_PORTFOLIO" | "LATEST_OPTIMIZED_PORTFOLIO" | "CUSTOM_TARGET";
+  asset_class_shocks: Record<string, number>;
+  symbol_shocks: Record<string, number>;
+  include_correlations: boolean;
+  include_ml_risk: boolean;
+  include_news_risk: boolean;
+  include_liquidity_buffer: boolean;
+  confidence_level: 95 | 99;
+};
+
+export type ScenarioAssetImpact = {
+  id?: number;
+  symbol: string;
+  asset_type: string;
+  current_value: number;
+  shock_percent: number;
+  stressed_value: number;
+  absolute_impact: number;
+  percentage_impact: number;
+  loss_contribution_percent: number;
+};
+
+export type ScenarioClassImpact = {
+  id?: number;
+  asset_class: string;
+  current_value: number;
+  shock_percent: number;
+  stressed_value: number;
+  absolute_impact: number;
+  percentage_impact: number;
+};
+
+export type ScenarioRunSummary = {
+  id: number;
+  scenario_name: string;
+  scenario_type: string;
+  portfolio_source: string;
+  current_portfolio_value: number;
+  stressed_portfolio_value: number;
+  absolute_loss: number;
+  percentage_loss: number;
+  risk_level: string;
+  created_at: string;
+};
+
+export type ScenarioRunFull = {
+  summary: ScenarioRunSummary;
+  config: ScenarioConfig;
+  asset_impacts: ScenarioAssetImpact[];
+  class_impacts: ScenarioClassImpact[];
+  loss_contribution: Record<string, number>;
+  mitigation_suggestions: string[];
+  warnings: string[];
 };
 
 export type PortfolioPosition = {
@@ -769,4 +1054,53 @@ export const api = {
   getAssetValidatedSignal: (symbol: string) => apiGet<ValidatedSignal>(`/signals/validated/${symbol}`),
   getOperationalRanking: () => apiGet<OperationalRanking>("/ranking/operational"),
   getPortfolioActions: () => apiGet<PortfolioAction[]>("/portfolio/actions"),
-};
+  generateStrategyPlan: (config: StrategyPlanConfig) => apiPost<StrategyPlanFull>("/strategy/plans/generate", config),
+  listStrategyPlans: () => apiGet<StrategyPlanSummary[]>("/strategy/plans"),
+  getStrategyPlan: (id: number) => apiGet<StrategyPlanFull>(`/strategy/plans/${id}`),
+  applyStrategyPlan: (id: number) => apiPost<{ orders_created: number }>(`/strategy/plans/${id}/apply-paper`),
+  deleteStrategyPlan: (id: number) => apiDelete<{ success: boolean }>(`/strategy/plans/${id}`),
+  getDefaultStrategyConfig: () => apiGet<StrategyPlanConfig>("/strategy/default-config"),
+  
+  // ALERTS
+  listAlerts: (status?: string, severity?: string, symbol?: string) => {
+    let url = "/alerts?";
+    if (status) url += `status=${status}&`;
+    if (severity) url += `severity=${severity}&`;
+    if (symbol) url += `symbol=${symbol}&`;
+    return apiGet<Alert[]>(url);
+  },
+  getAlertSummary: () => apiGet<AlertSummary>("/alerts/summary"),
+  acknowledgeAlert: (id: number) => apiPost<{ success: boolean }>(`/alerts/${id}/acknowledge`, {}),
+  closeAlert: (id: number) => apiPost<{ success: boolean }>(`/alerts/${id}/close`, {}),
+  getAlertRules: () => apiGet<AlertRule[]>("/alerts/rules"),
+  toggleAlertRule: (id: number, enabled: boolean) => apiPost<{ success: boolean }>(`/alerts/rules/${id}/toggle`, { enabled }),
+  evaluateAlerts: () => apiPost<{ success: boolean }>("/alerts/evaluate", {}),
+
+  // SCHEDULER
+  listSchedulerRuns: () => apiGet<SchedulerRun[]>("/scheduler/runs"),
+  runScheduler: (payload: { run_type: string, limit?: number, force?: boolean, generate_report?: boolean }) => 
+    apiPost<SchedulerRun>("/scheduler/run", payload),
+
+  // REPORTS
+  listReports: () => apiGet<OperationalReport[]>("/reports"),
+  getLatestReport: () => apiGet<OperationalReport | null>("/reports/latest"),
+  getReport: (id: number) => apiGet<OperationalReport>(`/reports/${id}`),
+  generateReport: (report_type: string = "MANUAL") => apiPost<OperationalReport>("/reports/generate", { report_type }),
+
+  // OPTIMIZER
+  getDefaultOptimizerConfig: () => apiGet<OptimizerConfig>("/optimizer/default-config"),
+  runOptimization: (config: OptimizerConfig) => apiPost<OptimizationRunFull>("/optimizer/run", config),
+  listOptimizationRuns: () => apiGet<OptimizationRunSummary[]>("/optimizer/runs"),
+  getOptimizationRun: (id: number) => apiGet<OptimizationRunFull>(`/optimizer/runs/${id}`),
+  applyRebalanceOrders: (id: number) => apiPost<{ orders_created: number }>(`/optimizer/runs/${id}/create-paper-orders`, {}),
+  deleteOptimizationRun: (id: number) => apiDelete<{ success: boolean }>(`/optimizer/runs/${id}`),
+
+  // SCENARIOS
+  getDefaultScenarioConfig: () => apiGet<ScenarioConfig>("/scenarios/default-config"),
+  getScenarioPresets: () => apiGet<{ id: string, label: string }[]>("/scenarios/presets"),
+  runScenarioAnalysis: (config: ScenarioConfig) => apiPost<ScenarioRunFull>("/scenarios/run", config),
+  listScenarioRuns: () => apiGet<ScenarioRunSummary[]>("/scenarios/runs"),
+  getScenarioRun: (id: number) => apiGet<ScenarioRunFull>(`/scenarios/runs/${id}`),
+  deleteScenarioRun: (id: number) => apiDelete<{ success: boolean }>(`/scenarios/runs/${id}`),
+  };
+

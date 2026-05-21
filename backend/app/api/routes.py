@@ -51,6 +51,28 @@ from backend.app.models import (
     ValidatedSignalOut,
     OperationalRankingOut,
     PortfolioActionOut,
+    StrategyPlanConfig,
+    StrategyPlanFullOut,
+    StrategyPlanItemOut,
+    StrategyPlanOrderOut,
+    StrategyPlanSummaryOut,
+    AlertOut,
+    AlertSummaryOut,
+    AlertRuleOut,
+    AlertRuleToggleIn,
+    SchedulerRunIn,
+    SchedulerRunOut,
+    OperationalReportOut,
+    OptimizationMethod,
+    OptimizerConfig,
+    OptimizationItemOut,
+    RebalanceOrderOut,
+    OptimizationRunSummaryOut,
+    OptimizationRunFullOut,
+    ScenarioType,
+    ScenarioConfig,
+    ScenarioRunSummaryOut,
+    ScenarioRunFullOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
@@ -68,6 +90,12 @@ from backend.app.services.data_quality_service import DataQualityService
 from backend.app.services.system_health_service import SystemHealthService
 from backend.app.services.signal_validation_service import SignalValidationService
 from backend.app.services.operational_ranking_service import OperationalRankingService
+from backend.app.services.strategy_control_service import StrategyControlService
+from backend.app.services.alert_service import AlertService
+from backend.app.services.scheduler_service import SchedulerService
+from backend.app.services.report_service import ReportService
+from backend.app.services.portfolio_optimizer_service import PortfolioOptimizerService
+from backend.app.services.scenario_service import ScenarioService
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
@@ -81,6 +109,12 @@ data_quality_service = DataQualityService()
 system_health_service = SystemHealthService()
 signal_validation_service = SignalValidationService()
 operational_ranking_service = OperationalRankingService()
+strategy_control_service = StrategyControlService()
+alert_service = AlertService()
+scheduler_service = SchedulerService()
+report_service = ReportService()
+portfolio_optimizer_service = PortfolioOptimizerService()
+scenario_service = ScenarioService()
 
 
 @router.get("/health")
@@ -165,6 +199,255 @@ def get_excluded_candidates() -> list[ValidatedSignalOut]:
 def get_portfolio_actions() -> list[PortfolioActionOut]:
     with db_session() as connection:
         return operational_ranking_service.get_portfolio_actions(connection)
+
+
+# -- ALERTS ------------------------------------------------------------------
+@router.get("/alerts", response_model=list[AlertOut])
+def list_alerts(
+    status: str | None = None,
+    severity: str | None = None,
+    symbol: str | None = None
+) -> list[AlertOut]:
+    with db_session() as connection:
+        # Note: status/severity filtering could be added to get_open_alerts or new method
+        # for now we'll just use get_open_alerts if status is OPEN
+        if status == "OPEN" or not status:
+            return alert_service.get_open_alerts(connection, severity=severity, symbol=symbol)
+        # otherwise basic select
+        query = "SELECT * FROM alerts WHERE 1=1"
+        params = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        query += " ORDER BY created_at DESC"
+        rows = connection.execute(query, params).fetchall()
+        return [alert_service._row_to_alert(row) for row in rows]
+
+
+@router.get("/alerts/summary", response_model=AlertSummaryOut)
+def get_alerts_summary() -> AlertSummaryOut:
+    with db_session() as connection:
+        return alert_service.get_alert_summary(connection)
+
+
+@router.post("/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: int):
+    with db_session() as connection:
+        alert_service.acknowledge_alert(connection, alert_id)
+        return {"success": True}
+
+
+@router.post("/alerts/{alert_id}/close")
+def close_alert(alert_id: int):
+    with db_session() as connection:
+        alert_service.close_alert(connection, alert_id)
+        return {"success": True}
+
+
+@router.get("/alerts/rules", response_model=list[AlertRuleOut])
+def get_alert_rules() -> list[AlertRuleOut]:
+    with db_session() as connection:
+        return alert_service.list_rules(connection)
+
+
+@router.post("/alerts/rules/{rule_id}/toggle")
+def toggle_alert_rule(rule_id: int, payload: AlertRuleToggleIn):
+    with db_session() as connection:
+        alert_service.toggle_rule(connection, rule_id, payload.enabled)
+        return {"success": True}
+
+
+@router.post("/alerts/evaluate")
+def evaluate_alerts():
+    with db_session() as connection:
+        alert_service.evaluate_rules(connection)
+        return {"success": True}
+
+
+# -- SCHEDULER ---------------------------------------------------------------
+@router.get("/scheduler/runs", response_model=list[SchedulerRunOut])
+def list_scheduler_runs() -> list[SchedulerRunOut]:
+    with db_session() as connection:
+        return scheduler_service.list_runs(connection)
+
+
+@router.post("/scheduler/run", response_model=SchedulerRunOut)
+def run_scheduler(payload: SchedulerRunIn) -> SchedulerRunOut:
+    with db_session() as connection:
+        return scheduler_service.run_manual_cycle(connection, payload)
+
+
+# -- REPORTS -----------------------------------------------------------------
+@router.get("/reports", response_model=list[OperationalReportOut])
+def list_reports() -> list[OperationalReportOut]:
+    with db_session() as connection:
+        return report_service.list_reports(connection)
+
+
+@router.get("/reports/latest", response_model=OperationalReportOut | None)
+def get_latest_report() -> OperationalReportOut | None:
+    with db_session() as connection:
+        return report_service.get_latest_report(connection)
+
+
+@router.get("/reports/{report_id}", response_model=OperationalReportOut)
+def get_report(report_id: int) -> OperationalReportOut:
+    with db_session() as connection:
+        try:
+            return report_service.get_report(connection, report_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/reports/generate", response_model=OperationalReportOut)
+def generate_report(report_type: str = "MANUAL") -> OperationalReportOut:
+    with db_session() as connection:
+        return report_service.generate_operational_report(connection, report_type=report_type)
+
+
+@router.post("/strategy/plans/generate", response_model=StrategyPlanFullOut)
+def generate_strategy_plan(payload: StrategyPlanConfig) -> StrategyPlanFullOut:
+    with db_session() as connection:
+        return strategy_control_service.generate_strategy_plan(connection, payload)
+
+
+@router.get("/strategy/plans", response_model=list[StrategyPlanSummaryOut])
+def list_strategy_plans() -> list[StrategyPlanSummaryOut]:
+    with db_session() as connection:
+        return strategy_control_service.list_strategy_plans(connection)
+
+
+@router.get("/strategy/plans/{plan_id}", response_model=StrategyPlanFullOut)
+def get_strategy_plan(plan_id: int) -> StrategyPlanFullOut:
+    with db_session() as connection:
+        try:
+            return strategy_control_service.get_strategy_plan(connection, plan_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/strategy/plans/{plan_id}/apply-paper")
+def apply_strategy_plan(plan_id: int) -> dict[str, int]:
+    with db_session() as connection:
+        try:
+            count = strategy_control_service.apply_plan_to_paper_trading(connection, plan_id)
+            return {"orders_created": count}
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.delete("/strategy/plans/{plan_id}")
+def delete_strategy_plan(plan_id: int) -> dict[str, bool]:
+    with db_session() as connection:
+        return {"success": strategy_control_service.delete_plan(connection, plan_id)}
+
+
+@router.get("/strategy/default-config", response_model=StrategyPlanConfig)
+def get_default_strategy_config() -> StrategyPlanConfig:
+    return StrategyPlanConfig(
+        plan_name=f"Plan {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        universe_level="CORE",
+        strategy_mode="BALANCED",
+    )
+
+
+# -- OPTIMIZER ---------------------------------------------------------------
+@router.get("/optimizer/default-config", response_model=OptimizerConfig)
+def get_default_optimizer_config() -> OptimizerConfig:
+    return OptimizerConfig(
+        run_name=f"Optimization {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        universe_source="CORE",
+        optimization_method=OptimizationMethod.EQUAL_WEIGHT,
+        initial_capital_mode="CURRENT_PORTFOLIO",
+    )
+
+
+@router.post("/optimizer/run", response_model=OptimizationRunFullOut)
+def run_optimization(payload: OptimizerConfig) -> OptimizationRunFullOut:
+    with db_session() as connection:
+        return portfolio_optimizer_service.generate_optimization_run(connection, payload)
+
+
+@router.get("/optimizer/runs", response_model=list[OptimizationRunSummaryOut])
+def list_optimization_runs() -> list[OptimizationRunSummaryOut]:
+    with db_session() as connection:
+        return portfolio_optimizer_service.list_runs(connection)
+
+
+@router.get("/optimizer/runs/{run_id}", response_model=OptimizationRunFullOut)
+def get_optimization_run(run_id: int) -> OptimizationRunFullOut:
+    with db_session() as connection:
+        try:
+            return portfolio_optimizer_service.get_run(connection, run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/optimizer/runs/{run_id}/create-paper-orders")
+def create_optimizer_paper_orders(run_id: int) -> dict[str, int]:
+    with db_session() as connection:
+        try:
+            count = portfolio_optimizer_service.apply_rebalance_orders(connection, run_id)
+            return {"orders_created": count}
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.delete("/optimizer/runs/{run_id}")
+def delete_optimization_run(run_id: int) -> dict[str, bool]:
+    with db_session() as connection:
+        return {"success": portfolio_optimizer_service.delete_run(connection, run_id)}
+
+
+# -- SCENARIOS ---------------------------------------------------------------
+@router.get("/scenarios/default-config", response_model=ScenarioConfig)
+def get_default_scenario_config() -> ScenarioConfig:
+    return ScenarioConfig(
+        scenario_name=f"Stress Test {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        scenario_type=ScenarioType.MARKET_CRASH,
+        portfolio_source="CURRENT_PORTFOLIO",
+    )
+
+
+@router.get("/scenarios/presets")
+def get_scenario_presets() -> list[dict[str, str]]:
+    return [
+        {"id": t.value, "label": t.value.replace("_", " ").title()}
+        for t in ScenarioType
+    ]
+
+
+@router.post("/scenarios/run", response_model=ScenarioRunFullOut)
+def run_scenario_analysis(payload: ScenarioConfig) -> ScenarioRunFullOut:
+    with db_session() as connection:
+        return scenario_service.run_scenario_analysis(connection, payload)
+
+
+@router.get("/scenarios/runs", response_model=list[ScenarioRunSummaryOut])
+def list_scenario_runs() -> list[ScenarioRunSummaryOut]:
+    with db_session() as connection:
+        return scenario_service.list_runs(connection)
+
+
+@router.get("/scenarios/runs/{scenario_id}", response_model=ScenarioRunFullOut)
+def get_scenario_run(scenario_id: int) -> ScenarioRunFullOut:
+    with db_session() as connection:
+        try:
+            return scenario_service.get_run(connection, scenario_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.delete("/scenarios/runs/{scenario_id}")
+def delete_scenario_run(scenario_id: int) -> dict[str, bool]:
+    with db_session() as connection:
+        return {"success": scenario_service.delete_run(connection, scenario_id)}
 
 
 @router.get("/assets", response_model=list[AssetOut])
