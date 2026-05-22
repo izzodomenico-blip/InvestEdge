@@ -1,0 +1,512 @@
+{
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\.claude\\settings.local.json": {
+    "mtime": 1779217431.5818613,
+    "ast_hash": "f6de710d8dd5a20e35299a3411f1df87",
+    "semantic_hash": "f6de710d8dd5a20e35299a3411f1df87"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\.gemini\\settings.json": {
+    "mtime": 1779388676.4691792,
+    "ast_hash": "ddc6069a85a1acc06096e06bcd8087ac",
+    "semantic_hash": "ddc6069a85a1acc06096e06bcd8087ac"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\__init__.py": {
+    "mtime": 1779026619.271037,
+    "ast_hash": "68b329da9893e34099c7d8ad5cb9c940",
+    "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\config.py": {
+    "mtime": 1779217592.457079,
+    "ast_hash": "9292dc5efcccd401b5c9314f87f1b3c8",
+    "semantic_hash": "9292dc5efcccd401b5c9314f87f1b3c8"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\database.py": {
+    "mtime": 1779394949.5200653,
+    "ast_hash": "fb5b32aa22b790e1a8396f3a2ceaf23d",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\main.py": {
+    "mtime": 1779049818.3261943,
+    "ast_hash": "cc27181d1a77eb211d9afd16897cd6f2",
+    "semantic_hash": "cc27181d1a77eb211d9afd16897cd6f2"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\__init__.py": {
+    "mtime": 1779026619.2758327,
+    "ast_hash": "68b329da9893e34099c7d8ad5cb9c940",
+    "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\api\\routes.py": {
+    "mtime": 1779395264.9064262,
+    "ast_hash": "f6f2e30341821320293655c71207cf75",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\api\\__init__.py": {
+    "mtime": 1779026619.3063953,
+    "ast_hash": "68b329da9893e34099c7d8ad5cb9c940",
+    "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\alpha_vantage.py": {
+    "mtime": 1779052024.16845,
+    "ast_hash": "b334eb4b0cc3ada85f0b17b0110d63a3",
+    "semantic_hash": "b334eb4b0cc3ada85f0b17b0110d63a3"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\alpha_vantage_news.py": {
+    "mtime": 1779217718.7333002,
+    "ast_hash": "bb42d7d629762c39a8a23d41dd66c8e0",
+    "semantic_hash": "bb42d7d629762c39a8a23d41dd66c8e0"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\base.py": {
+    "mtime": 1779053314.3376997,
+    "ast_hash": "97c56f982fbaea479c6c7eab47ce0f7b",
+    "semantic_hash": "97c56f982fbaea479c6c7eab47ce0f7b"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\coingecko.py": {
+    "mtime": 1779051977.5919828,
+    "ast_hash": "baed819e7fbda8dfd6518d24de998be8",
+    "semantic_hash": "baed819e7fbda8dfd6518d24de998be8"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\fred.py": {
+    "mtime": 1779051995.007735,
+    "ast_hash": "a134cf8615dd9bab2d9c94e49ef85f47",
+    "semantic_hash": "a134cf8615dd9bab2d9c94e49ef85f47"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\mock_news_provider.py": {
+    "mtime": 1779217738.9099386,
+    "ast_hash": "b77202907385cfbc32639bdd37064e83",
+    "semantic_hash": "b77202907385cfbc32639bdd37064e83"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\mock_provider.py": {
+    "mtime": 1779026619.3063953,
+    "ast_hash": "4f98b062120dd7f971d376bff397a08c",
+    "semantic_hash": "4f98b062120dd7f971d376bff397a08c"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\news_base.py": {
+    "mtime": 1779217698.3505113,
+    "ast_hash": "897a0aa33e8fa0a92bff016162a63d4e",
+    "semantic_hash": "897a0aa33e8fa0a92bff016162a63d4e"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\provider_registry.py": {
+    "mtime": 1779052018.1502125,
+    "ast_hash": "c7476fd1532c12050cdeb6e6c7fc5764",
+    "semantic_hash": "c7476fd1532c12050cdeb6e6c7fc5764"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\data_providers\\__init__.py": {
+    "mtime": 1779217750.0696247,
+    "ast_hash": "0f575cf0a9b3b81672da2c4b510b10d5",
+    "semantic_hash": "0f575cf0a9b3b81672da2c4b510b10d5"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\models\\schemas.py": {
+    "mtime": 1779395371.202052,
+    "ast_hash": "576973ce35ca1c2b6b38e3916ef5adaf",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\models\\__init__.py": {
+    "mtime": 1779395047.1556945,
+    "ast_hash": "7e39b79bf12dd47d00c376d2b0090045",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\assets_service.py": {
+    "mtime": 1779219047.7184708,
+    "ast_hash": "4309a6cbaff611708582ee5aa58918be",
+    "semantic_hash": "4309a6cbaff611708582ee5aa58918be"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\backtest_engine.py": {
+    "mtime": 1779048512.3067026,
+    "ast_hash": "fa14c54e0acce91bb5e4dc0bfe39335f",
+    "semantic_hash": "fa14c54e0acce91bb5e4dc0bfe39335f"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\dashboard_service.py": {
+    "mtime": 1779395405.9247959,
+    "ast_hash": "b777da0d8c7c5359ca8cbd3d9fb6911e",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\market_data_service.py": {
+    "mtime": 1779220569.2151845,
+    "ast_hash": "8e1ee65b2238ec39b1f408a5cf20dec5",
+    "semantic_hash": "8e1ee65b2238ec39b1f408a5cf20dec5"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\ml_dataset_service.py": {
+    "mtime": 1779219156.96508,
+    "ast_hash": "af7e4ef4e09aa8d8d215eb1810d7998c",
+    "semantic_hash": "af7e4ef4e09aa8d8d215eb1810d7998c"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\ml_engine.py": {
+    "mtime": 1779220593.9930575,
+    "ast_hash": "4191272c114e5c9d47d6b17851963646",
+    "semantic_hash": "4191272c114e5c9d47d6b17851963646"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\news_engine.py": {
+    "mtime": 1779217857.7961013,
+    "ast_hash": "5988df9ee3a6593885f274432c49c889",
+    "semantic_hash": "5988df9ee3a6593885f274432c49c889"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\portfolio_engine.py": {
+    "mtime": 1779038022.6754496,
+    "ast_hash": "1d42535373fdd049052e676ab1220377",
+    "semantic_hash": "1d42535373fdd049052e676ab1220377"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\portfolio_service.py": {
+    "mtime": 1779047295.289805,
+    "ast_hash": "d1aa241b041db699d0753a90aaac6039",
+    "semantic_hash": "d1aa241b041db699d0753a90aaac6039"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\prices_service.py": {
+    "mtime": 1779052225.2562435,
+    "ast_hash": "c9088a55461dc69485b6b92104f77e27",
+    "semantic_hash": "c9088a55461dc69485b6b92104f77e27"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\risk_engine.py": {
+    "mtime": 1779038180.6713488,
+    "ast_hash": "75929e2ba3065055715f8b4f5f45ae83",
+    "semantic_hash": "75929e2ba3065055715f8b4f5f45ae83"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\scoring_engine.py": {
+    "mtime": 1779033610.7893662,
+    "ast_hash": "429c1f5078b890630f5956a8d063e7cf",
+    "semantic_hash": "429c1f5078b890630f5956a8d063e7cf"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\sentiment_engine.py": {
+    "mtime": 1779217791.5368664,
+    "ast_hash": "04ddc95d6d56265d200c65275641da70",
+    "semantic_hash": "04ddc95d6d56265d200c65275641da70"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\signals_service.py": {
+    "mtime": 1779029028.473247,
+    "ast_hash": "6e14f28e9122a43d8ae39ea9fd98215e",
+    "semantic_hash": "6e14f28e9122a43d8ae39ea9fd98215e"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\technical_analysis.py": {
+    "mtime": 1779028876.5192096,
+    "ast_hash": "b810e4e29baf86782573e991fa3847a4",
+    "semantic_hash": "b810e4e29baf86782573e991fa3847a4"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\technical_analysis_service.py": {
+    "mtime": 1779219329.155714,
+    "ast_hash": "bb3b828b8209303097507333331b3009",
+    "semantic_hash": "bb3b828b8209303097507333331b3009"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\universe_service.py": {
+    "mtime": 1779222238.4232497,
+    "ast_hash": "33ebd00e0e6d571d9d4fd3e1d3417e4a",
+    "semantic_hash": "33ebd00e0e6d571d9d4fd3e1d3417e4a"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\__init__.py": {
+    "mtime": 1779026619.2835135,
+    "ast_hash": "68b329da9893e34099c7d8ad5cb9c940",
+    "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\scripts\\seed_database.py": {
+    "mtime": 1779393509.8823884,
+    "ast_hash": "99ed34aa7e3c69539cce931196e209b6",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\scripts\\__init__.py": {
+    "mtime": 1779027747.1714032,
+    "ast_hash": "68b329da9893e34099c7d8ad5cb9c940",
+    "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\package.json": {
+    "mtime": 1779026849.6531172,
+    "ast_hash": "c37428d19bfd26392289dba60e1c1c6d",
+    "semantic_hash": "c37428d19bfd26392289dba60e1c1c6d"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\postcss.config.js": {
+    "mtime": 1779026849.6728473,
+    "ast_hash": "c735540bb63936a123bc867d950c9f69",
+    "semantic_hash": "c735540bb63936a123bc867d950c9f69"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\tailwind.config.d.ts": {
+    "mtime": 1779027001.5814345,
+    "ast_hash": "e8ba9c55bf27565367f966f4e082e1f9",
+    "semantic_hash": "e8ba9c55bf27565367f966f4e082e1f9"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\tailwind.config.js": {
+    "mtime": 1779027001.5753567,
+    "ast_hash": "085183647998a13660382ea95d2180d7",
+    "semantic_hash": "085183647998a13660382ea95d2180d7"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\tailwind.config.ts": {
+    "mtime": 1779026849.6751602,
+    "ast_hash": "b356fe457ed422080524de669eb3e5f6",
+    "semantic_hash": "b356fe457ed422080524de669eb3e5f6"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\tsconfig.json": {
+    "mtime": 1779026849.6751602,
+    "ast_hash": "7dbe80a92b653e763f75e6cda20ded39",
+    "semantic_hash": "7dbe80a92b653e763f75e6cda20ded39"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\tsconfig.node.json": {
+    "mtime": 1779026849.677832,
+    "ast_hash": "22a3c326162e358ed61ef7a0cb689dbc",
+    "semantic_hash": "22a3c326162e358ed61ef7a0cb689dbc"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\vite.config.d.ts": {
+    "mtime": 1779027001.5652812,
+    "ast_hash": "9fcf75521f4c43fd8b75300e0f63b867",
+    "semantic_hash": "9fcf75521f4c43fd8b75300e0f63b867"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\vite.config.js": {
+    "mtime": 1779027001.5484345,
+    "ast_hash": "60c6196c0c146366cc75826c56025970",
+    "semantic_hash": "60c6196c0c146366cc75826c56025970"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\vite.config.ts": {
+    "mtime": 1779026849.6781604,
+    "ast_hash": "b3416858a75f21c98e8411d676cddbae",
+    "semantic_hash": "b3416858a75f21c98e8411d676cddbae"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\App.tsx": {
+    "mtime": 1779395339.962737,
+    "ast_hash": "b3a1ec721ae19630a216e16671982ce5",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\main.tsx": {
+    "mtime": 1779026849.6781604,
+    "ast_hash": "69bf687dd9f3b9b1cbeb6d43b91cfa99",
+    "semantic_hash": "69bf687dd9f3b9b1cbeb6d43b91cfa99"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\vite-env.d.ts": {
+    "mtime": 1779027151.316506,
+    "ast_hash": "0352474ba2918efe13895edbc3780d94",
+    "semantic_hash": "0352474ba2918efe13895edbc3780d94"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\components\\AppShell.tsx": {
+    "mtime": 1779026883.4611027,
+    "ast_hash": "495d359ada72f94837fa5b6af4708964",
+    "semantic_hash": "495d359ada72f94837fa5b6af4708964"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\components\\MetricCard.tsx": {
+    "mtime": 1779026883.455503,
+    "ast_hash": "2b60f4a8aca96c59b516db768ff91dfa",
+    "semantic_hash": "2b60f4a8aca96c59b516db768ff91dfa"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\components\\Panel.tsx": {
+    "mtime": 1779390663.6989033,
+    "ast_hash": "ecd869ad4adc1fa36853644dd8060e56",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\components\\Sidebar.tsx": {
+    "mtime": 1779395349.9000766,
+    "ast_hash": "d67160dae86314ee0e213adfd2941c12",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\components\\SignalBadge.tsx": {
+    "mtime": 1779029939.733251,
+    "ast_hash": "fe6d425fc126777e79ee927982f1c22e",
+    "semantic_hash": "fe6d425fc126777e79ee927982f1c22e"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\lib\\api.ts": {
+    "mtime": 1779395361.2681975,
+    "ast_hash": "09e1d7743c54958bce347e7ace4764ee",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\lib\\format.ts": {
+    "mtime": 1779026849.6834412,
+    "ast_hash": "1a5d6d9ec13752479c8aa28cc6f92929",
+    "semantic_hash": "1a5d6d9ec13752479c8aa28cc6f92929"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\lib\\mockData.ts": {
+    "mtime": 1779026849.6834412,
+    "ast_hash": "909877767f28cad56c6e0c6675820d34",
+    "semantic_hash": "909877767f28cad56c6e0c6675820d34"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\AnalysisPage.tsx": {
+    "mtime": 1779394548.6745596,
+    "ast_hash": "3f125222a2f085a59ed7eb2eadbfaf94",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\BacktestPage.tsx": {
+    "mtime": 1779221190.0897992,
+    "ast_hash": "bf3fdbf9b569e049b288e58282745d69",
+    "semantic_hash": "bf3fdbf9b569e049b288e58282745d69"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\DashboardPage.tsx": {
+    "mtime": 1779396146.764128,
+    "ast_hash": "49cf24d7323ca2a6151759d9191098a4",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\DataCenterPage.tsx": {
+    "mtime": 1779052351.9677114,
+    "ast_hash": "a6e6899e2208b2666da42bea2e234793",
+    "semantic_hash": "a6e6899e2208b2666da42bea2e234793"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\MachineLearningPage.tsx": {
+    "mtime": 1779221222.2407398,
+    "ast_hash": "a027a8273b1f5a83f46efff421509dec",
+    "semantic_hash": "a027a8273b1f5a83f46efff421509dec"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\NewsPage.tsx": {
+    "mtime": 1779218153.9426463,
+    "ast_hash": "0f69228742f8f53e0a97febb29eccb8e",
+    "semantic_hash": "0f69228742f8f53e0a97febb29eccb8e"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\PortfolioPage.tsx": {
+    "mtime": 1779395631.576679,
+    "ast_hash": "ddc194bc3e38a1d7fb01648736a84634",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\SimulatorPage.tsx": {
+    "mtime": 1779046693.703332,
+    "ast_hash": "918bff00cab87be21813002206729abf",
+    "semantic_hash": "918bff00cab87be21813002206729abf"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\UniversePage.tsx": {
+    "mtime": 1779221145.41894,
+    "ast_hash": "9bf9278791487b46e00055bcc3ad803a",
+    "semantic_hash": "9bf9278791487b46e00055bcc3ad803a"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\WatchlistPage.tsx": {
+    "mtime": 1779393862.3844602,
+    "ast_hash": "b68271a89cbeb6dc448a4b0db141ded2",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\scripts\\seed_database.py": {
+    "mtime": 1779027757.1023405,
+    "ast_hash": "24fb9538420bd7eb2298f0b87c6f5916",
+    "semantic_hash": "24fb9538420bd7eb2298f0b87c6f5916"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_api.py": {
+    "mtime": 1779052482.2223363,
+    "ast_hash": "98d388f46cc4842b477bf31d65f344d5",
+    "semantic_hash": "98d388f46cc4842b477bf31d65f344d5"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_ml.py": {
+    "mtime": 1779219750.8308296,
+    "ast_hash": "789385bab56af1f423acad9dfc060bcf",
+    "semantic_hash": "789385bab56af1f423acad9dfc060bcf"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_news.py": {
+    "mtime": 1779218337.1160798,
+    "ast_hash": "a3ab2013560c23c1c40cb3c101cafd12",
+    "semantic_hash": "a3ab2013560c23c1c40cb3c101cafd12"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_universe.py": {
+    "mtime": 1779221330.959125,
+    "ast_hash": "c75042dace7c2fa0bc38d772292e5776",
+    "semantic_hash": "c75042dace7c2fa0bc38d772292e5776"
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\alert_service.py": {
+    "mtime": 1779393257.6599567,
+    "ast_hash": "f7594199e851332f170064ba166a5d07",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\data_quality_service.py": {
+    "mtime": 1779389791.8736634,
+    "ast_hash": "10198d2aa86052027d4da66443fd1a46",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\operational_ranking_service.py": {
+    "mtime": 1779389490.8219545,
+    "ast_hash": "4c23c3dde601a275aecc84686560cf4e",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\portfolio_optimizer_service.py": {
+    "mtime": 1779395854.5204804,
+    "ast_hash": "f90ee817821f8f071c7e8cdc99036747",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\report_service.py": {
+    "mtime": 1779393283.8947368,
+    "ast_hash": "fdc1b3e18542d22312e97671a4eae7b3",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\scheduler_service.py": {
+    "mtime": 1779394018.500205,
+    "ast_hash": "1c87719d272138b7327131ee5989fe56",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\signal_validation_service.py": {
+    "mtime": 1779389963.9368632,
+    "ast_hash": "d253b2de75eea1b11bbfeee35aa5921b",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\strategy_control_service.py": {
+    "mtime": 1779393963.0981119,
+    "ast_hash": "907773afd16b1cc679001958bdb5c0e3",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\app\\services\\system_health_service.py": {
+    "mtime": 1779389449.0986712,
+    "ast_hash": "9e339ec1a5f1208f16f167f5bf76fabc",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\AlertCenterPage.tsx": {
+    "mtime": 1779393623.1380107,
+    "ast_hash": "4ab8061568864ab8ccb542b0dabe8eb6",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\OperationalRankingPage.tsx": {
+    "mtime": 1779391334.1300292,
+    "ast_hash": "adebfaa95f3e3a3a1190542ca3e2eaf5",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\PortfolioOptimizerPage.tsx": {
+    "mtime": 1779395330.0255723,
+    "ast_hash": "bd9851e35e49bcf35abd14e3a6f76e23",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\ReportsPage.tsx": {
+    "mtime": 1779393664.8169167,
+    "ast_hash": "5cab01582bfc258af53940be6bb2c05d",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\SchedulerPage.tsx": {
+    "mtime": 1779394576.2119274,
+    "ast_hash": "78e8c55f54fab9675ed5542638cf406b",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\StrategyControlPage.tsx": {
+    "mtime": 1779391153.1152074,
+    "ast_hash": "31df5b11e8f520952a574dc17e4c1552",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\src\\pages\\SystemAuditPage.tsx": {
+    "mtime": 1779389635.836576,
+    "ast_hash": "38f4411929a98fbb8e26124680671293",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_alerts_reports.py": {
+    "mtime": 1779393970.0606668,
+    "ast_hash": "210d58ff1909e2e19e974903291d319a",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_audit_quality.py": {
+    "mtime": 1779390015.9358964,
+    "ast_hash": "09897dd01f6e6f39062eec5e0301047d",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_portfolio_optimizer.py": {
+    "mtime": 1779395879.1121354,
+    "ast_hash": "f9cf7346b7e1f6bb6bd878a9b5cba180",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\tests\\test_strategy_control.py": {
+    "mtime": 1779391661.1964717,
+    "ast_hash": "74b9245dc064a9885b6cbb56507d6dd4",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\docker-compose.yml": {
+    "mtime": 1779026933.5145288,
+    "ast_hash": "58af71f562a965cd147fe7263c04a39e",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\GEMINI.md": {
+    "mtime": 1779388676.4681456,
+    "ast_hash": "8a6643a420fdad6bfb583523bc6cef16",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\README.md": {
+    "mtime": 1779395909.7172623,
+    "ast_hash": "198346875bd6738479522420fefec30c",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\backend\\requirements.txt": {
+    "mtime": 1779218973.5485084,
+    "ast_hash": "16c5314fb0d6fd1f3f24a224e54c1ff3",
+    "semantic_hash": ""
+  },
+  "C:\\Users\\Utente\\Documents\\InvestEdge\\frontend\\index.html": {
+    "mtime": 1779026849.6531172,
+    "ast_hash": "1224c07ba5007cfd2e14dddd15d92390",
+    "semantic_hash": ""
+  }
+}

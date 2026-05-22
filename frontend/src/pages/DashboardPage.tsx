@@ -14,6 +14,7 @@ import {
   PieChart as PieIcon,
   Scale,
   Bell,
+  Calculator,
   } from "lucide-react";
 
 import { 
@@ -150,6 +151,39 @@ export function DashboardPage() {
         <MetricCard label="Liquidità" value={formatCurrency(dashboard.cash, "USD")} delta={`${formatPercent(dashboard.portfolio_value > 0 ? (dashboard.cash / dashboard.portfolio_value) * 100 : 0)} del totale`} tone="amber" icon={Database} />
         <MetricCard label="P/L totale" value={formatCurrency(dashboard.total_pnl, "USD")} delta={formatPercent(dashboard.total_pnl_percent)} tone={dashboard.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
       </div>
+
+      {dashboard.tax_snapshot && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label={`Fiscale ${dashboard.tax_snapshot.tax_year} (simulato)`}
+            value={formatCurrency(dashboard.tax_snapshot.realized_pnl_ytd, "EUR")}
+            delta="P/L realizzato YTD"
+            tone="amber"
+            icon={Calculator}
+          />
+          <MetricCard
+            label="Imposta teorica stimata"
+            value={formatCurrency(dashboard.tax_snapshot.estimated_tax_due, "EUR")}
+            delta="Italia semplificata 26%"
+            tone="amber"
+            icon={Scale}
+          />
+          <MetricCard
+            label="P/L non realizzato"
+            value={formatCurrency(dashboard.tax_snapshot.unrealized_pnl, "EUR")}
+            delta="Da tax lots aperti"
+            tone="cyan"
+            icon={BadgeDollarSign}
+          />
+          <button
+            type="button"
+            onClick={() => navigate("/tax")}
+            className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 text-left text-sm text-amber-100/90 hover:bg-amber-500/10 transition"
+          >
+            Apri Tax Center — simulazione non ufficiale
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Panel title="Andamento valore" className="lg:col-span-2">

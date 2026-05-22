@@ -1,16 +1,16 @@
-# Graph Report - InvestEdge  (2026-05-21)
+# Graph Report - InvestEdge  (2026-05-22)
 
 ## Corpus Check
-- 99 files · ~67,567 words
+- 114 files · ~84,435 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1043 nodes · 2565 edges · 63 communities (52 shown, 11 thin omitted)
-- Extraction: 79% EXTRACTED · 21% INFERRED · 0% AMBIGUOUS · INFERRED: 532 edges (avg confidence: 0.74)
+- 1285 nodes · 3111 edges · 80 communities (67 shown, 13 thin omitted)
+- Extraction: 78% EXTRACTED · 22% INFERRED · 0% AMBIGUOUS · INFERRED: 671 edges (avg confidence: 0.74)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `5848ee86`
+- Built from commit: `22cd96ef`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -63,18 +63,35 @@
 - [[_COMMUNITY_Community 57|Community 57]]
 - [[_COMMUNITY_Community 58|Community 58]]
 - [[_COMMUNITY_Community 59|Community 59]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 64|Community 64]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 66|Community 66]]
+- [[_COMMUNITY_Community 67|Community 67]]
+- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 69|Community 69]]
+- [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 71|Community 71]]
+- [[_COMMUNITY_Community 72|Community 72]]
+- [[_COMMUNITY_Community 73|Community 73]]
+- [[_COMMUNITY_Community 74|Community 74]]
+- [[_COMMUNITY_Community 75|Community 75]]
+- [[_COMMUNITY_Community 76|Community 76]]
+- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 79|Community 79]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `db_session()` - 98 edges
-2. `PortfolioEngine` - 42 edges
+1. `db_session()` - 138 edges
+2. `PortfolioEngine` - 46 edges
 3. `MLEngine` - 38 edges
 4. `Backtest Engine` - 38 edges
-5. `BacktestEngine` - 34 edges
-6. `Portfolio Engine` - 33 edges
-7. `UniverseService` - 28 edges
-8. `AlphaVantageProvider` - 25 edges
-9. `AlertService` - 25 edges
-10. `NewsEngine` - 25 edges
+5. `UserSettingsService` - 35 edges
+6. `BacktestEngine` - 34 edges
+7. `Portfolio Engine` - 33 edges
+8. `MultiPortfolioService` - 30 edges
+9. `Panel()` - 29 edges
+10. `UniverseService` - 28 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `test_repeated_refresh_does_not_duplicate_price_history()` --calls--> `db_session()`  [INFERRED]
@@ -88,15 +105,15 @@
 - `InvestEdge Project` --references--> `TechnicalAnalysis`  [EXTRACTED]
   README.md → frontend/src/lib/api.ts
 
-## Communities (63 total, 11 thin omitted)
+## Communities (80 total, 13 thin omitted)
 
 ### Community 0 - "Community 0"
-Cohesion: 0.05
-Nodes (80): acknowledge_alert(), add_universe_watchlist(), apply_strategy_plan(), asset_data_status(), close_alert(), create_optimizer_paper_orders(), data_status(), data_usage() (+72 more)
+Cohesion: 0.06
+Nodes (57): acknowledge_alert(), activate_portfolio(), activate_risk_profile(), activate_strategy_profile(), clone_portfolio(), close_alert(), create_backup(), create_portfolio() (+49 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.11
-Nodes (21): admin_seed(), _database_file(), get_connection(), init_db(), migrate_db(), _table_columns(), create_app(), lifespan() (+13 more)
+Cohesion: 0.10
+Nodes (24): admin_seed(), _database_file(), get_connection(), init_db(), migrate_db(), _table_columns(), create_app(), lifespan() (+16 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.06
@@ -108,23 +125,31 @@ Nodes (5): PricePoint, PriceHistoryOut, PricePointOut, _clean_float(), get_price
 
 ### Community 4 - "Community 4"
 Cohesion: 0.14
-Nodes (16): BacktestEquityPoint, BacktestPosition, BacktestTrade, BacktestEquityPointOut, BacktestPositionOut, BacktestSummaryOut, BacktestTradeOut, Backtest Engine (+8 more)
+Nodes (15): BacktestEquityPoint, BacktestPosition, BacktestTrade, BacktestEquityPointOut, BacktestPositionOut, BacktestSummaryOut, BacktestTradeOut, Backtest Engine (+7 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.11
-Nodes (17): FastAPI Main App, Python Dependencies, Backend Service, Frontend Service, React Entry Point, InvestEdge Project, Machine Learning Module, Portfolio Engine (+9 more)
+Cohesion: 0.09
+Nodes (22): PortfolioPosition, allocation, AssetType, backtestCurve, equityCurve, newsItems, portfolioPositions, Signal (+14 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.07
-Nodes (56): dashboard(), BaseModel, DataProviderStatus, NewsDailyUsage, NewsProviderStatus, NewsRefreshResult, PortfolioPosition, PortfolioSettings (+48 more)
+Cohesion: 0.06
+Nodes (65): data_status(), data_usage(), get_universe_summary(), import_universe(), ml_status(), ml_training_runs(), news_sentiment(), news_status() (+57 more)
+
+### Community 7 - "Community 7"
+Cohesion: 0.05
+Nodes (49): ApiUsage, AppExportOut, AppImport, AppImportOut, AppSetting, AppSettingOut, AppSnapshotOut, AssetDataStatus (+41 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.06
-Nodes (21): TechnicalAnalysis, _clamp(), _is_number(), Explainable technical scoring engine., ScoringEngine, Advanced technical analysis engine built with pandas and numpy., _safe_bool(), _safe_divide() (+13 more)
+Cohesion: 0.08
+Nodes (10): _backtest_payload(), _price_frame(), test_backtest_history_and_detail_endpoints(), test_repeated_refresh_does_not_duplicate_price_history(), test_run_backtest_buy_and_hold(), test_run_backtest_score_threshold(), test_run_backtest_top_n_score(), test_technical_analysis_decreasing_series() (+2 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.07
-Nodes (31): Alert, AlertRule, AlertSummary, api, ApiUsage, AssetDataStatus, DataQualityCheck, DataRefreshAllResult (+23 more)
+Nodes (25): AppShell(), AppShellProps, PortfolioSelector(), PortfolioSelectorProps, navItems, Sidebar(), Alert, AlertRule (+17 more)
+
+### Community 10 - "Community 10"
+Cohesion: 0.32
+Nodes (3): refresh_portfolio(), MarketDataService, _now()
 
 ### Community 11 - "Community 11"
 Cohesion: 0.24
@@ -132,83 +157,83 @@ Nodes (5): _asset_type(), _clean(), _now(), _risk_level(), UniverseService
 
 ### Community 12 - "Community 12"
 Cohesion: 0.29
-Nodes (11): SignalBadge(), SignalBadgeProps, styles, PortfolioRecommendation, PortfolioSummary, Signal, assetTypeLabels, colors (+3 more)
+Nodes (11): SignalBadge(), SignalBadgeProps, styles, PortfolioRecommendation, PortfolioSnapshot, Signal, assetTypeLabels, colors (+3 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.05
-Nodes (34): AlertRuleOut, DataQualityCheckOut, OperationalRankingOut, OperationalReportOut, PortfolioActionOut, SchedulerRunOut, SystemHealthOut, ValidatedSignalOut (+26 more)
+Nodes (33): AlertOut, AlertRuleOut, AlertSummaryOut, DataQualityCheckOut, OperationalRankingOut, OperationalReportOut, PortfolioActionOut, SchedulerRunIn (+25 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.17
-Nodes (7): Settings, BaseNewsProvider, NewsMissingApiKey, NewsProviderError, NewsRateLimitExceeded, NewsRealDisabled, utc_now()
+Cohesion: 0.16
+Nodes (7): BaseNewsProvider, NewsMissingApiKey, NewsProviderError, NewsRateLimitExceeded, NewsRealDisabled, utc_now(), RuntimeError
 
 ### Community 15 - "Community 15"
-Cohesion: 0.08
-Nodes (23): dependencies, lucide-react, react, react-dom, react-router-dom, recharts, devDependencies, autoprefixer (+15 more)
+Cohesion: 0.22
+Nodes (9): devDependencies, autoprefixer, postcss, tailwindcss, @types/react, @types/react-dom, typescript, vite (+1 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.16
-Nodes (8): ABC, BaseMarketDataProvider, MissingApiKey, ProviderError, RateLimitExceeded, RealDataDisabled, utc_now(), RuntimeError
+Cohesion: 0.18
+Nodes (8): ABC, Settings, BaseMarketDataProvider, MissingApiKey, ProviderError, RateLimitExceeded, RealDataDisabled, utc_now()
 
 ### Community 17 - "Community 17"
 Cohesion: 0.11
 Nodes (18): compilerOptions, allowJs, allowSyntheticDefaultImports, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, jsx, lib (+10 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.14
-Nodes (13): MLTrainInput, MLTrainIn, MLDatasetService, test_build_dataset_without_lookahead(), test_ml_models_endpoint(), test_ml_predict_endpoint(), test_ml_train_endpoint(), test_ml_train_with_too_few_samples() (+5 more)
+Cohesion: 0.07
+Nodes (15): MLTrainInput, MLTrainIn, MLDatasetService, MLEngine, _now(), test_build_dataset_without_lookahead(), test_ml_models_endpoint(), test_ml_predict_endpoint() (+7 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.20
-Nodes (4): AlphaVantageProvider, AlphaVantageNewsProvider, _parse_time(), _symbol_sentiment()
+Cohesion: 0.19
+Nodes (5): AlphaVantageProvider, AlphaVantageNewsProvider, _parse_time(), _symbol_sentiment(), test_alpha_vantage_news_normalization()
 
 ### Community 20 - "Community 20"
 Cohesion: 0.18
 Nodes (14): ImpactLevel, NewsItem, NewsStatus, SentimentLabel, Filter, filters, impactTone, NewsPage() (+6 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.24
-Nodes (16): apiDelete(), apiGet(), apiPost(), BacktestResult, BacktestRunInput, BacktestStrategy, BacktestSummary, fetchErrorMessage() (+8 more)
+Cohesion: 0.23
+Nodes (17): apiDelete(), apiGet(), apiPost(), apiPut(), BacktestResult, BacktestRunInput, BacktestStrategy, BacktestSummary (+9 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.17
-Nodes (11): allocation, AssetType, backtestCurve, equityCurve, newsItems, portfolioPositions, Signal, signals (+3 more)
+Cohesion: 0.12
+Nodes (11): RiskProfileCreateIn, UIPerferencesOut, _now(), UserSettingsService, mock_db(), test_activate_profile(), test_active_risk_profile(), test_create_custom_profile() (+3 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.16
-Nodes (19): MetricCard(), MetricCardProps, tones, Panel(), PanelProps, DashboardResponse, DataRefreshResult, DataStatus (+11 more)
+Cohesion: 0.18
+Nodes (15): MetricCard(), MetricCardProps, tones, Panel(), PanelProps, DataRefreshResult, DataStatus, UniverseImportResult (+7 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.25
 Nodes (7): compilerOptions, allowSyntheticDefaultImports, composite, module, moduleResolution, skipLibCheck, include
 
 ### Community 27 - "Community 27"
-Cohesion: 0.39
-Nodes (8): Asset, OrderSimulationResponse, SimulatedOrderInput, assetTypeLabels, FormState, initialForm, OrderSide, SimulatorPage()
+Cohesion: 0.36
+Nodes (9): OrderSimulationResponse, PortfolioSummary, SimulatedOrder, SimulatedOrderInput, assetTypeLabels, FormState, initialForm, OrderSide (+1 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.40
-Nodes (4): AppShell(), AppShellProps, navItems, Sidebar()
+Cohesion: 0.08
+Nodes (25): apply_strategy_plan(), asset_data_status(), create_export(), create_optimizer_paper_orders(), delete_risk_profile(), get_asset_validated_signal(), get_backtest(), get_backup_detail() (+17 more)
 
 ### Community 46 - "Community 46"
-Cohesion: 0.09
-Nodes (22): Alert & Scheduler (Step 11), Analisi tecnica, Avvio backend, Avvio frontend, Backtest Engine, code:text (backend/), code:powershell (backend\.venv\Scripts\python.exe scripts\seed_database.py --), code:powershell (backend\.venv\Scripts\python.exe -m uvicorn backend.app.main) (+14 more)
+Cohesion: 0.08
+Nodes (26): Alert & Scheduler (Step 11), Analisi tecnica, Avvio backend, Avvio frontend, Backtest Engine, Backup & Data Management (Step 15), code:text (backend/), code:powershell (backend\.venv\Scripts\python.exe scripts\seed_database.py --) (+18 more)
 
 ### Community 47 - "Community 47"
 Cohesion: 0.16
 Nodes (12): OptimizationItemOut, OptimizationRunFullOut, OptimizationRunSummaryOut, OptimizerConfig, RebalanceOrderOut, SimulatedOrderIn, _now(), PortfolioOptimizerService (+4 more)
 
 ### Community 48 - "Community 48"
-Cohesion: 0.16
-Nodes (14): OperationalReport, OptimizationRunFull, OptimizationRunSummary, OptimizerConfig, PriceHistory, formatCurrency(), formatPercent(), AnalysisPage() (+6 more)
+Cohesion: 0.09
+Nodes (22): DashboardResponse, OperationalReport, OptimizationRunFull, OptimizationRunSummary, OptimizerConfig, ScenarioConfig, ScenarioRunFull, ScenarioRunSummary (+14 more)
 
 ### Community 49 - "Community 49"
 Cohesion: 0.18
 Nodes (12): StrategyPlanConfig, StrategyPlanFullOut, StrategyPlanItemOut, StrategyPlanOrderOut, StrategyPlanSummaryOut, _now(), StrategyControlService, test_apply_plan_creates_simulated_orders() (+4 more)
 
 ### Community 50 - "Community 50"
-Cohesion: 0.17
-Nodes (17): MarketSentiment, _asset_from_base_row(), _asset_from_row(), create_asset(), get_asset_by_symbol(), _latest_price_metadata(), _latest_price_metrics(), list_assets() (+9 more)
+Cohesion: 0.27
+Nodes (10): get_asset(), get_assets(), post_asset(), _asset_from_base_row(), create_asset(), get_asset_by_symbol(), _latest_price_metadata(), _latest_price_metrics() (+2 more)
 
 ### Community 51 - "Community 51"
 Cohesion: 0.24
@@ -218,45 +243,97 @@ Nodes (10): MLModelType, MLStatus, MLTargetType, MLTrainingRun, MLTrainResult, c
 Cohesion: 0.40
 Nodes (3): BaseNewsProvider, MockNewsProvider, test_mock_news_provider_returns_items()
 
+### Community 53 - "Community 53"
+Cohesion: 0.24
+Nodes (6): ProviderRegistry, SystemHealthOut, _now(), SystemHealthService, test_provider_registry(), test_system_health()
+
 ### Community 54 - "Community 54"
-Cohesion: 0.31
-Nodes (7): _csv(), from_env(), get_settings(), _unique(), test_api_cache_save_and_read(), test_api_rate_limit_guard(), test_alpha_vantage_news_normalization()
+Cohesion: 0.36
+Nodes (6): _csv(), from_env(), get_settings(), _unique(), test_api_cache_save_and_read(), test_api_rate_limit_guard()
 
 ### Community 55 - "Community 55"
-Cohesion: 0.67
-Nodes (4): ml_models(), MLModelSummary, MLModelDetailOut, MLModelSummaryOut
+Cohesion: 0.50
+Nodes (5): ml_model_detail(), ml_models(), MLModelSummary, MLModelDetailOut, MLModelSummaryOut
 
 ### Community 56 - "Community 56"
-Cohesion: 0.50
-Nodes (4): Enum, AlertSeverity, AlertStatus, OptimizationMethod
+Cohesion: 0.21
+Nodes (8): Enum, AlertSeverity, AlertStatus, AssetCreate, AssetOut, OptimizationMethod, ScenarioType, _asset_from_row()
 
 ### Community 57 - "Community 57"
-Cohesion: 0.67
-Nodes (3): get_universe_summary(), UniverseSummary, UniverseSummaryOut
+Cohesion: 0.14
+Nodes (11): CashTransferIn, CashTransferOut, ConsolidatedSummaryOut, PortfolioCloneIn, PortfolioCreateIn, PortfolioOut, PortfolioPerformanceComparisonOut, PortfolioUpdateIn (+3 more)
 
 ### Community 58 - "Community 58"
-Cohesion: 0.67
-Nodes (3): news_sentiment(), NewsSentimentSummary, NewsSentimentSummaryOut
+Cohesion: 0.46
+Nodes (7): Asset, NewsSentimentSummary, PriceHistory, AnalysisPage(), formatIndicator(), indicatorLabels, subscoreLabels
+
+### Community 63 - "Community 63"
+Cohesion: 0.20
+Nodes (9): ScenarioAssetImpactOut, ScenarioClassImpactOut, ScenarioRunSummaryOut, _now(), ScenarioService, test_custom_symbol_shock(), test_market_crash_scenario(), test_mitigation_suggestions() (+1 more)
+
+### Community 64 - "Community 64"
+Cohesion: 0.17
+Nodes (15): generate_strategy_plan(), get_active_portfolio(), get_buy_candidates(), get_excluded_candidates(), get_operational_ranking(), get_portfolio(), get_portfolio_actions(), get_portfolio_detail() (+7 more)
+
+### Community 67 - "Community 67"
+Cohesion: 0.33
+Nodes (4): _clamp(), _is_number(), Explainable technical scoring engine., ScoringEngine
+
+### Community 68 - "Community 68"
+Cohesion: 0.27
+Nodes (9): dashboard(), list_news(), news_for_symbol(), MarketSentiment, DashboardOut, NewsItemOut, get_dashboard(), _high_impact_news() (+1 more)
+
+### Community 70 - "Community 70"
+Cohesion: 0.33
+Nodes (8): get_signal(), get_signals(), SignalOut, get_signal_by_symbol(), _json_dict(), _json_list(), list_signals(), _signal_from_row()
+
+### Community 71 - "Community 71"
+Cohesion: 0.32
+Nodes (7): technical_analysis(), TechnicalAnalysis, TechnicalAnalysisOut, _safe_bool(), _safe_divide(), _safe_float(), get_technical_analysis()
+
+### Community 74 - "Community 74"
+Cohesion: 0.29
+Nodes (8): FastAPI Main App, Python Dependencies, Backend Service, Frontend Service, React Entry Point, InvestEdge Project, Machine Learning Module, Universe Manager
+
+### Community 75 - "Community 75"
+Cohesion: 0.25
+Nodes (7): name, private, scripts, build, dev, preview, version
+
+### Community 76 - "Community 76"
+Cohesion: 0.48
+Nodes (7): add_universe_watchlist(), get_universe(), get_universe_refresh_candidates(), promote_universe(), remove_universe_watchlist(), UniverseAsset, UniverseAssetOut
+
+### Community 77 - "Community 77"
+Cohesion: 0.43
+Nodes (5): type, test_create_backup(), test_export_json(), test_hardening_report(), test_restore_requires_confirm()
+
+### Community 78 - "Community 78"
+Cohesion: 0.33
+Nodes (6): dependencies, lucide-react, react, react-dom, react-router-dom, recharts
+
+### Community 79 - "Community 79"
+Cohesion: 0.50
+Nodes (4): ml_predict(), ml_predictions(), MLPrediction, MLPredictionOut
 
 ## Knowledge Gaps
-- **101 isolated node(s):** `allow`, `BeforeTool`, `name`, `private`, `version` (+96 more)
+- **129 isolated node(s):** `allow`, `BeforeTool`, `name`, `private`, `version` (+124 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **13 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `db_session()` connect `Community 0` to `Community 1`, `Community 2`, `Community 6`, `Community 8`, `Community 18`, `Community 52`, `Community 53`, `Community 54`, `Community 55`, `Community 57`, `Community 58`?**
-  _High betweenness centrality (0.180) - this node is a cross-community bridge._
-- **Why does `TechnicalAnalysis` connect `Community 8` to `Community 0`, `Community 5`, `Community 6`, `Community 9`, `Community 48`?**
-  _High betweenness centrality (0.091) - this node is a cross-community bridge._
-- **Why does `NewsEngine` connect `Community 2` to `Community 8`, `Community 14`?**
-  _High betweenness centrality (0.054) - this node is a cross-community bridge._
-- **Are the 96 inferred relationships involving `db_session()` (e.g. with `get_system_health()` and `get_system_audit()`) actually correct?**
-  _`db_session()` has 96 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 42 inferred relationships involving `str` (e.g. with `_database_file()` and `get_asset_validated_signal()`) actually correct?**
-  _`str` has 42 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 16 inferred relationships involving `PortfolioEngine` (e.g. with `AlertService` and `MarketDataService`) actually correct?**
-  _`PortfolioEngine` has 16 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `db_session()` connect `Community 0` to `Community 1`, `Community 2`, `Community 6`, `Community 8`, `Community 10`, `Community 18`, `Community 19`, `Community 28`, `Community 50`, `Community 52`, `Community 53`, `Community 54`, `Community 55`, `Community 64`, `Community 68`, `Community 70`, `Community 71`, `Community 76`, `Community 79`?**
+  _High betweenness centrality (0.141) - this node is a cross-community bridge._
+- **Why does `TechnicalAnalysis` connect `Community 71` to `Community 0`, `Community 65`, `Community 6`, `Community 7`, `Community 74`, `Community 58`?**
+  _High betweenness centrality (0.078) - this node is a cross-community bridge._
+- **Why does `UserSettingsService` connect `Community 22` to `Community 49`, `Community 13`, `Community 6`?**
+  _High betweenness centrality (0.062) - this node is a cross-community bridge._
+- **Are the 136 inferred relationships involving `db_session()` (e.g. with `get_system_health()` and `get_system_audit()`) actually correct?**
+  _`db_session()` has 136 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 61 inferred relationships involving `str` (e.g. with `_database_file()` and `get_asset_validated_signal()`) actually correct?**
+  _`str` has 61 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 19 inferred relationships involving `PortfolioEngine` (e.g. with `AlertService` and `MarketDataService`) actually correct?**
+  _`PortfolioEngine` has 19 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 8 inferred relationships involving `MLEngine` (e.g. with `MLDatasetService` and `UniverseService`) actually correct?**
   _`MLEngine` has 8 INFERRED edges - model-reasoned connections that need verification._

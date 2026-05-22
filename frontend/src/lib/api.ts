@@ -565,6 +565,111 @@ export type MLTrainResult = {
   warnings: string[];
 };
 
+export type TaxDashboardSnapshot = {
+  tax_year: number;
+  realized_pnl_ytd: number;
+  estimated_tax_due: number;
+  unrealized_pnl: number;
+};
+
+export type TaxSettings = {
+  id: number;
+  country_code: string;
+  tax_regime: string;
+  capital_gain_tax_rate: number;
+  crypto_tax_rate: number | null;
+  dividend_tax_rate: number | null;
+  lot_matching_method: string;
+  include_fees_in_cost_basis: boolean;
+  base_currency: string;
+  loss_carryforward_balance: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaxLot = {
+  id: number;
+  portfolio_id: number;
+  symbol: string;
+  buy_order_id: number;
+  buy_date: string;
+  quantity_initial: number;
+  quantity_remaining: number;
+  buy_price: number;
+  fees_allocated: number;
+  cost_basis: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaxRealizedEvent = {
+  id: number;
+  portfolio_id: number;
+  symbol: string;
+  sell_order_id: number;
+  buy_order_id: number | null;
+  sell_date: string;
+  quantity: number;
+  buy_price: number;
+  sell_price: number;
+  cost_basis: number;
+  proceeds: number;
+  fees: number;
+  realized_pnl: number;
+  tax_year: number;
+  tax_category: string;
+  created_at: string;
+};
+
+export type TaxSummary = {
+  portfolio_id: number;
+  tax_year: number;
+  country_code: string;
+  tax_regime: string;
+  total_realized_gains: number;
+  total_realized_losses: number;
+  net_realized_pnl: number;
+  estimated_tax_due: number;
+  unrealized_pnl: number;
+  loss_carryforward: number;
+  breakdown_by_asset_class: Record<string, number>;
+  breakdown_by_symbol: Record<string, number>;
+  warnings: string[];
+  disclaimer: string;
+};
+
+export type TaxSummaryGlobal = {
+  tax_year: number;
+  country_code: string;
+  tax_regime: string;
+  total_realized_gains: number;
+  total_realized_losses: number;
+  net_realized_pnl: number;
+  estimated_tax_due: number;
+  unrealized_pnl: number;
+  loss_carryforward: number;
+  portfolio_summaries: TaxSummary[];
+  warnings: string[];
+  disclaimer: string;
+};
+
+export type TaxReport = {
+  id: number;
+  portfolio_id: number | null;
+  tax_year: number;
+  report_type: string;
+  country_code: string;
+  tax_regime: string;
+  total_realized_gains: number;
+  total_realized_losses: number;
+  net_realized_pnl: number;
+  estimated_tax_due: number;
+  unrealized_pnl: number;
+  loss_carryforward: number;
+  summary_json: Record<string, unknown>;
+  created_at: string;
+};
+
 export type DashboardResponse = {
   initialized: boolean;
   message: string | null;
@@ -607,6 +712,7 @@ export type DashboardResponse = {
   hardening_report: HardeningReport | null;
   active_risk_profile: RiskProfile | null;
   active_strategy_profile: StrategyProfile | null;
+  tax_snapshot: TaxDashboardSnapshot | null;
 };
 
 export type PortfolioPosition = {
@@ -644,6 +750,7 @@ export type PortfolioSettings = {
   crypto_max_weight: number;
   min_cash_weight: number;
   max_cash_weight: number;
+  portfolio_type: string | null;
 };
 
 export type PortfolioSummary = {
@@ -1131,7 +1238,7 @@ export type StrategyProfileOut = StrategyProfile;
 export type NotificationPreferenceOut = NotificationPreference;
 export type UIPreferencesOut = UIPreferences;
 
-export type PortfolioType = "CORE" | "GROWTH" | "CRYPTO" | "DIVIDEND" | "SPECULATIVE" | "FAMILY" | "CUSTOM";
+export type PortfolioType = "CORE" | "GROWTH" | "CRYPTO" | "DIVIDEND" | "SPECULATIVE" | "FAMILY" | "CUSTOM" | "EXTERNAL_TRACKER";
 export type TransferType = "DEPOSIT" | "WITHDRAWAL" | "INTERNAL_TRANSFER";
 
 export type Portfolio = {
@@ -1214,6 +1321,61 @@ export type PortfolioPerformanceComparison = {
   best_performer: any | null;
   worst_performer: any | null;
   risk_comparison: any[];
+};
+
+export type GoogleSheetsStatus = {
+  enabled: boolean;
+  auth_mode: string;
+  credentials_configured: boolean;
+  token_exists: boolean;
+  spreadsheet_configured: boolean;
+  connection_ok: boolean;
+  available_ranges: string[];
+  message: string | null;
+};
+
+export type GoogleSheetsPreviewIn = {
+  import_type: "PORTFOLIO" | "TRANSACTIONS" | "CASH" | "WATCHLIST" | "MIXED";
+};
+
+export type GoogleSheetsPreviewOut = {
+  import_id: number;
+  rows_total: number;
+  rows_valid: number;
+  rows_invalid: number;
+  warnings: string[];
+  errors: string[];
+  preview_rows: any[];
+};
+
+export type GoogleSheetsImportConfirmIn = {
+  confirm: boolean;
+  mode: "PREVIEW_ONLY" | "CREATE_READONLY_PORTFOLIO" | "UPDATE_WATCHLIST";
+};
+
+export type ExternalImport = {
+  id: number;
+  import_name: string;
+  source_type: string;
+  import_type: string;
+  status: string;
+  import_mode: string;
+  rows_total: number;
+  rows_valid: number;
+  rows_invalid: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExternalImportDetail = ExternalImport & {
+  spreadsheet_id_hash?: string | null;
+  sheet_range?: string | null;
+  warnings: string[];
+  errors: string[];
+  positions: any[];
+  transactions: any[];
+  cash: any[];
+  watchlist: any[];
 };
 
 async function parseError(response: Response) {
@@ -1406,6 +1568,16 @@ export const api = {
   updateUiPreferences: (p: any) => apiPut<{ success: boolean }>("/settings/ui", p),
   dashboard: (portfolio_id?: number) => apiGet<DashboardResponse>(`/dashboard${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
 
+  // GOOGLE SHEETS
+  getGoogleSheetsStatus: () => apiGet<GoogleSheetsStatus>("/google-sheets/status"),
+  authorizeGoogleSheets: () => apiPost<{ success: boolean; message: string }>("/google-sheets/authorize", {}),
+  testGoogleSheetsConnection: () => apiPost<{ success: boolean; message: string }>("/google-sheets/test-connection", {}),
+  previewGoogleSheetsImport: (payload: GoogleSheetsPreviewIn) => apiPost<GoogleSheetsPreviewOut>("/google-sheets/preview", payload),
+  confirmGoogleSheetsImport: (import_id: number, payload: GoogleSheetsImportConfirmIn) => apiPost<any>(`/google-sheets/import/${import_id}/confirm`, payload),
+  listGoogleSheetsImports: () => apiGet<ExternalImport[]>("/google-sheets/imports"),
+  getGoogleSheetsImportDetail: (import_id: number) => apiGet<ExternalImportDetail>(`/google-sheets/imports/${import_id}`),
+  getGoogleSheetsTemplates: () => apiGet<Record<string, string[]>>("/google-sheets/templates"),
+
   // BACKUP
   getBackupStatus: () => apiGet<BackupStatus>("/backup/status"),
   createBackup: (snapshot_name?: string, note?: string) => apiPost<AppSnapshot>("/backup/create", { snapshot_name, note }),
@@ -1427,6 +1599,48 @@ export const api = {
   // HARDENING
   getHardeningReport: () => apiGet<HardeningReport>("/hardening/report"),
   runHardeningChecks: () => apiPost<HardeningReport>("/hardening/run", {}),
+
+  // TAX
+  getTaxSettings: () => apiGet<TaxSettings>("/tax/settings"),
+  updateTaxSettings: (payload: Partial<TaxSettings>) => apiPut<TaxSettings>("/tax/settings", payload),
+  getTaxSummary: (portfolio_id?: number, tax_year?: number) => {
+    const params = new URLSearchParams();
+    if (portfolio_id) params.set("portfolio_id", String(portfolio_id));
+    if (tax_year) params.set("tax_year", String(tax_year));
+    const q = params.toString();
+    return apiGet<TaxSummary>(`/tax/summary${q ? `?${q}` : ""}`);
+  },
+  getTaxSummaryGlobal: (tax_year?: number) =>
+    apiGet<TaxSummaryGlobal>(`/tax/summary/global${tax_year ? `?tax_year=${tax_year}` : ""}`),
+  getTaxLots: (portfolio_id?: number, symbol?: string) => {
+    const params = new URLSearchParams();
+    if (portfolio_id) params.set("portfolio_id", String(portfolio_id));
+    if (symbol) params.set("symbol", symbol);
+    const q = params.toString();
+    return apiGet<TaxLot[]>(`/tax/lots${q ? `?${q}` : ""}`);
+  },
+  getTaxRealizedEvents: (portfolio_id?: number, tax_year?: number, symbol?: string) => {
+    const params = new URLSearchParams();
+    if (portfolio_id) params.set("portfolio_id", String(portfolio_id));
+    if (tax_year) params.set("tax_year", String(tax_year));
+    if (symbol) params.set("symbol", symbol);
+    const q = params.toString();
+    return apiGet<TaxRealizedEvent[]>(`/tax/realized-events${q ? `?${q}` : ""}`);
+  },
+  recalculateTax: (payload: { portfolio_id?: number; tax_year?: number; method?: string }) =>
+    apiPost<{ portfolios_processed: number; method: string }>("/tax/recalculate", payload),
+  generateTaxReport: (payload: { tax_year: number; portfolio_id?: number; report_type?: string }) =>
+    apiPost<TaxReport>("/tax/report/generate", payload),
+  listTaxReports: (portfolio_id?: number, tax_year?: number) => {
+    const params = new URLSearchParams();
+    if (portfolio_id) params.set("portfolio_id", String(portfolio_id));
+    if (tax_year) params.set("tax_year", String(tax_year));
+    const q = params.toString();
+    return apiGet<TaxReport[]>(`/tax/reports${q ? `?${q}` : ""}`);
+  },
+  getTaxReport: (id: number) => apiGet<TaxReport>(`/tax/reports/${id}`),
+  exportTaxReport: (payload: { tax_year: number; portfolio_id?: number; format: string }) =>
+    apiPost<{ file_path: string; file_format: string; disclaimer: string }>("/tax/export", payload),
 
   // MARKET DATA
   getAssets: () => apiGet<Asset[]>("/assets"),

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS portfolios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     portfolio_name TEXT NOT NULL,
     description TEXT,
-    portfolio_type TEXT NOT NULL CHECK(portfolio_type IN ('CORE', 'GROWTH', 'CRYPTO', 'DIVIDEND', 'SPECULATIVE', 'FAMILY', 'CUSTOM')),
+    portfolio_type TEXT NOT NULL CHECK(portfolio_type IN ('CORE', 'GROWTH', 'CRYPTO', 'DIVIDEND', 'SPECULATIVE', 'FAMILY', 'CUSTOM', 'EXTERNAL_TRACKER')),
     base_currency TEXT NOT NULL DEFAULT 'USD',
     initial_cash REAL NOT NULL DEFAULT 0,
     current_cash REAL NOT NULL DEFAULT 0,
@@ -530,6 +530,200 @@ CREATE TABLE IF NOT EXISTS ui_preferences (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS tax_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    country_code TEXT NOT NULL DEFAULT 'IT',
+    tax_regime TEXT NOT NULL DEFAULT 'ITALY_SIMPLIFIED',
+    capital_gain_tax_rate REAL NOT NULL DEFAULT 26.0,
+    crypto_tax_rate REAL,
+    dividend_tax_rate REAL,
+    lot_matching_method TEXT NOT NULL DEFAULT 'FIFO' CHECK(lot_matching_method IN ('FIFO', 'LIFO', 'AVG_COST')),
+    include_fees_in_cost_basis INTEGER NOT NULL DEFAULT 1,
+    base_currency TEXT NOT NULL DEFAULT 'EUR',
+    loss_carryforward_balance REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tax_lots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    buy_order_id INTEGER NOT NULL,
+    buy_date TEXT NOT NULL,
+    quantity_initial REAL NOT NULL,
+    quantity_remaining REAL NOT NULL,
+    buy_price REAL NOT NULL,
+    fees_allocated REAL NOT NULL DEFAULT 0,
+    cost_basis REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE,
+    FOREIGN KEY(buy_order_id) REFERENCES simulated_orders(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tax_realized_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    sell_order_id INTEGER NOT NULL,
+    buy_order_id INTEGER,
+    sell_date TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    buy_price REAL NOT NULL,
+    sell_price REAL NOT NULL,
+    cost_basis REAL NOT NULL,
+    proceeds REAL NOT NULL,
+    fees REAL NOT NULL DEFAULT 0,
+    realized_pnl REAL NOT NULL,
+    tax_year INTEGER NOT NULL,
+    tax_category TEXT NOT NULL DEFAULT 'STOCK',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE,
+    FOREIGN KEY(sell_order_id) REFERENCES simulated_orders(id) ON DELETE CASCADE,
+    FOREIGN KEY(buy_order_id) REFERENCES simulated_orders(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS tax_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
+    tax_year INTEGER NOT NULL,
+    report_type TEXT NOT NULL CHECK(report_type IN ('PORTFOLIO', 'GLOBAL')),
+    country_code TEXT NOT NULL,
+    tax_regime TEXT NOT NULL,
+    total_realized_gains REAL NOT NULL DEFAULT 0,
+    total_realized_losses REAL NOT NULL DEFAULT 0,
+    net_realized_pnl REAL NOT NULL DEFAULT 0,
+    estimated_tax_due REAL NOT NULL DEFAULT 0,
+    unrealized_pnl REAL NOT NULL DEFAULT 0,
+    loss_carryforward REAL NOT NULL DEFAULT 0,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS external_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_name TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'GOOGLE_SHEETS_API',
+    import_type TEXT NOT NULL CHECK(import_type IN ('PORTFOLIO', 'TRANSACTIONS', 'CASH', 'WATCHLIST', 'MIXED')),
+    spreadsheet_id_hash TEXT,
+    sheet_range TEXT,
+    status TEXT NOT NULL DEFAULT 'PREVIEW' CHECK(status IN ('PREVIEW', 'VALIDATED', 'CONFIRMED', 'IMPORTED', 'FAILED')),
+    import_mode TEXT NOT NULL DEFAULT 'PREVIEW_ONLY' CHECK(import_mode IN ('PREVIEW_ONLY', 'CREATE_READONLY_PORTFOLIO', 'UPDATE_WATCHLIST')),
+    rows_total INTEGER NOT NULL DEFAULT 0,
+    rows_valid INTEGER NOT NULL DEFAULT 0,
+    rows_invalid INTEGER NOT NULL DEFAULT 0,
+    warnings_json TEXT,
+    errors_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS external_import_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    portfolio_name TEXT,
+    broker_name TEXT,
+    account_name TEXT,
+    symbol TEXT NOT NULL,
+    isin TEXT,
+    name TEXT,
+    asset_type TEXT,
+    quantity REAL NOT NULL,
+    average_price REAL,
+    current_price REAL,
+    currency TEXT DEFAULT 'USD',
+    exchange TEXT,
+    market_value REAL,
+    as_of_date TEXT,
+    mapped_asset_id INTEGER,
+    validation_status TEXT DEFAULT 'PENDING',
+    validation_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(import_id) REFERENCES external_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY(mapped_asset_id) REFERENCES assets(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_import_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    portfolio_name TEXT,
+    broker_name TEXT,
+    account_name TEXT,
+    transaction_date TEXT NOT NULL,
+    transaction_type TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    isin TEXT,
+    name TEXT,
+    asset_type TEXT,
+    quantity REAL NOT NULL,
+    price REAL,
+    gross_amount REAL,
+    fees REAL DEFAULT 0,
+    taxes REAL DEFAULT 0,
+    net_amount REAL,
+    currency TEXT DEFAULT 'USD',
+    exchange TEXT,
+    note TEXT,
+    mapped_asset_id INTEGER,
+    validation_status TEXT DEFAULT 'PENDING',
+    validation_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(import_id) REFERENCES external_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY(mapped_asset_id) REFERENCES assets(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_import_cash (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    portfolio_name TEXT,
+    broker_name TEXT,
+    account_name TEXT,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    cash_amount REAL NOT NULL,
+    as_of_date TEXT,
+    validation_status TEXT DEFAULT 'PENDING',
+    validation_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(import_id) REFERENCES external_imports(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS external_import_watchlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    isin TEXT,
+    name TEXT,
+    asset_type TEXT,
+    currency TEXT DEFAULT 'USD',
+    exchange TEXT,
+    sector TEXT,
+    country TEXT,
+    notes TEXT,
+    mapped_asset_id INTEGER,
+    validation_status TEXT DEFAULT 'PENDING',
+    validation_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(import_id) REFERENCES external_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY(mapped_asset_id) REFERENCES assets(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS symbol_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    source_symbol TEXT NOT NULL,
+    source_isin TEXT,
+    investedge_symbol TEXT NOT NULL,
+    asset_type TEXT,
+    exchange TEXT,
+    currency TEXT,
+    confidence REAL DEFAULT 1.0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_type, source_symbol)
+);
+
 CREATE TABLE IF NOT EXISTS api_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cache_key TEXT NOT NULL UNIQUE,
@@ -726,6 +920,18 @@ CREATE INDEX IF NOT EXISTS idx_ml_training_runs_created ON ml_training_runs(crea
 CREATE INDEX IF NOT EXISTS idx_asset_universe_level ON asset_universe(universe_level);
 CREATE INDEX IF NOT EXISTS idx_asset_universe_active_priority ON asset_universe(is_active, refresh_priority);
 CREATE INDEX IF NOT EXISTS idx_asset_universe_watchlist ON asset_universe(is_watchlisted, is_portfolio_asset);
+CREATE INDEX IF NOT EXISTS idx_tax_lots_portfolio ON tax_lots(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_tax_lots_symbol ON tax_lots(portfolio_id, symbol);
+CREATE INDEX IF NOT EXISTS idx_tax_realized_portfolio_year ON tax_realized_events(portfolio_id, tax_year);
+CREATE INDEX IF NOT EXISTS idx_tax_realized_symbol ON tax_realized_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_tax_reports_year ON tax_reports(tax_year);
+CREATE INDEX IF NOT EXISTS idx_tax_reports_portfolio ON tax_reports(portfolio_id, tax_year);
+CREATE INDEX IF NOT EXISTS idx_external_imports_status ON external_imports(status);
+CREATE INDEX IF NOT EXISTS idx_external_import_positions_import ON external_import_positions(import_id);
+CREATE INDEX IF NOT EXISTS idx_external_import_transactions_import ON external_import_transactions(import_id);
+CREATE INDEX IF NOT EXISTS idx_external_import_cash_import ON external_import_cash(import_id);
+CREATE INDEX IF NOT EXISTS idx_external_import_watchlist_import ON external_import_watchlist(import_id);
+CREATE INDEX IF NOT EXISTS idx_symbol_mappings_source ON symbol_mappings(source_type, source_symbol);
 """
 
 
@@ -814,6 +1020,12 @@ MIGRATIONS = {
         ("raw_json", "ALTER TABLE news_items ADD COLUMN raw_json TEXT"),
         ("updated_at", "ALTER TABLE news_items ADD COLUMN updated_at TEXT"),
     ],
+    "external_imports": [
+        ("import_name", "ALTER TABLE external_imports ADD COLUMN import_name TEXT"),
+    ],
+    "symbol_mappings": [
+        ("source_type", "ALTER TABLE symbol_mappings ADD COLUMN source_type TEXT"),
+    ],
 }
 
 
@@ -891,6 +1103,10 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_positions_portfolio ON portfolio_positions(portfolio_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_simulated_orders_portfolio ON simulated_orders(portfolio_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio ON portfolio_snapshots(portfolio_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_tax_lots_portfolio ON tax_lots(portfolio_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_tax_lots_symbol ON tax_lots(portfolio_id, symbol)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_tax_realized_portfolio_year ON tax_realized_events(portfolio_id, tax_year)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_tax_reports_portfolio ON tax_reports(portfolio_id, tax_year)")
 
     signal_schema = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'signals'"

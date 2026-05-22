@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { api, Portfolio, ConsolidatedSummary, PortfolioPerformanceComparison, PortfolioType, TransferType, RiskProfile, StrategyProfile } from "../lib/api";
+import { api, Portfolio, ConsolidatedSummary, PortfolioPerformanceComparison, PortfolioType, TransferType, RiskProfile, StrategyProfile, TaxSummary } from "../lib/api";
 import { 
   Wallet, Plus, Copy, Archive, TrendingUp, TrendingDown, 
   ArrowRightLeft, BarChart3, PieChart, Activity, Info,
@@ -15,6 +15,7 @@ export default function PortfolioManagerPage() {
   const [comparison, setComparison] = useState<PortfolioPerformanceComparison | null>(null);
   const [riskProfiles, setRiskProfiles] = useState<RiskProfile[]>([]);
   const [strategyProfiles, setStrategyProfiles] = useState<StrategyProfile[]>([]);
+  const [activeTaxSummary, setActiveTaxSummary] = useState<TaxSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -62,6 +63,16 @@ export default function PortfolioManagerPage() {
       setComparison(comp);
       setRiskProfiles(rp);
       setStrategyProfiles(sp);
+      const active = pList.find((p) => p.is_active);
+      if (active) {
+        try {
+          setActiveTaxSummary(await api.getTaxSummary(active.id));
+        } catch {
+          setActiveTaxSummary(null);
+        }
+      } else {
+        setActiveTaxSummary(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -200,6 +211,30 @@ export default function PortfolioManagerPage() {
       </div>
 
       {/* Tab: List */}
+      {activeTab === 'list' && activeTaxSummary && (
+        <Panel title="Riepilogo fiscale (portafoglio attivo)">
+          <p className="text-xs text-amber-200/80 mb-3">Simulazione indicativa — non consulenza fiscale.</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-slate-500 block text-xs">P/L realizzato</span>
+              <span className="font-mono text-white">{formatCurrency(activeTaxSummary.net_realized_pnl)}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-xs">Imposta stimata</span>
+              <span className="font-mono text-amber-200">{formatCurrency(activeTaxSummary.estimated_tax_due)}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-xs">Non realizzato</span>
+              <span className="font-mono text-slate-300">{formatCurrency(activeTaxSummary.unrealized_pnl)}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-xs">Anno</span>
+              <span className="font-mono text-slate-300">{activeTaxSummary.tax_year}</span>
+            </div>
+          </div>
+        </Panel>
+      )}
+
       {activeTab === 'list' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {portfolios.map((p) => (

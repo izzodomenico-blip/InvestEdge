@@ -20,6 +20,8 @@ import {
   Database,
   Settings,
   Wallet,
+  Calculator,
+  FileSpreadsheet,
   } from "lucide-react";
   import { NavLink } from "react-router-dom";
 
@@ -27,6 +29,7 @@ import {
   { to: "/", label: "Dashboard", icon: Gauge },
   { to: "/watchlist", label: "Watchlist", icon: Search },
   { to: "/portfolios", label: "Gestione Portafogli", icon: Wallet },
+  { to: "/google-sheets", label: "Google Sheets Import", icon: FileSpreadsheet },
   { to: "/portfolio", label: "Portafoglio Attivo", icon: BriefcaseBusiness },
   { to: "/simulator", label: "Simulatore", icon: Repeat2 },
   { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
@@ -36,6 +39,7 @@ import {
   { to: "/strategy", label: "Strategy Center", icon: Settings2 },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/backup", label: "Backup & Data", icon: Database },
+  { to: "/tax", label: "Tax Center", icon: Calculator },
   { to: "/alerts", label: "Alert Center", icon: Bell },
   { to: "/scheduler", label: "Operations", icon: Clock },
   { to: "/reports", label: "Report", icon: FileText },

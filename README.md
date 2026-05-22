@@ -2,7 +2,7 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, integrazione dati reali opzionale con cache, news/sentiment, Universe Manager, Machine Learning leggero, System Audit & Data Quality, Strategy Control Center, Alert & Scheduler, Portfolio Optimizer, Scenario Analysis e Backup & Data Management. Non include collegamenti reali a broker, ordini reali, deep learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, integrazione dati reali opzionale con cache, news/sentiment, Universe Manager, Machine Learning leggero, System Audit & Data Quality, Strategy Control Center, Alert & Scheduler, Portfolio Optimizer, Scenario Analysis, Backup & Data Management, User Settings, Tax Center e Google Sheets Import (read-only). Non include collegamenti reali a broker, ordini reali, deep learning, scraping non autorizzato o trading automatico.
 
 ## Struttura
 
@@ -107,6 +107,38 @@ InvestEdge si adatta al profilo dell'utente:
 - **Strategy Profiles**: Configura i parametri operativi per il ranking e l'optimizer (soglie BUY/SELL, frequenza ribilanciamento, stop loss).
 - **Personalizzazione Operativa**: Il sistema adatta automaticamente la validazione dei segnali e i piani strategici al profilo attivo.
 - **Notifiche & UI**: Gestione centralizzata delle preferenze di avviso e dell'interfaccia.
+
+## Tax Center / Fiscal Simulator (Step 18)
+
+Simulatore fiscale **teorico** su ordini paper e portafogli simulati (focus iniziale Italia semplificata):
+
+- Plusvalenze/minusvalenze realizzate, P/L non realizzato, imposta teorica su capital gain (default **26%** regime `ITALY_SIMPLIFIED`)
+- Lot matching **FIFO** semplificato (fees opzionali nel cost basis)
+- Report annuale per portafoglio o **GLOBAL** multi-portfolio
+- Export report fiscale **CSV/JSON**
+- Riepiloghi per asset class, simbolo e anno fiscale
+
+**Disclaimer:** simulazione indicativa. Non sostituisce commercialista o normativa fiscale ufficiale. Non genera dichiarazioni ufficiali.
+
+**Limitazioni v1:** dividendi non implementati; cripto/obbligazioni solo placeholder/warning; LIFO/AVG_COST non ancora operativi (solo FIFO).
+
+**Endpoint principali:** `GET/PUT /tax/settings`, `GET /tax/summary`, `GET /tax/summary/global`, `GET /tax/lots`, `GET /tax/realized-events`, `POST /tax/recalculate`, `POST /tax/report/generate`, `GET /tax/reports`, `POST /tax/export`.
+
+**UI:** pagina `/tax` (Tax Center) con impostazioni, summary, lots, eventi, report ed export.
+
+## Google Sheets API Read-Only Import (Step 19)
+
+InvestEdge supporta l'integrazione con Google Fogli per sincronizzare tracker esterni in modalità **Sola Lettura**:
+- **Tracker Sincronizzato**: Importa posizioni, transazioni storiche, liquidità e watchlist da un Google Sheet.
+- **Portafogli READ_ONLY**: Crea portafogli speciali di tipo `EXTERNAL_TRACKER` che riflettono lo stato del tracker reale (senza permettere ordini manuali diretti).
+- **OAuth Desktop Auth**: Utilizza il flusso OAuth 2.0 per applicazioni Desktop (non richiede Service Account).
+- **Template Flessibile**: Supporta tab `PORTFOLIO`, `TRANSACTIONS`, `CASH` e `WATCHLIST`.
+
+### Configurazione Rapida
+1. Ottieni un file `credentials.json` (OAuth Client ID Desktop) dalla Google Cloud Console.
+2. Salvalo in `backend/secrets/google_oauth_credentials.json`.
+3. Inserisci lo `SPREADSHEET_ID` nel file `.env`.
+4. Vai alla pagina **Google Sheets Import** nel frontend e clicca su **Autorizza**.
 
 ## Multi-Portfolio Simulation (Step 17)
 

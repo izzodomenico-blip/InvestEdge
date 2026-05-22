@@ -277,6 +277,10 @@ def _create_default_profiles(connection: sqlite3.Connection):
         (SEED_CREATED_AT, SEED_CREATED_AT)
     )
 
+    from backend.app.services.tax_service import TaxService
+
+    TaxService().ensure_default_settings(connection)
+
 
 def seed_database(reset: bool = False) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
@@ -426,6 +430,9 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         if reset:
             portfolio_summary = _create_demo_portfolio(connection)
             universe_service.sync_assets(connection, watchlist_symbols={asset["symbol"] for asset in ASSETS})
+            from backend.app.services.tax_service import TaxService
+
+            TaxService().recalculate(connection)
 
         universe_service.update_refresh_priority(connection)
         universe_summary = universe_service.get_summary(connection)

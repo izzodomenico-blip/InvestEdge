@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp, Scale, BriefcaseBusiness } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp, Scale, BriefcaseBusiness, Lock } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -173,8 +173,13 @@ export function PortfolioPage() {
              <span className="text-slate-600">•</span>
              <span className="text-slate-400">Portafoglio Attivo</span>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">
+          <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
              {summary.settings ? `Portfolio Simulator` : "Portafoglio"}
+             {summary.settings.portfolio_type === "EXTERNAL_TRACKER" && (
+               <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold uppercase border border-blue-500/30 flex items-center gap-1">
+                 <Lock size={10} /> Read Only
+               </span>
+             )}
           </h1>
           <p className="text-slate-500 text-sm mt-1">Gestione posizioni e analisi dei limiti di rischio.</p>
         </div>

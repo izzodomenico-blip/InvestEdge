@@ -49,7 +49,10 @@ class ExportService:
             "ALERTS": "alerts",
             "REPORTS": "operational_reports",
             "JOURNAL": "decision_journal",
-            "UNIVERSE": "asset_universe"
+            "UNIVERSE": "asset_universe",
+            "TAX_REPORTS": "tax_reports",
+            "TAX_LOTS": "tax_lots",
+            "TAX_EVENTS": "tax_realized_events",
         }
         
         table_name = table_map.get(export_type.upper())

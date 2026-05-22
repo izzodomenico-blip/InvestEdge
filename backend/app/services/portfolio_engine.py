@@ -438,6 +438,7 @@ class PortfolioEngine:
             crypto_max_weight=float(data["max_crypto_weight"]),
             min_cash_weight=float(data["min_cash_weight"]),
             max_cash_weight=float(data.get("max_cash_weight", 100.0)),
+            portfolio_type=data.get("portfolio_type"),
         )
 
     def list_positions(self, connection: sqlite3.Connection, portfolio_id: int) -> list[PortfolioPositionOut]:

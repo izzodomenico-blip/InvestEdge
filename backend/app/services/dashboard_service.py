@@ -37,6 +37,7 @@ from backend.app.services.scenario_service import ScenarioService
 from backend.app.services.backup_service import BackupService
 from backend.app.services.hardening_service import HardeningService
 from backend.app.services.user_settings_service import UserSettingsService
+from backend.app.services.tax_service import TaxService
 
 
 portfolio_engine = PortfolioEngine()
@@ -56,6 +57,7 @@ scenario_service = ScenarioService()
 backup_service = BackupService()
 hardening_service = HardeningService()
 settings_service = UserSettingsService()
+tax_service = TaxService()
 
 
 def get_dashboard(connection: sqlite3.Connection, portfolio_id: int | None = None) -> DashboardOut:
@@ -194,6 +196,7 @@ def get_dashboard(connection: sqlite3.Connection, portfolio_id: int | None = Non
             integrity_status="OK"
         ),
         hardening_report=hardening_service.run_checks(connection),
+        tax_snapshot=tax_service.get_dashboard_tax_snapshot(connection, portfolio_id),
     )
 
 

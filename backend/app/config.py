@@ -47,6 +47,15 @@ class Settings:
     news_cache_ttl_hours: int = 6
     news_daily_limit: int = 20
     news_sentiment_weight: int = 5
+    enable_google_sheets_import: bool = False
+    google_sheets_auth_mode: str = "oauth_desktop"
+    google_sheets_oauth_credentials_path: Path | None = None
+    google_sheets_token_path: Path | None = None
+    google_sheets_spreadsheet_id: str | None = None
+    google_sheets_portfolio_range: str = "PORTFOLIO!A:Z"
+    google_sheets_transactions_range: str = "TRANSACTIONS!A:Z"
+    google_sheets_cash_range: str = "CASH!A:Z"
+    google_sheets_watchlist_range: str = "WATCHLIST!A:Z"
 
     @property
     def database_url(self) -> str:
@@ -85,6 +94,15 @@ class Settings:
             news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
             news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
             news_sentiment_weight=int(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),
+            enable_google_sheets_import=os.getenv("ENABLE_GOOGLE_SHEETS_IMPORT", "false").lower() == "true",
+            google_sheets_auth_mode=os.getenv("GOOGLE_SHEETS_AUTH_MODE", "oauth_desktop"),
+            google_sheets_oauth_credentials_path=Path(os.getenv("GOOGLE_SHEETS_OAUTH_CREDENTIALS_PATH", "backend/secrets/google_oauth_credentials.json")),
+            google_sheets_token_path=Path(os.getenv("GOOGLE_SHEETS_TOKEN_PATH", "backend/secrets/google_token.json")),
+            google_sheets_spreadsheet_id=os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID") or None,
+            google_sheets_portfolio_range=os.getenv("GOOGLE_SHEETS_PORTFOLIO_RANGE", "PORTFOLIO!A:Z"),
+            google_sheets_transactions_range=os.getenv("GOOGLE_SHEETS_TRANSACTIONS_RANGE", "TRANSACTIONS!A:Z"),
+            google_sheets_cash_range=os.getenv("GOOGLE_SHEETS_CASH_RANGE", "CASH!A:Z"),
+            google_sheets_watchlist_range=os.getenv("GOOGLE_SHEETS_WATCHLIST_RANGE", "WATCHLIST!A:Z"),
         )
 
 

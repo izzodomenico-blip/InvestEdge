@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -96,6 +97,22 @@ from backend.app.models import (
     CashTransferOut,
     ConsolidatedSummaryOut,
     PortfolioPerformanceComparisonOut,
+    TaxSettingsOut,
+    TaxSettingsUpdateIn,
+    TaxLotOut,
+    TaxRealizedEventOut,
+    TaxSummaryOut,
+    TaxSummaryGlobalOut,
+    TaxReportOut,
+    TaxRecalculateIn,
+    TaxReportGenerateIn,
+    TaxExportIn,
+    GoogleSheetsStatusOut,
+    GoogleSheetsPreviewIn,
+    GoogleSheetsPreviewOut,
+    GoogleSheetsImportConfirmIn,
+    ExternalImportOut,
+    ExternalImportDetailOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
@@ -120,11 +137,14 @@ from backend.app.services.report_service import ReportService
 from backend.app.services.portfolio_optimizer_service import PortfolioOptimizerService
 from backend.app.services.scenario_service import ScenarioService
 from backend.app.services.backup_service import BackupService
+from backend.app.services.google_sheets_service import GoogleSheetsService
+from backend.app.services.google_tracker_import_service import GoogleTrackerImportService
 from backend.app.services.multi_portfolio_service import MultiPortfolioService
 from backend.app.services.export_service import ExportService
 from backend.app.services.import_service import ImportService
 from backend.app.services.hardening_service import HardeningService
 from backend.app.services.user_settings_service import UserSettingsService
+from backend.app.services.tax_service import TaxService
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
@@ -150,6 +170,9 @@ import_service = ImportService()
 hardening_service = HardeningService()
 user_settings_service = UserSettingsService()
 multi_portfolio_service = MultiPortfolioService()
+google_sheets_service = GoogleSheetsService()
+google_import_service = GoogleTrackerImportService()
+tax_service = TaxService()
 
 
 @router.get("/health")
@@ -509,6 +532,96 @@ def delete_scenario_run(scenario_id: int) -> dict[str, bool]:
         return {"success": scenario_service.delete_run(connection, scenario_id)}
 
 
+# -- GOOGLE SHEETS -----------------------------------------------------------
+@router.get("/google-sheets/status", response_model=GoogleSheetsStatusOut)
+def get_google_sheets_status() -> GoogleSheetsStatusOut:
+    return GoogleSheetsStatusOut(**google_sheets_service.get_status())
+
+
+@router.post("/google-sheets/authorize")
+def authorize_google_sheets():
+    try:
+        msg = google_sheets_service.authorize_desktop()
+        return {"success": True, "message": msg}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/google-sheets/test-connection")
+def test_google_sheets_connection():
+    try:
+        # Just try to read first row of Portfolio
+        settings = get_settings()
+        google_sheets_service.read_range(f"{settings.google_sheets_portfolio_range.split('!')[0]}!A1:B1")
+        return {"success": True, "message": "Connection OK"}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/google-sheets/preview", response_model=GoogleSheetsPreviewOut)
+def preview_google_sheets_import(payload: GoogleSheetsPreviewIn) -> GoogleSheetsPreviewOut:
+    with db_session() as connection:
+        try:
+            import_id = google_import_service.preview_import(connection, payload.import_type)
+            imp_detail = google_import_service.get_import(connection, import_id)
+            
+            # Extract preview rows based on type
+            preview_rows = []
+            if payload.import_type == "PORTFOLIO":
+                preview_rows = imp_detail["positions"][:10]
+            elif payload.import_type == "TRANSACTIONS":
+                preview_rows = imp_detail["transactions"][:10]
+            elif payload.import_type == "CASH":
+                preview_rows = imp_detail["cash"][:10]
+            elif payload.import_type == "WATCHLIST":
+                preview_rows = imp_detail["watchlist"][:10]
+                
+            return GoogleSheetsPreviewOut(
+                import_id=import_id,
+                rows_total=imp_detail["rows_total"],
+                rows_valid=imp_detail["rows_valid"],
+                rows_invalid=imp_detail["rows_invalid"],
+                warnings=imp_detail["warnings"],
+                errors=imp_detail["errors"],
+                preview_rows=preview_rows
+            )
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/google-sheets/import/{import_id}/confirm")
+def confirm_google_sheets_import(import_id: int, payload: GoogleSheetsImportConfirmIn):
+    if not payload.confirm:
+        return {"success": False, "message": "Import cancelled"}
+    
+    with db_session() as connection:
+        try:
+            return google_import_service.confirm_import(connection, import_id, payload.mode)
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/google-sheets/imports", response_model=list[ExternalImportOut])
+def list_google_sheets_imports() -> list[ExternalImportOut]:
+    with db_session() as connection:
+        return [ExternalImportOut(**item) for item in google_import_service.list_imports(connection)]
+
+
+@router.get("/google-sheets/imports/{import_id}", response_model=ExternalImportDetailOut)
+def get_google_sheets_import_detail(import_id: int) -> ExternalImportDetailOut:
+    with db_session() as connection:
+        try:
+            return ExternalImportDetailOut(**google_import_service.get_import(connection, import_id))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get("/google-sheets/templates")
+def get_google_sheets_templates():
+    from backend.app.services.google_tracker_import_service import EXPECTED_HEADERS
+    return EXPECTED_HEADERS
+
+
 # -- PORTFOLIOS --------------------------------------------------------------
 @router.get("/portfolios", response_model=list[PortfolioOut])
 def list_portfolios(include_archived: bool = Query(default=False)) -> list[PortfolioOut]:
@@ -657,7 +770,7 @@ def get_export_types() -> list[str]:
     return [
         "ASSETS", "PRICES", "PORTFOLIO", "ORDERS", "BACKTESTS", 
         "STRATEGY_PLANS", "OPTIMIZATIONS", "SCENARIOS", "ALERTS", 
-        "REPORTS", "JOURNAL", "UNIVERSE"
+        "REPORTS", "JOURNAL", "UNIVERSE", "TAX_REPORTS", "TAX_LOTS", "TAX_EVENTS"
     ]
 
 
@@ -791,6 +904,119 @@ def activate_strategy_profile(profile_id: int):
 def get_ui_preferences() -> UIPerferencesOut:
     with db_session() as connection:
         return user_settings_service.get_ui_preferences(connection)
+
+
+# -- TAX & FISCAL SIMULATOR ----------------------------------------------------
+@router.get("/tax/settings", response_model=TaxSettingsOut)
+def get_tax_settings() -> TaxSettingsOut:
+    with db_session() as connection:
+        return tax_service.get_tax_settings(connection)
+
+
+@router.put("/tax/settings", response_model=TaxSettingsOut)
+def update_tax_settings(payload: TaxSettingsUpdateIn) -> TaxSettingsOut:
+    with db_session() as connection:
+        return tax_service.update_tax_settings(connection, payload)
+
+
+@router.get("/tax/summary", response_model=TaxSummaryOut)
+def get_tax_summary(
+    portfolio_id: int | None = Query(default=None),
+    tax_year: int | None = Query(default=None),
+) -> TaxSummaryOut:
+    with db_session() as connection:
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return tax_service.calculate_tax_summary(connection, portfolio_id=portfolio_id, tax_year=tax_year)
+
+
+@router.get("/tax/summary/global", response_model=TaxSummaryGlobalOut)
+def get_tax_summary_global(tax_year: int | None = Query(default=None)) -> TaxSummaryGlobalOut:
+    with db_session() as connection:
+        return tax_service.calculate_multi_portfolio_tax_summary(connection, tax_year=tax_year)
+
+
+@router.get("/tax/lots", response_model=list[TaxLotOut])
+def get_tax_lots(
+    portfolio_id: int | None = Query(default=None),
+    symbol: str | None = Query(default=None),
+) -> list[TaxLotOut]:
+    with db_session() as connection:
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return tax_service.calculate_tax_lots(connection, portfolio_id=portfolio_id, symbol=symbol)
+
+
+@router.get("/tax/realized-events", response_model=list[TaxRealizedEventOut])
+def get_tax_realized_events(
+    portfolio_id: int | None = Query(default=None),
+    tax_year: int | None = Query(default=None),
+    symbol: str | None = Query(default=None),
+) -> list[TaxRealizedEventOut]:
+    with db_session() as connection:
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return tax_service.calculate_realized_events(
+            connection, portfolio_id=portfolio_id, tax_year=tax_year, symbol=symbol
+        )
+
+
+@router.post("/tax/recalculate")
+def recalculate_tax(payload: TaxRecalculateIn) -> dict[str, Any]:
+    with db_session() as connection:
+        try:
+            return tax_service.recalculate(
+                connection,
+                portfolio_id=payload.portfolio_id,
+                tax_year=payload.tax_year,
+                method=payload.method,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/tax/report/generate", response_model=TaxReportOut)
+def generate_tax_report(payload: TaxReportGenerateIn) -> TaxReportOut:
+    with db_session() as connection:
+        return tax_service.generate_tax_report(
+            connection,
+            tax_year=payload.tax_year,
+            portfolio_id=payload.portfolio_id,
+            report_type=payload.report_type,
+        )
+
+
+@router.get("/tax/reports", response_model=list[TaxReportOut])
+def list_tax_reports(
+    portfolio_id: int | None = Query(default=None),
+    tax_year: int | None = Query(default=None),
+) -> list[TaxReportOut]:
+    with db_session() as connection:
+        return tax_service.list_tax_reports(connection, portfolio_id=portfolio_id, tax_year=tax_year)
+
+
+@router.get("/tax/reports/{report_id}", response_model=TaxReportOut)
+def get_tax_report(report_id: int) -> TaxReportOut:
+    with db_session() as connection:
+        try:
+            return tax_service.get_tax_report(connection, report_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/tax/export")
+def export_tax_report(payload: TaxExportIn) -> dict[str, Any]:
+    with db_session() as connection:
+        if payload.portfolio_id is None:
+            payload_portfolio = None
+        else:
+            payload_portfolio = payload.portfolio_id
+        return tax_service.export_tax_report(
+            connection,
+            tax_year=payload.tax_year,
+            portfolio_id=payload_portfolio,
+            file_format=payload.format,
+        )
 
 
 @router.get("/assets", response_model=list[AssetOut])

@@ -22,6 +22,8 @@ import { ScenarioAnalysisPage } from "./pages/ScenarioAnalysisPage";
 import { BackupManagementPage } from "./pages/BackupManagementPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import PortfolioManagerPage from "./pages/PortfolioManagerPage";
+import GoogleSheetsImportPage from "./pages/GoogleSheetsImportPage";
+import { TaxCenterPage } from "./pages/TaxCenterPage";
 
 export default function App() {
   return (
@@ -29,7 +31,10 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/portfolios" element={<PortfolioManagerPage />} />
+        <Route path="/google-sheets" element={<GoogleSheetsImportPage />} />
+        <Route path="/tax" element={<TaxCenterPage />} />
         <Route path="/watchlist" element={<WatchlistPage />} />
+
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/simulator" element={<SimulatorPage />} />
         <Route path="/analysis" element={<AnalysisPage />} />
@@ -41,6 +46,7 @@ export default function App() {
         <Route path="/scenarios" element={<ScenarioAnalysisPage />} />
         <Route path="/backup" element={<BackupManagementPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/tax" element={<TaxCenterPage />} />
         <Route path="/alerts" element={<AlertCenterPage />} />
         <Route path="/scheduler" element={<SchedulerPage />} />
         <Route path="/reports" element={<ReportsPage />} />

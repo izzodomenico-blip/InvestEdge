@@ -118,6 +118,11 @@ export function ReportsPage() {
         <div className="lg:col-span-3 space-y-6">
           {selectedReport ? (
             <>
+              {selectedReport.markdown_text?.includes("Riepilogo Fiscale") && (
+                <p className="text-xs text-amber-200/80 rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                  Include riepilogo fiscale simulato (non consulenza ufficiale).
+                </p>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <ReportSummaryTile label="Qualità Dati" value={`${selectedReport.summary.data_quality_avg}%`} />
                 <ReportSummaryTile label="Asset BUY" value={selectedReport.summary.buy_candidates_count} />

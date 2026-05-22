@@ -60,7 +60,23 @@ class ReportService:
         )
 
         title = f"Report Operativo {report_type} ({portfolio_name}) - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        markdown = self._build_markdown(title, summary, ranking, portfolio, portfolio_id)
+        tax_note: dict[str, Any] | None = None
+        try:
+            from backend.app.services.tax_service import TaxService
+
+            tax_svc = TaxService()
+            tax_svc.ensure_default_settings(connection)
+            year = datetime.now().year
+            if portfolio_id:
+                tax_summary = tax_svc.calculate_tax_summary(connection, portfolio_id=portfolio_id, tax_year=year)
+                tax_note = tax_summary.model_dump()
+            else:
+                tax_summary = tax_svc.calculate_multi_portfolio_tax_summary(connection, tax_year=year)
+                tax_note = tax_summary.model_dump()
+        except Exception:
+            tax_note = None
+
+        markdown = self._build_markdown(title, summary, ranking, portfolio, portfolio_id, tax_note)
 
         cursor = connection.execute(
             """
@@ -114,7 +130,15 @@ class ReportService:
             raise ValueError(f"Report {report_id} not found")
         return self._row_to_report(row)
 
-    def _build_markdown(self, title: str, summary: OperationalReportSummary, ranking: Any, portfolio: Any, portfolio_id: int | None) -> str:
+    def _build_markdown(
+        self,
+        title: str,
+        summary: OperationalReportSummary,
+        ranking: Any,
+        portfolio: Any,
+        portfolio_id: int | None,
+        tax_note: dict[str, Any] | None = None,
+    ) -> str:
         md = f"# {title}\n\n"
         md += "## Stato Sistema\n"
         md += f"- **Health**: {summary.system_health['status'].upper()}\n"
@@ -140,6 +164,14 @@ class ReportService:
             md += f"- **Valore Consolidato**: {portfolio.total_value:,.2f}\n"
             md += f"- **Cash Totale**: {portfolio.total_cash:,.2f}\n"
             md += f"- **Portafogli inclusi**: {portfolio.portfolios_count}\n"
+
+        if tax_note:
+            md += "\n## Riepilogo Fiscale (Simulato)\n"
+            md += f"- **Anno**: {tax_note.get('tax_year', datetime.now().year)}\n"
+            md += f"- **P/L realizzato netto**: {tax_note.get('net_realized_pnl', 0):,.2f}\n"
+            md += f"- **Imposta teorica stimata**: {tax_note.get('estimated_tax_due', 0):,.2f}\n"
+            md += f"- **P/L non realizzato**: {tax_note.get('unrealized_pnl', 0):,.2f}\n"
+            md += "_Simulazione indicativa, non sostituisce consulenza fiscale._\n"
 
         return md
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Calculator, CheckCircle2, Play, RefreshCw } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Play, RefreshCw, Info } from "lucide-react";
 
 import { Panel } from "../components/Panel";
 import {
@@ -87,7 +87,10 @@ export function SimulatorPage() {
   const fees = grossAmount * (Number(form.fees) / 100);
   const netAmount = form.order_type === "BUY" ? grossAmount + fees : grossAmount - fees;
 
+  const isReadOnly = useMemo(() => portfolio?.settings?.portfolio_type === "EXTERNAL_TRACKER", [portfolio]);
+
   const validationError = useMemo(() => {
+    if (isReadOnly) return "Portafoglio importato in sola lettura. Clonalo in un paper portfolio per simulare operazioni.";
     if (!form.symbol) return "Seleziona un asset.";
     if (quantity <= 0) return "La quantità deve essere maggiore di zero.";
     if (effectivePrice <= 0) return "Il prezzo deve essere maggiore di zero.";
@@ -176,7 +179,20 @@ export function SimulatorPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="Nuovo ordine simulato" icon={<Play className="h-4 w-4 text-cyan-400" />}>
-          <form onSubmit={submitOrder} className="space-y-6">
+          {isReadOnly && (
+            <div className="mb-6 p-4 bg-blue-900/20 border border-blue-800 rounded-lg flex items-start gap-3">
+              <Info className="h-5 w-5 text-blue-400 shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-blue-200">Modalità Sola Lettura</p>
+                <p className="text-xs text-blue-300/80 mt-1">
+                  Questo portafoglio è sincronizzato con Google Sheets. 
+                  Per simulare nuovi ordini, vai alla gestione portafogli e usa la funzione "Clona" 
+                  per creare una copia Paper Trading modificabile.
+                </p>
+              </div>
+            </div>
+          )}
+          <form onSubmit={submitOrder} className={`space-y-6 ${isReadOnly ? 'opacity-50 pointer-events-none' : ''}`}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Asset</label>

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
-PortfolioType = Literal["CORE", "GROWTH", "CRYPTO", "DIVIDEND", "SPECULATIVE", "FAMILY", "CUSTOM"]
+PortfolioType = Literal["CORE", "GROWTH", "CRYPTO", "DIVIDEND", "SPECULATIVE", "FAMILY", "CUSTOM", "EXTERNAL_TRACKER"]
 TransferType = Literal["DEPOSIT", "WITHDRAWAL", "INTERNAL_TRANSFER"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
@@ -697,6 +697,141 @@ class UIPerferencesUpdateIn(BaseModel):
     default_currency: str | None = None
 
 
+class TaxDashboardSnapshotOut(BaseModel):
+    tax_year: int
+    realized_pnl_ytd: float
+    estimated_tax_due: float
+    unrealized_pnl: float
+
+
+class TaxSettingsOut(BaseModel):
+    id: int
+    country_code: str
+    tax_regime: str
+    capital_gain_tax_rate: float
+    crypto_tax_rate: float | None = None
+    dividend_tax_rate: float | None = None
+    lot_matching_method: str
+    include_fees_in_cost_basis: bool
+    base_currency: str
+    loss_carryforward_balance: float = 0
+    created_at: str
+    updated_at: str
+
+
+class TaxSettingsUpdateIn(BaseModel):
+    country_code: str | None = None
+    tax_regime: str | None = None
+    capital_gain_tax_rate: float | None = Field(default=None, ge=0, le=100)
+    crypto_tax_rate: float | None = Field(default=None, ge=0, le=100)
+    dividend_tax_rate: float | None = Field(default=None, ge=0, le=100)
+    lot_matching_method: str | None = None
+    include_fees_in_cost_basis: bool | None = None
+    base_currency: str | None = None
+    loss_carryforward_balance: float | None = None
+
+
+class TaxLotOut(BaseModel):
+    id: int
+    portfolio_id: int
+    symbol: str
+    buy_order_id: int
+    buy_date: str
+    quantity_initial: float
+    quantity_remaining: float
+    buy_price: float
+    fees_allocated: float
+    cost_basis: float
+    created_at: str
+    updated_at: str
+
+
+class TaxRealizedEventOut(BaseModel):
+    id: int
+    portfolio_id: int
+    symbol: str
+    sell_order_id: int
+    buy_order_id: int | None
+    sell_date: str
+    quantity: float
+    buy_price: float
+    sell_price: float
+    cost_basis: float
+    proceeds: float
+    fees: float
+    realized_pnl: float
+    tax_year: int
+    tax_category: str
+    created_at: str
+
+
+class TaxSummaryOut(BaseModel):
+    portfolio_id: int
+    tax_year: int
+    country_code: str
+    tax_regime: str
+    total_realized_gains: float
+    total_realized_losses: float
+    net_realized_pnl: float
+    estimated_tax_due: float
+    unrealized_pnl: float
+    loss_carryforward: float
+    breakdown_by_asset_class: dict[str, float] = Field(default_factory=dict)
+    breakdown_by_symbol: dict[str, float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    disclaimer: str
+
+
+class TaxSummaryGlobalOut(BaseModel):
+    tax_year: int
+    country_code: str
+    tax_regime: str
+    total_realized_gains: float
+    total_realized_losses: float
+    net_realized_pnl: float
+    estimated_tax_due: float
+    unrealized_pnl: float
+    loss_carryforward: float
+    portfolio_summaries: list[TaxSummaryOut] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    disclaimer: str
+
+
+class TaxReportOut(BaseModel):
+    id: int
+    portfolio_id: int | None
+    tax_year: int
+    report_type: str
+    country_code: str
+    tax_regime: str
+    total_realized_gains: float
+    total_realized_losses: float
+    net_realized_pnl: float
+    estimated_tax_due: float
+    unrealized_pnl: float
+    loss_carryforward: float
+    summary_json: dict[str, Any] | list[Any] | str
+    created_at: str
+
+
+class TaxRecalculateIn(BaseModel):
+    portfolio_id: int | None = None
+    tax_year: int | None = None
+    method: str = "FIFO"
+
+
+class TaxReportGenerateIn(BaseModel):
+    portfolio_id: int | None = None
+    tax_year: int
+    report_type: str = "PORTFOLIO"
+
+
+class TaxExportIn(BaseModel):
+    portfolio_id: int | None = None
+    tax_year: int
+    format: str = "json"
+
+
 class DashboardOut(BaseModel):
     initialized: bool
     message: str | None = None
@@ -735,6 +870,7 @@ class DashboardOut(BaseModel):
     latest_operational_report: OperationalReportOut | None = None
     latest_optimization_run: OptimizationRunSummaryOut | None = None
     latest_scenario_run: ScenarioRunSummaryOut | None = None
+    tax_snapshot: TaxDashboardSnapshotOut | None = None
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -792,6 +928,7 @@ class PortfolioSettingsOut(BaseModel):
     crypto_max_weight: float
     min_cash_weight: float
     max_cash_weight: float
+    portfolio_type: str | None = None
 
 
 class RiskWarningOut(BaseModel):
@@ -1353,6 +1490,61 @@ class PortfolioPerformanceComparisonOut(BaseModel):
     best_performer: dict[str, Any] | None = None
     worst_performer: dict[str, Any] | None = None
     risk_comparison: list[dict[str, Any]]
+
+
+class GoogleSheetsStatusOut(BaseModel):
+    enabled: bool
+    auth_mode: str
+    credentials_configured: bool
+    token_exists: bool
+    spreadsheet_configured: bool
+    connection_ok: bool
+    available_ranges: list[str] = Field(default_factory=list)
+    message: str | None = None
+
+
+class GoogleSheetsPreviewIn(BaseModel):
+    import_type: Literal["PORTFOLIO", "TRANSACTIONS", "CASH", "WATCHLIST", "MIXED"]
+
+
+class GoogleSheetsPreviewOut(BaseModel):
+    import_id: int
+    rows_total: int
+    rows_valid: int
+    rows_invalid: int
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    preview_rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class GoogleSheetsImportConfirmIn(BaseModel):
+    confirm: bool
+    mode: Literal["PREVIEW_ONLY", "CREATE_READONLY_PORTFOLIO", "UPDATE_WATCHLIST"]
+
+
+class ExternalImportOut(BaseModel):
+    id: int
+    import_name: str
+    source_type: str
+    import_type: str
+    status: str
+    import_mode: str
+    rows_total: int
+    rows_valid: int
+    rows_invalid: int
+    created_at: str
+    updated_at: str
+
+
+class ExternalImportDetailOut(ExternalImportOut):
+    spreadsheet_id_hash: str | None = None
+    sheet_range: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+    transactions: list[dict[str, Any]] = Field(default_factory=list)
+    cash: list[dict[str, Any]] = Field(default_factory=list)
+    watchlist: list[dict[str, Any]] = Field(default_factory=list)
 
 
 DashboardOut.model_rebuild()

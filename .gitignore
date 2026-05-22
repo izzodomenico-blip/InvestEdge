@@ -19,3 +19,7 @@ frontend/.vite/
 .backend.err.log
 .frontend.log
 .frontend.err.log
+
+backend/secrets/
+backend/.env
+*.env
