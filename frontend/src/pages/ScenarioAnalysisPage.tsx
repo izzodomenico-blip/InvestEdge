@@ -54,8 +54,11 @@ export function ScenarioAnalysisPage() {
   async function loadInitialData() {
     setLoading(true);
     try {
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
       const [runsData, defaultConfig, presetsData] = await Promise.all([
-        api.listScenarioRuns(),
+        api.listScenarioRuns(pId),
         api.getDefaultScenarioConfig(),
         api.getScenarioPresets()
       ]);
@@ -78,9 +81,12 @@ export function ScenarioAnalysisPage() {
     setRunning(true);
     setError(null);
     try {
-      const result = await api.runScenarioAnalysis(config);
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
+      const result = await api.runScenarioAnalysis(config, pId);
       setSelectedRun(result);
-      setRuns(await api.listScenarioRuns());
+      setRuns(await api.listScenarioRuns(pId));
       setShowConfig(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante lo stress test.");
@@ -162,7 +168,7 @@ export function ScenarioAnalysisPage() {
                   type="text" 
                   value={config.scenario_name} 
                   onChange={e => setConfig({...config, scenario_name: e.target.value})}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm text-white"
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div className="space-y-1">
@@ -170,7 +176,7 @@ export function ScenarioAnalysisPage() {
                 <select 
                   value={config.scenario_type} 
                   onChange={e => setConfig({...config, scenario_type: e.target.value as any})}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm text-white"
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {presets.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
@@ -180,7 +186,7 @@ export function ScenarioAnalysisPage() {
                 <select 
                   value={config.portfolio_source} 
                   onChange={e => setConfig({...config, portfolio_source: e.target.value as any})}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm text-white"
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="CURRENT_PORTFOLIO">Portafoglio Attuale</option>
                   <option value="LATEST_OPTIMIZED_PORTFOLIO">Ultimo Ottimizzato</option>
@@ -201,7 +207,7 @@ export function ScenarioAnalysisPage() {
                         ...config, 
                         asset_class_shocks: { ...config.asset_class_shocks, [cls]: parseFloat(e.target.value) }
                       })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white"
+                      className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white"
                     />
                   </div>
                 ))}
@@ -217,7 +223,7 @@ export function ScenarioAnalysisPage() {
                   <select 
                     value={config.confidence_level} 
                     onChange={e => setConfig({...config, confidence_level: parseInt(e.target.value) as any})}
-                    className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm text-white"
+                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value={95}>95%</option>
                     <option value={99}>99%</option>

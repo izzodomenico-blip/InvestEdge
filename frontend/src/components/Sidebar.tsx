@@ -4,7 +4,6 @@ import {
   BriefcaseBusiness,
   BrainCircuit,
   CandlestickChart,
-  Database,
   Gauge,
   Layers3,
   Newspaper,
@@ -18,29 +17,34 @@ import {
   FileText,
   Scale,
   ShieldAlert,
-} from "lucide-react";
-import { NavLink } from "react-router-dom";
+  Database,
+  Settings,
+  Wallet,
+  } from "lucide-react";
+  import { NavLink } from "react-router-dom";
 
-const navItems = [
+  const navItems = [
   { to: "/", label: "Dashboard", icon: Gauge },
   { to: "/watchlist", label: "Watchlist", icon: Search },
-  { to: "/portfolio", label: "Portafoglio", icon: BriefcaseBusiness },
+  { to: "/portfolios", label: "Gestione Portafogli", icon: Wallet },
+  { to: "/portfolio", label: "Portafoglio Attivo", icon: BriefcaseBusiness },
   { to: "/simulator", label: "Simulatore", icon: Repeat2 },
   { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
   { to: "/ranking", label: "Ranking", icon: TrendingUp },
   { to: "/optimizer", label: "Optimizer", icon: Scale },
   { to: "/scenarios", label: "Stress Test", icon: ShieldAlert },
   { to: "/strategy", label: "Strategy Center", icon: Settings2 },
+  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/backup", label: "Backup & Data", icon: Database },
   { to: "/alerts", label: "Alert Center", icon: Bell },
   { to: "/scheduler", label: "Operations", icon: Clock },
   { to: "/reports", label: "Report", icon: FileText },
   { to: "/audit", label: "Audit", icon: ShieldCheck },
   { to: "/news", label: "News", icon: Newspaper },
   { to: "/backtest", label: "Backtest", icon: BarChart3 },
-  { to: "/data", label: "Dati", icon: Database },
   { to: "/universe", label: "Universe", icon: Layers3 },
   { to: "/ml", label: "AI Lab", icon: BrainCircuit },
-];
+  ];
 
 export function Sidebar() {
   return (

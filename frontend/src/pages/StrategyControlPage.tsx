@@ -24,7 +24,7 @@ import { formatCurrency, formatPercent } from "../lib/format";
 
 export function StrategyControlPage() {
   const [plans, setPlans] = useState<StrategyPlanSummary[]>([]);
-  const [selectedPlan, setSelectedSymbol] = useState<StrategyPlanFull | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<StrategyPlanFull | null>(null);
   const [config, setConfig] = useState<StrategyPlanConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -35,8 +35,11 @@ export function StrategyControlPage() {
   async function loadInitialData() {
     setLoading(true);
     try {
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
       const [plansData, defaultConfig] = await Promise.all([
-        api.listStrategyPlans(),
+        api.listStrategyPlans(pId),
         api.getDefaultStrategyConfig(),
       ]);
       setPlans(plansData);
@@ -57,9 +60,12 @@ export function StrategyControlPage() {
     setGenerating(true);
     setError(null);
     try {
-      const result = await api.generateStrategyPlan(config);
-      setSelectedSymbol(result);
-      setPlans(await api.listStrategyPlans());
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
+      const result = await api.generateStrategyPlan(config, pId);
+      setSelectedPlan(result);
+      setPlans(await api.listStrategyPlans(pId));
       setShowConfig(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante la generazione del piano.");
@@ -73,7 +79,7 @@ export function StrategyControlPage() {
     setApplying(true);
     try {
       await api.applyStrategyPlan(id);
-      setSelectedSymbol(await api.getStrategyPlan(id));
+      setSelectedPlan(await api.getStrategyPlan(id));
       alert("Piano applicato con successo!");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante l'applicazione del piano.");
@@ -87,7 +93,7 @@ export function StrategyControlPage() {
     try {
       await api.deleteStrategyPlan(id);
       setPlans(plans.filter(p => p.id !== id));
-      if (selectedPlan?.summary.id === id) setSelectedSymbol(null);
+      if (selectedPlan?.summary.id === id) setSelectedPlan(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante l'eliminazione.");
     }
@@ -96,7 +102,7 @@ export function StrategyControlPage() {
   async function handleSelectPlan(id: number) {
     setLoading(true);
     try {
-      setSelectedSymbol(await api.getStrategyPlan(id));
+      setSelectedPlan(await api.getStrategyPlan(id));
       setShowConfig(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il caricamento del piano.");

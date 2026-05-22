@@ -10,6 +10,37 @@ from backend.app.config import get_settings
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS portfolios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_name TEXT NOT NULL,
+    description TEXT,
+    portfolio_type TEXT NOT NULL CHECK(portfolio_type IN ('CORE', 'GROWTH', 'CRYPTO', 'DIVIDEND', 'SPECULATIVE', 'FAMILY', 'CUSTOM')),
+    base_currency TEXT NOT NULL DEFAULT 'USD',
+    initial_cash REAL NOT NULL DEFAULT 0,
+    current_cash REAL NOT NULL DEFAULT 0,
+    risk_profile_id INTEGER,
+    strategy_profile_id INTEGER,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(risk_profile_id) REFERENCES risk_profiles(id) ON DELETE SET NULL,
+    FOREIGN KEY(strategy_profile_id) REFERENCES strategy_profiles(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_cash_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_portfolio_id INTEGER,
+    to_portfolio_id INTEGER,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    transfer_type TEXT NOT NULL CHECK(transfer_type IN ('DEPOSIT', 'WITHDRAWAL', 'INTERNAL_TRANSFER')),
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(from_portfolio_id) REFERENCES portfolios(id) ON DELETE SET NULL,
+    FOREIGN KEY(to_portfolio_id) REFERENCES portfolios(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
@@ -46,6 +77,7 @@ CREATE TABLE IF NOT EXISTS price_history (
 
 CREATE TABLE IF NOT EXISTS portfolio_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     asset_id INTEGER NOT NULL,
     symbol TEXT,
     quantity REAL NOT NULL,
@@ -62,11 +94,13 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
     opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     notes TEXT,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS simulated_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     asset_id INTEGER NOT NULL,
     symbol TEXT,
     order_type TEXT CHECK(order_type IN ('BUY', 'SELL')),
@@ -83,11 +117,13 @@ CREATE TABLE IF NOT EXISTS simulated_orders (
     status TEXT NOT NULL DEFAULT 'SIMULATED',
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     notes TEXT,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     snapshot_date TEXT NOT NULL,
     total_value REAL NOT NULL DEFAULT 0,
     invested_value REAL NOT NULL DEFAULT 0,
@@ -96,7 +132,8 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     unrealized_pnl REAL NOT NULL DEFAULT 0,
     total_pnl REAL NOT NULL DEFAULT 0,
     total_pnl_percent REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_settings (
@@ -155,6 +192,7 @@ CREATE TABLE IF NOT EXISTS news_items (
 
 CREATE TABLE IF NOT EXISTS strategy_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     plan_name TEXT NOT NULL,
     strategy_mode TEXT NOT NULL CHECK(strategy_mode IN ('CONSERVATIVE', 'BALANCED', 'AGGRESSIVE')),
     universe_level TEXT NOT NULL,
@@ -165,7 +203,8 @@ CREATE TABLE IF NOT EXISTS strategy_plans (
     estimated_orders_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'DRAFT',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS strategy_plan_items (
@@ -205,6 +244,7 @@ CREATE TABLE IF NOT EXISTS strategy_plan_orders (
 
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     alert_type TEXT NOT NULL,
     severity TEXT NOT NULL CHECK(severity IN ('INFO', 'WARNING', 'CRITICAL')),
     symbol TEXT,
@@ -216,7 +256,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     acknowledged_at TEXT,
-    closed_at TEXT
+    closed_at TEXT,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS alert_rules (
@@ -247,16 +288,19 @@ CREATE TABLE IF NOT EXISTS scheduler_runs (
 
 CREATE TABLE IF NOT EXISTS operational_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     report_type TEXT NOT NULL CHECK(report_type IN ('DAILY', 'WEEKLY', 'MANUAL')),
     report_date TEXT NOT NULL,
     title TEXT NOT NULL,
     summary_json TEXT,
     markdown_text TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_optimization_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     run_name TEXT NOT NULL,
     optimization_method TEXT NOT NULL,
     universe_source TEXT NOT NULL,
@@ -269,7 +313,8 @@ CREATE TABLE IF NOT EXISTS portfolio_optimization_runs (
     estimated_fees REAL NOT NULL DEFAULT 0,
     estimated_turnover_percent REAL NOT NULL DEFAULT 0,
     risk_summary_json TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_optimization_items (
@@ -309,6 +354,7 @@ CREATE TABLE IF NOT EXISTS portfolio_rebalance_orders (
 
 CREATE TABLE IF NOT EXISTS scenario_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER,
     scenario_name TEXT NOT NULL,
     scenario_type TEXT NOT NULL,
     portfolio_source TEXT NOT NULL,
@@ -319,7 +365,8 @@ CREATE TABLE IF NOT EXISTS scenario_runs (
     percentage_loss REAL NOT NULL DEFAULT 0,
     risk_level TEXT NOT NULL,
     summary_json TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS scenario_asset_impacts (
@@ -348,6 +395,139 @@ CREATE TABLE IF NOT EXISTS scenario_class_impacts (
     percentage_impact REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(scenario_id) REFERENCES scenario_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS app_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_name TEXT NOT NULL,
+    snapshot_type TEXT NOT NULL CHECK(snapshot_type IN ('MANUAL', 'AUTO_BEFORE_RESTORE', 'DAILY', 'PRE_MIGRATION')),
+    file_path TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    tables_summary_json TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_exports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    export_name TEXT NOT NULL,
+    export_type TEXT NOT NULL,
+    file_format TEXT NOT NULL CHECK(file_format IN ('CSV', 'JSON')),
+    file_path TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_name TEXT NOT NULL,
+    import_type TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    records_processed INTEGER NOT NULL DEFAULT 0,
+    records_imported INTEGER NOT NULL DEFAULT 0,
+    records_failed INTEGER NOT NULL DEFAULT 0,
+    errors_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_hardening_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('OK', 'WARNING', 'ERROR')),
+    message TEXT NOT NULL,
+    details_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    setting_key TEXT NOT NULL UNIQUE,
+    setting_value_json TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS risk_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_name TEXT NOT NULL,
+    profile_type TEXT NOT NULL CHECK(profile_type IN ('CONSERVATIVE', 'BALANCED', 'AGGRESSIVE', 'CUSTOM')),
+    is_active INTEGER NOT NULL DEFAULT 0,
+    max_single_asset_weight REAL NOT NULL DEFAULT 15,
+    max_asset_class_weight REAL NOT NULL DEFAULT 40,
+    max_crypto_weight REAL NOT NULL DEFAULT 10,
+    min_cash_reserve_percent REAL NOT NULL DEFAULT 5,
+    max_portfolio_drawdown_percent REAL NOT NULL DEFAULT 15,
+    min_data_quality_score REAL NOT NULL DEFAULT 60,
+    min_operational_confidence TEXT NOT NULL DEFAULT 'MEDIUM',
+    require_real_data_for_buy INTEGER NOT NULL DEFAULT 0,
+    allow_crypto INTEGER NOT NULL DEFAULT 1,
+    allow_single_stocks INTEGER NOT NULL DEFAULT 1,
+    allow_bonds INTEGER NOT NULL DEFAULT 1,
+    allow_etf INTEGER NOT NULL DEFAULT 1,
+    allow_ml_influence INTEGER NOT NULL DEFAULT 1,
+    allow_news_influence INTEGER NOT NULL DEFAULT 1,
+    technical_weight REAL NOT NULL DEFAULT 50,
+    ml_weight REAL NOT NULL DEFAULT 20,
+    news_weight REAL NOT NULL DEFAULT 15,
+    risk_weight REAL NOT NULL DEFAULT 15,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS strategy_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_name TEXT NOT NULL,
+    description TEXT,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    universe_level TEXT NOT NULL DEFAULT 'CORE',
+    max_positions INTEGER NOT NULL DEFAULT 15,
+    rebalance_frequency TEXT NOT NULL DEFAULT 'WEEKLY',
+    buy_threshold REAL NOT NULL DEFAULT 70,
+    sell_threshold REAL NOT NULL DEFAULT 40,
+    watch_threshold REAL NOT NULL DEFAULT 55,
+    min_score_for_buy REAL NOT NULL DEFAULT 70,
+    min_confidence_for_buy TEXT NOT NULL DEFAULT 'MEDIUM',
+    stop_loss_percent REAL NOT NULL DEFAULT 10,
+    take_profit_percent REAL NOT NULL DEFAULT 25,
+    trailing_stop_percent REAL,
+    fee_percent REAL NOT NULL DEFAULT 0.1,
+    cash_reserve_percent REAL NOT NULL DEFAULT 5,
+    use_ml INTEGER NOT NULL DEFAULT 1,
+    use_news INTEGER NOT NULL DEFAULT 1,
+    use_scenario_risk INTEGER NOT NULL DEFAULT 1,
+    use_optimizer INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type TEXT NOT NULL UNIQUE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    min_severity TEXT NOT NULL DEFAULT 'INFO',
+    show_in_dashboard INTEGER NOT NULL DEFAULT 1,
+    include_in_report INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ui_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme TEXT NOT NULL DEFAULT 'dark',
+    default_landing_page TEXT NOT NULL DEFAULT 'Dashboard',
+    compact_mode INTEGER NOT NULL DEFAULT 0,
+    show_advanced_metrics INTEGER NOT NULL DEFAULT 1,
+    default_universe_level TEXT NOT NULL DEFAULT 'CORE',
+    default_benchmark TEXT NOT NULL DEFAULT 'SPY',
+    default_currency TEXT NOT NULL DEFAULT 'USD',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS api_cache (
@@ -550,6 +730,48 @@ CREATE INDEX IF NOT EXISTS idx_asset_universe_watchlist ON asset_universe(is_wat
 
 
 MIGRATIONS = {
+    "portfolio_positions": [
+        ("portfolio_id", "ALTER TABLE portfolio_positions ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+        ("symbol", "ALTER TABLE portfolio_positions ADD COLUMN symbol TEXT"),
+        ("invested_amount", "ALTER TABLE portfolio_positions ADD COLUMN invested_amount REAL NOT NULL DEFAULT 0"),
+        ("current_price", "ALTER TABLE portfolio_positions ADD COLUMN current_price REAL NOT NULL DEFAULT 0"),
+        ("current_value", "ALTER TABLE portfolio_positions ADD COLUMN current_value REAL NOT NULL DEFAULT 0"),
+        ("realized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN realized_pnl REAL NOT NULL DEFAULT 0"),
+        ("unrealized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0"),
+        ("unrealized_pnl_percent", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl_percent REAL NOT NULL DEFAULT 0"),
+        ("weight_percent", "ALTER TABLE portfolio_positions ADD COLUMN weight_percent REAL NOT NULL DEFAULT 0"),
+        ("asset_type", "ALTER TABLE portfolio_positions ADD COLUMN asset_type TEXT"),
+        ("updated_at", "ALTER TABLE portfolio_positions ADD COLUMN updated_at TEXT"),
+    ],
+    "simulated_orders": [
+        ("portfolio_id", "ALTER TABLE simulated_orders ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+        ("symbol", "ALTER TABLE simulated_orders ADD COLUMN symbol TEXT"),
+        ("order_type", "ALTER TABLE simulated_orders ADD COLUMN order_type TEXT"),
+        ("gross_amount", "ALTER TABLE simulated_orders ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0"),
+        ("net_amount", "ALTER TABLE simulated_orders ADD COLUMN net_amount REAL NOT NULL DEFAULT 0"),
+        ("order_date", "ALTER TABLE simulated_orders ADD COLUMN order_date TEXT"),
+        ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
+        ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
+        ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
+    ],
+    "portfolio_snapshots": [
+        ("portfolio_id", "ALTER TABLE portfolio_snapshots ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
+    "strategy_plans": [
+        ("portfolio_id", "ALTER TABLE strategy_plans ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
+    "alerts": [
+        ("portfolio_id", "ALTER TABLE alerts ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
+    "operational_reports": [
+        ("portfolio_id", "ALTER TABLE operational_reports ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
+    "portfolio_optimization_runs": [
+        ("portfolio_id", "ALTER TABLE portfolio_optimization_runs ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
+    "scenario_runs": [
+        ("portfolio_id", "ALTER TABLE scenario_runs ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE"),
+    ],
     "assets": [
         ("sector", "ALTER TABLE assets ADD COLUMN sector TEXT"),
         ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
@@ -565,28 +787,6 @@ MIGRATIONS = {
         ("indicators_json", "ALTER TABLE signals ADD COLUMN indicators_json TEXT"),
         ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT"),
         ("updated_at", "ALTER TABLE signals ADD COLUMN updated_at TEXT"),
-    ],
-    "portfolio_positions": [
-        ("symbol", "ALTER TABLE portfolio_positions ADD COLUMN symbol TEXT"),
-        ("invested_amount", "ALTER TABLE portfolio_positions ADD COLUMN invested_amount REAL NOT NULL DEFAULT 0"),
-        ("current_price", "ALTER TABLE portfolio_positions ADD COLUMN current_price REAL NOT NULL DEFAULT 0"),
-        ("current_value", "ALTER TABLE portfolio_positions ADD COLUMN current_value REAL NOT NULL DEFAULT 0"),
-        ("realized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN realized_pnl REAL NOT NULL DEFAULT 0"),
-        ("unrealized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0"),
-        ("unrealized_pnl_percent", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl_percent REAL NOT NULL DEFAULT 0"),
-        ("weight_percent", "ALTER TABLE portfolio_positions ADD COLUMN weight_percent REAL NOT NULL DEFAULT 0"),
-        ("asset_type", "ALTER TABLE portfolio_positions ADD COLUMN asset_type TEXT"),
-        ("updated_at", "ALTER TABLE portfolio_positions ADD COLUMN updated_at TEXT"),
-    ],
-    "simulated_orders": [
-        ("symbol", "ALTER TABLE simulated_orders ADD COLUMN symbol TEXT"),
-        ("order_type", "ALTER TABLE simulated_orders ADD COLUMN order_type TEXT"),
-        ("gross_amount", "ALTER TABLE simulated_orders ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0"),
-        ("net_amount", "ALTER TABLE simulated_orders ADD COLUMN net_amount REAL NOT NULL DEFAULT 0"),
-        ("order_date", "ALTER TABLE simulated_orders ADD COLUMN order_date TEXT"),
-        ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
-        ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
-        ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
     ],
     "price_history": [
         ("provider", "ALTER TABLE price_history ADD COLUMN provider TEXT"),
@@ -686,6 +886,11 @@ def migrate_db(connection: sqlite3.Connection) -> None:
             if column_name not in columns:
                 connection.execute(statement)
                 columns.add(column_name)
+
+    # New indexes for portfolio_id
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_positions_portfolio ON portfolio_positions(portfolio_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_simulated_orders_portfolio ON simulated_orders(portfolio_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio ON portfolio_snapshots(portfolio_id)")
 
     signal_schema = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'signals'"

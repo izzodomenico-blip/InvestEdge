@@ -73,6 +73,29 @@ from backend.app.models import (
     ScenarioConfig,
     ScenarioRunSummaryOut,
     ScenarioRunFullOut,
+    AppSnapshotOut,
+    AppExportOut,
+    AppImportOut,
+    HardeningCheckOut,
+    BackupStatusOut,
+    HardeningReportOut,
+    AppSettingOut,
+    AppSettingUpdateIn,
+    RiskProfileOut,
+    RiskProfileCreateIn,
+    StrategyProfileOut,
+    StrategyProfileCreateIn,
+    NotificationPreferenceOut,
+    UIPerferencesOut,
+    UIPerferencesUpdateIn,
+    PortfolioCreateIn,
+    PortfolioUpdateIn,
+    PortfolioOut,
+    PortfolioCloneIn,
+    CashTransferIn,
+    CashTransferOut,
+    ConsolidatedSummaryOut,
+    PortfolioPerformanceComparisonOut,
 )
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
@@ -96,6 +119,12 @@ from backend.app.services.scheduler_service import SchedulerService
 from backend.app.services.report_service import ReportService
 from backend.app.services.portfolio_optimizer_service import PortfolioOptimizerService
 from backend.app.services.scenario_service import ScenarioService
+from backend.app.services.backup_service import BackupService
+from backend.app.services.multi_portfolio_service import MultiPortfolioService
+from backend.app.services.export_service import ExportService
+from backend.app.services.import_service import ImportService
+from backend.app.services.hardening_service import HardeningService
+from backend.app.services.user_settings_service import UserSettingsService
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
@@ -115,6 +144,12 @@ scheduler_service = SchedulerService()
 report_service = ReportService()
 portfolio_optimizer_service = PortfolioOptimizerService()
 scenario_service = ScenarioService()
+backup_service = BackupService()
+export_service = ExportService()
+import_service = ImportService()
+hardening_service = HardeningService()
+user_settings_service = UserSettingsService()
+multi_portfolio_service = MultiPortfolioService()
 
 
 @router.get("/health")
@@ -161,49 +196,63 @@ def get_asset_validated_signal(symbol: str) -> ValidatedSignalOut:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.get("/ranking/operational", response_model=OperationalRankingOut)
-def get_operational_ranking() -> OperationalRankingOut:
+@router.get("/ranking", response_model=OperationalRankingOut)
+def get_operational_ranking(portfolio_id: int | None = Query(default=None)) -> OperationalRankingOut:
     with db_session() as connection:
-        return operational_ranking_service.get_operational_ranking(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return operational_ranking_service.get_operational_ranking(connection, portfolio_id=portfolio_id)
+
 
 
 @router.get("/ranking/buy-candidates", response_model=list[ValidatedSignalOut])
-def get_buy_candidates() -> list[ValidatedSignalOut]:
+def get_buy_candidates(portfolio_id: int | None = Query(default=None)) -> list[ValidatedSignalOut]:
     with db_session() as connection:
-        ranking = operational_ranking_service.get_operational_ranking(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        ranking = operational_ranking_service.get_operational_ranking(connection, portfolio_id=portfolio_id)
         return ranking.buy_candidates
 
 
 @router.get("/ranking/watch-candidates", response_model=list[ValidatedSignalOut])
-def get_watch_candidates() -> list[ValidatedSignalOut]:
+def get_watch_candidates(portfolio_id: int | None = Query(default=None)) -> list[ValidatedSignalOut]:
     with db_session() as connection:
-        ranking = operational_ranking_service.get_operational_ranking(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        ranking = operational_ranking_service.get_operational_ranking(connection, portfolio_id=portfolio_id)
         return ranking.watch_candidates
 
 
 @router.get("/ranking/reduce-candidates", response_model=list[ValidatedSignalOut])
-def get_reduce_candidates() -> list[ValidatedSignalOut]:
+def get_reduce_candidates(portfolio_id: int | None = Query(default=None)) -> list[ValidatedSignalOut]:
     with db_session() as connection:
-        ranking = operational_ranking_service.get_operational_ranking(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        ranking = operational_ranking_service.get_operational_ranking(connection, portfolio_id=portfolio_id)
         return ranking.reduce_candidates
 
 
 @router.get("/ranking/excluded", response_model=list[ValidatedSignalOut])
-def get_excluded_candidates() -> list[ValidatedSignalOut]:
+def get_excluded_candidates(portfolio_id: int | None = Query(default=None)) -> list[ValidatedSignalOut]:
     with db_session() as connection:
-        ranking = operational_ranking_service.get_operational_ranking(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        ranking = operational_ranking_service.get_operational_ranking(connection, portfolio_id=portfolio_id)
         return ranking.excluded_candidates
 
 
 @router.get("/portfolio/actions", response_model=list[PortfolioActionOut])
-def get_portfolio_actions() -> list[PortfolioActionOut]:
+def get_portfolio_actions(portfolio_id: int | None = Query(default=None)) -> list[PortfolioActionOut]:
     with db_session() as connection:
-        return operational_ranking_service.get_portfolio_actions(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return operational_ranking_service.get_portfolio_actions(connection, portfolio_id=portfolio_id)
 
 
 # -- ALERTS ------------------------------------------------------------------
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
+    portfolio_id: int | None = Query(default=None),
     status: str | None = None,
     severity: str | None = None,
     symbol: str | None = None
@@ -212,10 +261,13 @@ def list_alerts(
         # Note: status/severity filtering could be added to get_open_alerts or new method
         # for now we'll just use get_open_alerts if status is OPEN
         if status == "OPEN" or not status:
-            return alert_service.get_open_alerts(connection, severity=severity, symbol=symbol)
+            return alert_service.get_open_alerts(connection, portfolio_id=portfolio_id, severity=severity, symbol=symbol)
         # otherwise basic select
         query = "SELECT * FROM alerts WHERE 1=1"
         params = []
+        if portfolio_id is not None:
+            query += " AND portfolio_id = ?"
+            params.append(portfolio_id)
         if status:
             query += " AND status = ?"
             params.append(status)
@@ -231,9 +283,9 @@ def list_alerts(
 
 
 @router.get("/alerts/summary", response_model=AlertSummaryOut)
-def get_alerts_summary() -> AlertSummaryOut:
+def get_alerts_summary(portfolio_id: int | None = Query(default=None)) -> AlertSummaryOut:
     with db_session() as connection:
-        return alert_service.get_alert_summary(connection)
+        return alert_service.get_alert_summary(connection, portfolio_id=portfolio_id)
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
@@ -285,9 +337,9 @@ def run_scheduler(payload: SchedulerRunIn) -> SchedulerRunOut:
 
 # -- REPORTS -----------------------------------------------------------------
 @router.get("/reports", response_model=list[OperationalReportOut])
-def list_reports() -> list[OperationalReportOut]:
+def list_reports(portfolio_id: int | None = Query(default=None)) -> list[OperationalReportOut]:
     with db_session() as connection:
-        return report_service.list_reports(connection)
+        return report_service.list_reports(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/reports/latest", response_model=OperationalReportOut | None)
@@ -306,21 +358,23 @@ def get_report(report_id: int) -> OperationalReportOut:
 
 
 @router.post("/reports/generate", response_model=OperationalReportOut)
-def generate_report(report_type: str = "MANUAL") -> OperationalReportOut:
+def generate_report(report_type: str = "MANUAL", portfolio_id: int | None = Query(default=None)) -> OperationalReportOut:
     with db_session() as connection:
-        return report_service.generate_operational_report(connection, report_type=report_type)
+        return report_service.generate_operational_report(connection, report_type=report_type, portfolio_id=portfolio_id)
 
 
 @router.post("/strategy/plans/generate", response_model=StrategyPlanFullOut)
-def generate_strategy_plan(payload: StrategyPlanConfig) -> StrategyPlanFullOut:
+def generate_strategy_plan(payload: StrategyPlanConfig, portfolio_id: int | None = Query(default=None)) -> StrategyPlanFullOut:
     with db_session() as connection:
-        return strategy_control_service.generate_strategy_plan(connection, payload)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return strategy_control_service.generate_strategy_plan(connection, payload, portfolio_id=portfolio_id)
 
 
 @router.get("/strategy/plans", response_model=list[StrategyPlanSummaryOut])
-def list_strategy_plans() -> list[StrategyPlanSummaryOut]:
+def list_strategy_plans(portfolio_id: int | None = Query(default=None)) -> list[StrategyPlanSummaryOut]:
     with db_session() as connection:
-        return strategy_control_service.list_strategy_plans(connection)
+        return strategy_control_service.list_strategy_plans(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/strategy/plans/{plan_id}", response_model=StrategyPlanFullOut)
@@ -369,15 +423,18 @@ def get_default_optimizer_config() -> OptimizerConfig:
 
 
 @router.post("/optimizer/run", response_model=OptimizationRunFullOut)
-def run_optimization(payload: OptimizerConfig) -> OptimizationRunFullOut:
+def run_optimizer(payload: OptimizerConfig, portfolio_id: int | None = Query(default=None)) -> OptimizationRunFullOut:
     with db_session() as connection:
-        return portfolio_optimizer_service.generate_optimization_run(connection, payload)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return portfolio_optimizer_service.generate_optimization_run(connection, payload, portfolio_id=portfolio_id)
+
 
 
 @router.get("/optimizer/runs", response_model=list[OptimizationRunSummaryOut])
-def list_optimization_runs() -> list[OptimizationRunSummaryOut]:
+def list_optimization_runs(portfolio_id: int | None = Query(default=None)) -> list[OptimizationRunSummaryOut]:
     with db_session() as connection:
-        return portfolio_optimizer_service.list_runs(connection)
+        return portfolio_optimizer_service.list_runs(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/optimizer/runs/{run_id}", response_model=OptimizationRunFullOut)
@@ -424,15 +481,17 @@ def get_scenario_presets() -> list[dict[str, str]]:
 
 
 @router.post("/scenarios/run", response_model=ScenarioRunFullOut)
-def run_scenario_analysis(payload: ScenarioConfig) -> ScenarioRunFullOut:
+def run_scenario_analysis(payload: ScenarioConfig, portfolio_id: int | None = Query(default=None)) -> ScenarioRunFullOut:
     with db_session() as connection:
-        return scenario_service.run_scenario_analysis(connection, payload)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return scenario_service.run_scenario_analysis(connection, payload, portfolio_id=portfolio_id)
 
 
 @router.get("/scenarios/runs", response_model=list[ScenarioRunSummaryOut])
-def list_scenario_runs() -> list[ScenarioRunSummaryOut]:
+def list_scenario_runs(portfolio_id: int | None = Query(default=None)) -> list[ScenarioRunSummaryOut]:
     with db_session() as connection:
-        return scenario_service.list_runs(connection)
+        return scenario_service.list_runs(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/scenarios/runs/{scenario_id}", response_model=ScenarioRunFullOut)
@@ -448,6 +507,290 @@ def get_scenario_run(scenario_id: int) -> ScenarioRunFullOut:
 def delete_scenario_run(scenario_id: int) -> dict[str, bool]:
     with db_session() as connection:
         return {"success": scenario_service.delete_run(connection, scenario_id)}
+
+
+# -- PORTFOLIOS --------------------------------------------------------------
+@router.get("/portfolios", response_model=list[PortfolioOut])
+def list_portfolios(include_archived: bool = Query(default=False)) -> list[PortfolioOut]:
+    with db_session() as connection:
+        return multi_portfolio_service.list_portfolios(connection, include_archived=include_archived)
+
+
+@router.post("/portfolios", response_model=PortfolioOut)
+def create_portfolio(payload: PortfolioCreateIn) -> PortfolioOut:
+    with db_session() as connection:
+        return multi_portfolio_service.create_portfolio(connection, payload)
+
+
+@router.get("/portfolios/active", response_model=PortfolioOut)
+def get_active_portfolio() -> PortfolioOut:
+    with db_session() as connection:
+        return multi_portfolio_service.get_active_portfolio(connection)
+
+
+@router.post("/portfolios/{portfolio_id}/activate")
+def activate_portfolio(portfolio_id: int):
+    with db_session() as connection:
+        if not multi_portfolio_service.set_active_portfolio(connection, portfolio_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found or archived")
+        return {"success": True}
+
+
+@router.get("/portfolios/consolidated-summary", response_model=ConsolidatedSummaryOut)
+def get_consolidated_summary() -> ConsolidatedSummaryOut:
+    with db_session() as connection:
+        return multi_portfolio_service.get_consolidated_summary(connection)
+
+
+@router.get("/portfolios/performance-comparison", response_model=PortfolioPerformanceComparisonOut)
+def get_performance_comparison() -> PortfolioPerformanceComparisonOut:
+    with db_session() as connection:
+        return multi_portfolio_service.get_portfolio_performance_comparison(connection)
+
+
+@router.get("/portfolios/{portfolio_id}", response_model=PortfolioOut)
+def get_portfolio_detail(portfolio_id: int) -> PortfolioOut:
+    with db_session() as connection:
+        p = multi_portfolio_service.get_portfolio(connection, portfolio_id)
+        if not p:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+        return p
+
+
+@router.put("/portfolios/{portfolio_id}", response_model=PortfolioOut)
+def update_portfolio(portfolio_id: int, payload: PortfolioUpdateIn) -> PortfolioOut:
+    with db_session() as connection:
+        p = multi_portfolio_service.update_portfolio(connection, portfolio_id, payload)
+        if not p:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+        return p
+
+
+@router.delete("/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: int):
+    with db_session() as connection:
+        multi_portfolio_service.delete_portfolio(connection, portfolio_id)
+        return {"success": True}
+
+
+@router.post("/portfolios/{portfolio_id}/clone", response_model=PortfolioOut)
+def clone_portfolio(portfolio_id: int, payload: PortfolioCloneIn) -> PortfolioOut:
+    with db_session() as connection:
+        p = multi_portfolio_service.clone_portfolio(connection, portfolio_id, payload)
+        if not p:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+        return p
+
+
+@router.post("/portfolios/transfer-cash", response_model=CashTransferOut)
+def transfer_cash(payload: CashTransferIn) -> CashTransferOut:
+    with db_session() as connection:
+        try:
+            return multi_portfolio_service.transfer_cash(connection, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# -- BACKUP & SNAPSHOTS ------------------------------------------------------
+@router.get("/backup/status", response_model=BackupStatusOut)
+def get_backup_status() -> BackupStatusOut:
+    with db_session() as connection:
+        backups = backup_service.list_backups(connection)
+        db_size = backup_service.db_path.stat().st_size if backup_service.db_path.exists() else 0
+        return BackupStatusOut(
+            backup_directory=str(backup_service.backup_dir),
+            backups_count=len(backups),
+            latest_backup=backups[0] if backups else None,
+            database_size_bytes=db_size,
+            integrity_status="OK"
+        )
+
+
+@router.post("/backup/create", response_model=AppSnapshotOut)
+def create_backup(snapshot_name: str | None = None, note: str | None = None) -> AppSnapshotOut:
+    with db_session() as connection:
+        return backup_service.create_database_backup(connection, snapshot_name=snapshot_name, note=note)
+
+
+@router.get("/backup/list", response_model=list[AppSnapshotOut])
+def list_backups() -> list[AppSnapshotOut]:
+    with db_session() as connection:
+        return backup_service.list_backups(connection)
+
+
+@router.get("/backup/{backup_id}", response_model=AppSnapshotOut)
+def get_backup_detail(backup_id: int) -> AppSnapshotOut:
+    with db_session() as connection:
+        try:
+            return backup_service.get_backup(connection, backup_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/backup/{backup_id}/restore")
+def restore_backup(backup_id: int, confirm: bool = False):
+    with db_session() as connection:
+        try:
+            backup_service.restore_backup(connection, backup_id, confirm=confirm)
+            return {"success": True, "message": "Ripristino completato. L'app potrebbe richiedere un riavvio."}
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.delete("/backup/{backup_id}")
+def delete_backup(backup_id: int) -> dict[str, bool]:
+    with db_session() as connection:
+        return {"success": backup_service.delete_backup(connection, backup_id)}
+
+
+@router.get("/snapshots", response_model=list[AppSnapshotOut])
+def list_app_snapshots() -> list[AppSnapshotOut]:
+    with db_session() as connection:
+        return backup_service.list_backups(connection)
+
+
+# -- EXPORT & IMPORT ---------------------------------------------------------
+@router.get("/export/types")
+def get_export_types() -> list[str]:
+    return [
+        "ASSETS", "PRICES", "PORTFOLIO", "ORDERS", "BACKTESTS", 
+        "STRATEGY_PLANS", "OPTIMIZATIONS", "SCENARIOS", "ALERTS", 
+        "REPORTS", "JOURNAL", "UNIVERSE"
+    ]
+
+
+@router.post("/export/create", response_model=AppExportOut)
+def create_export(export_type: str, file_format: str = "JSON") -> AppExportOut:
+    with db_session() as connection:
+        try:
+            return export_service.export_dataset(connection, export_type, file_format)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/export/list", response_model=list[AppExportOut])
+def list_exports() -> list[AppExportOut]:
+    with db_session() as connection:
+        return export_service.list_exports(connection)
+
+
+@router.get("/import/types")
+def get_import_types() -> list[str]:
+    return ["UNIVERSE", "WATCHLIST", "PORTFOLIO", "JOURNAL", "CUSTOM_ASSETS"]
+
+
+@router.post("/import/validate")
+def validate_import(file_name: str, import_type: str):
+    try:
+        return import_service.validate_import_file(file_name, import_type)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/import/run", response_model=AppImportOut)
+def run_import(file_name: str, import_type: str, confirm: bool = False) -> AppImportOut:
+    with db_session() as connection:
+        try:
+            return import_service.run_import(connection, file_name, import_type, confirm=confirm)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# -- HARDENING ---------------------------------------------------------------
+@router.get("/hardening/report", response_model=HardeningReportOut)
+def get_hardening_report() -> HardeningReportOut:
+    with db_session() as connection:
+        return hardening_service.run_checks(connection)
+
+
+@router.post("/hardening/run", response_model=HardeningReportOut)
+def run_hardening_checks() -> HardeningReportOut:
+    with db_session() as connection:
+        return hardening_service.run_checks(connection)
+
+
+# -- SETTINGS & PROFILES -----------------------------------------------------
+@router.get("/settings", response_model=list[AppSettingOut])
+def get_app_settings() -> list[AppSettingOut]:
+    with db_session() as connection:
+        return user_settings_service.get_app_settings(connection)
+
+
+@router.put("/settings/{key}")
+def update_app_setting(key: str, payload: AppSettingUpdateIn):
+    with db_session() as connection:
+        user_settings_service.update_app_setting(connection, key, payload.setting_value_json, payload.description)
+        return {"success": True}
+
+
+@router.get("/settings/risk-profiles", response_model=list[RiskProfileOut])
+def list_risk_profiles() -> list[RiskProfileOut]:
+    with db_session() as connection:
+        return user_settings_service.list_risk_profiles(connection)
+
+
+@router.get("/settings/risk-profiles/active", response_model=RiskProfileOut)
+def get_active_risk_profile() -> RiskProfileOut:
+    with db_session() as connection:
+        return user_settings_service.get_active_risk_profile(connection)
+
+
+@router.post("/settings/risk-profiles", response_model=RiskProfileOut)
+def create_risk_profile(payload: RiskProfileCreateIn) -> RiskProfileOut:
+    with db_session() as connection:
+        return user_settings_service.create_risk_profile(connection, payload)
+
+
+@router.put("/settings/risk-profiles/{profile_id}", response_model=RiskProfileOut)
+def update_risk_profile(profile_id: int, payload: RiskProfileCreateIn) -> RiskProfileOut:
+    with db_session() as connection:
+        return user_settings_service.update_risk_profile(connection, profile_id, payload)
+
+
+@router.post("/settings/risk-profiles/{profile_id}/activate")
+def activate_risk_profile(profile_id: int):
+    with db_session() as connection:
+        user_settings_service.activate_risk_profile(connection, profile_id)
+        return {"success": True}
+
+
+@router.delete("/settings/risk-profiles/{profile_id}")
+def delete_risk_profile(profile_id: int):
+    with db_session() as connection:
+        try:
+            user_settings_service.delete_risk_profile(connection, profile_id)
+            return {"success": True}
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/settings/strategy-profiles", response_model=list[StrategyProfileOut])
+def list_strategy_profiles() -> list[StrategyProfileOut]:
+    with db_session() as connection:
+        return user_settings_service.list_strategy_profiles(connection)
+
+
+@router.get("/settings/strategy-profiles/active", response_model=StrategyProfileOut)
+def get_active_strategy_profile() -> StrategyProfileOut:
+    with db_session() as connection:
+        return user_settings_service.get_active_strategy_profile(connection)
+
+
+@router.post("/settings/strategy-profiles/{profile_id}/activate")
+def activate_strategy_profile(profile_id: int):
+    with db_session() as connection:
+        user_settings_service.activate_strategy_profile(connection, profile_id)
+        return {"success": True}
+
+
+@router.get("/settings/ui", response_model=UIPerferencesOut)
+def get_ui_preferences() -> UIPerferencesOut:
+    with db_session() as connection:
+        return user_settings_service.get_ui_preferences(connection)
 
 
 @router.get("/assets", response_model=list[AssetOut])
@@ -481,48 +824,58 @@ def post_asset(payload: AssetCreate) -> AssetOut:
 
 
 @router.get("/portfolio", response_model=PortfolioSummaryOut)
-def get_portfolio() -> PortfolioSummaryOut:
+def get_portfolio(portfolio_id: int | None = Query(default=None)) -> PortfolioSummaryOut:
     with db_session() as connection:
-        return portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
 
 
 @router.post("/portfolio/init", response_model=PortfolioSummaryOut)
-def init_portfolio(payload: PortfolioInitIn) -> PortfolioSummaryOut:
+def init_portfolio(payload: PortfolioInitIn, portfolio_id: int | None = Query(default=None)) -> PortfolioSummaryOut:
     with db_session() as connection:
-        return portfolio_engine.initialize_portfolio(connection, payload)
+        return portfolio_engine.initialize_portfolio(connection, payload, portfolio_id=portfolio_id)
 
 
 @router.post("/orders/simulate", response_model=OrderSimulationOut)
-def simulate_order(payload: SimulatedOrderIn) -> OrderSimulationOut:
+def simulate_order(payload: SimulatedOrderIn, portfolio_id: int | None = Query(default=None)) -> OrderSimulationOut:
     try:
         with db_session() as connection:
-            return portfolio_engine.simulate_order(connection, payload)
+            if portfolio_id is None:
+                portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+            return portfolio_engine.simulate_order(connection, payload, portfolio_id=portfolio_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/orders", response_model=list[SimulatedOrderOut])
-def get_orders() -> list[SimulatedOrderOut]:
+def get_orders(portfolio_id: int | None = Query(default=None)) -> list[SimulatedOrderOut]:
     with db_session() as connection:
-        return portfolio_engine.list_orders(connection)
+        return portfolio_engine.list_orders(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/portfolio/snapshots", response_model=list[PortfolioSnapshotOut])
-def get_portfolio_snapshots() -> list[PortfolioSnapshotOut]:
+def get_portfolio_snapshots(portfolio_id: int | None = Query(default=None)) -> list[PortfolioSnapshotOut]:
     with db_session() as connection:
-        return portfolio_engine.list_snapshots(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return portfolio_engine.list_snapshots(connection, portfolio_id=portfolio_id)
 
 
 @router.post("/portfolio/refresh", response_model=PortfolioSummaryOut)
-def refresh_portfolio() -> PortfolioSummaryOut:
+def refresh_portfolio(portfolio_id: int | None = Query(default=None)) -> PortfolioSummaryOut:
     with db_session() as connection:
-        return portfolio_engine.refresh_portfolio(connection, create_snapshot=True)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=True)
 
 
 @router.get("/portfolio/recommendations", response_model=list[PortfolioRecommendationOut])
-def get_portfolio_recommendations() -> list[PortfolioRecommendationOut]:
+def get_portfolio_recommendations(portfolio_id: int | None = Query(default=None)) -> list[PortfolioRecommendationOut]:
     with db_session() as connection:
-        return portfolio_engine.recommendations(connection)
+        if portfolio_id is None:
+            portfolio_id = multi_portfolio_service.get_active_portfolio(connection).id
+        return portfolio_engine.recommendations(connection, portfolio_id=portfolio_id)
 
 
 @router.post("/backtests/run", response_model=BacktestResultOut)
@@ -606,9 +959,9 @@ def get_signal(symbol: str) -> SignalOut:
 
 
 @router.get("/dashboard", response_model=DashboardOut)
-def dashboard() -> DashboardOut:
+def dashboard(portfolio_id: int | None = Query(default=None)) -> DashboardOut:
     with db_session() as connection:
-        return get_dashboard(connection)
+        return get_dashboard(connection, portfolio_id=portfolio_id)
 
 
 @router.get("/universe", response_model=list[UniverseAssetOut])

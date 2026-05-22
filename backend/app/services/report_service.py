@@ -13,26 +13,38 @@ def _now() -> str:
 
 
 class ReportService:
-    def generate_operational_report(self, connection: sqlite3.Connection, report_type: str = "MANUAL") -> OperationalReportOut:
+    def generate_operational_report(self, connection: sqlite3.Connection, report_type: str = "MANUAL", portfolio_id: int | None = None) -> OperationalReportOut:
         # Import needed services inside evaluation to avoid circular dependencies
         from backend.app.services.system_health_service import SystemHealthService
         from backend.app.services.data_quality_service import DataQualityService
         from backend.app.services.operational_ranking_service import OperationalRankingService
         from backend.app.services.portfolio_engine import PortfolioEngine
         from backend.app.services.alert_service import AlertService
+        from backend.app.services.multi_portfolio_service import MultiPortfolioService
 
         health_service = SystemHealthService()
         dq_service = DataQualityService()
         ranking_service = OperationalRankingService()
         portfolio_engine = PortfolioEngine()
         alert_service = AlertService()
+        multi_portfolio_service = MultiPortfolioService()
 
         # 1. Collect data
         health = health_service.get_health(connection)
         quality = dq_service.list_all_quality(connection)
         ranking = ranking_service.get_operational_ranking(connection)
-        portfolio = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
-        alerts = alert_service.get_alert_summary(connection)
+        
+        if portfolio_id:
+            portfolio = portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
+            alerts = alert_service.get_alert_summary(connection, portfolio_id=portfolio_id)
+            p_data = multi_portfolio_service.get_portfolio(connection, portfolio_id)
+            portfolio_name = p_data.portfolio_name if p_data else f"ID:{portfolio_id}"
+        else:
+            # Consolidated report
+            summary_cons = multi_portfolio_service.get_consolidated_summary(connection)
+            portfolio = summary_cons # Partially compatible
+            alerts = alert_service.get_alert_summary(connection)
+            portfolio_name = "Consolidato"
 
         dq_avg = sum(q.score for q in quality) / (len(quality) or 1)
 
@@ -42,22 +54,22 @@ class ReportService:
             buy_candidates_count=len(ranking.buy_candidates),
             watch_candidates_count=len(ranking.watch_candidates),
             reduce_candidates_count=len(ranking.reduce_candidates),
-            portfolio_value=portfolio.total_value,
-            risk_warnings_count=len(portfolio.risk_warnings),
+            portfolio_value=portfolio.total_value if portfolio_id else summary_cons.total_value,
+            risk_warnings_count=len(portfolio.risk_warnings) if portfolio_id else 0,
             open_alerts_count=alerts.open_count,
         )
 
-        title = f"Report Operativo {report_type} - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        markdown = self._build_markdown(title, summary, ranking, portfolio)
+        title = f"Report Operativo {report_type} ({portfolio_name}) - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        markdown = self._build_markdown(title, summary, ranking, portfolio, portfolio_id)
 
         cursor = connection.execute(
             """
             INSERT INTO operational_reports (
-                report_type, report_date, title, summary_json, markdown_text, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                portfolio_id, report_type, report_date, title, summary_json, markdown_text, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                report_type, _now(), title, summary.model_dump_json(), markdown, _now()
+                portfolio_id, report_type, _now(), title, summary.model_dump_json(), markdown, _now()
             )
         )
 
@@ -79,11 +91,19 @@ class ReportService:
             return None
         return self._row_to_report(row)
 
-    def list_reports(self, connection: sqlite3.Connection, limit: int = 50) -> list[OperationalReportOut]:
-        rows = connection.execute(
-            "SELECT * FROM operational_reports ORDER BY created_at DESC LIMIT ?",
-            (limit,)
-        ).fetchall()
+    def list_reports(self, connection: sqlite3.Connection, portfolio_id: int | None = None, limit: int = 50) -> list[OperationalReportOut]:
+        query = "SELECT * FROM operational_reports"
+        params = []
+        if portfolio_id is not None:
+            query += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        else:
+            query += " WHERE portfolio_id IS NULL"
+            
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        rows = connection.execute(query, params).fetchall()
         return [self._row_to_report(row) for row in rows]
 
     def get_report(self, connection: sqlite3.Connection, report_id: int) -> OperationalReportOut:
@@ -94,7 +114,7 @@ class ReportService:
             raise ValueError(f"Report {report_id} not found")
         return self._row_to_report(row)
 
-    def _build_markdown(self, title: str, summary: OperationalReportSummary, ranking: Any, portfolio: Any) -> str:
+    def _build_markdown(self, title: str, summary: OperationalReportSummary, ranking: Any, portfolio: Any, portfolio_id: int | None) -> str:
         md = f"# {title}\n\n"
         md += "## Stato Sistema\n"
         md += f"- **Health**: {summary.system_health['status'].upper()}\n"
@@ -109,11 +129,17 @@ class ReportService:
         md += f"- **REDUCE/SELL**: {summary.reduce_candidates_count}\n\n"
 
         md += "## Portafoglio\n"
-        md += f"- **Valore Totale**: {portfolio.total_value:,.2f} {portfolio.positions[0].currency if portfolio.positions else 'USD'}\n"
-        md += f"- **Cash**: {portfolio.cash:,.2f}\n"
-        md += f"- **Warning Rischio**: {summary.risk_warnings_count}\n"
-        for w in portfolio.risk_warnings:
-            md += f"  - [{w.level.upper()}] {w.message}\n"
+        if portfolio_id:
+            md += f"- **Valore Totale**: {portfolio.total_value:,.2f}\n"
+            md += f"- **Cash**: {portfolio.cash:,.2f}\n"
+            md += f"- **Warning Rischio**: {summary.risk_warnings_count}\n"
+            if hasattr(portfolio, 'risk_warnings'):
+                for w in portfolio.risk_warnings:
+                    md += f"  - [{w.level.upper()}] {w.message}\n"
+        else:
+            md += f"- **Valore Consolidato**: {portfolio.total_value:,.2f}\n"
+            md += f"- **Cash Totale**: {portfolio.total_cash:,.2f}\n"
+            md += f"- **Portafogli inclusi**: {portfolio.portfolios_count}\n"
 
         return md
 

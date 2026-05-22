@@ -26,18 +26,18 @@ class ScenarioService:
         self.portfolio_engine = PortfolioEngine()
         self.optimizer_service = PortfolioOptimizerService()
 
-    def run_scenario_analysis(self, connection: sqlite3.Connection, config: ScenarioConfig) -> ScenarioRunFullOut:
+    def run_scenario_analysis(self, connection: sqlite3.Connection, config: ScenarioConfig, portfolio_id: int) -> ScenarioRunFullOut:
         # 1. Get portfolio state based on source
-        current_portfolio = self.portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        current_portfolio = self.portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
         
         if config.portfolio_source == "CURRENT_PORTFOLIO":
             base_value = current_portfolio.total_value
             base_cash = current_portfolio.cash
             positions = [{"symbol": p.symbol, "type": p.asset_type, "value": p.current_value, "weight": p.weight_percent} for p in current_portfolio.positions]
         elif config.portfolio_source == "LATEST_OPTIMIZED_PORTFOLIO":
-            latest_run = next(iter(self.optimizer_service.list_runs(connection)), None)
+            latest_run = next(iter(self.optimizer_service.list_runs(connection, portfolio_id=portfolio_id)), None)
             if not latest_run:
-                raise ValueError("Nessuna ottimizzazione trovata.")
+                raise ValueError("Nessuna ottimizzazione trovata per questo portafoglio.")
             run_detail = self.optimizer_service.get_run(connection, latest_run.id)
             base_value = run_detail.summary.current_total_value
             base_cash = run_detail.summary.target_cash
@@ -140,13 +140,13 @@ class ScenarioService:
         cursor = connection.execute(
             """
             INSERT INTO scenario_runs (
-                scenario_name, scenario_type, portfolio_source, config_json,
+                portfolio_id, scenario_name, scenario_type, portfolio_source, config_json,
                 current_portfolio_value, stressed_portfolio_value, absolute_loss,
                 percentage_loss, risk_level, summary_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                config.scenario_name, config.scenario_type, config.portfolio_source, config.model_dump_json(),
+                portfolio_id, config.scenario_name, config.scenario_type, config.portfolio_source, config.model_dump_json(),
                 base_value, stressed_portfolio_value, absolute_loss, percentage_loss, risk_level,
                 json.dumps({"worst_asset": min(asset_impacts, key=lambda x: x.absolute_impact).symbol if asset_impacts else None}),
                 _now()
@@ -246,8 +246,15 @@ class ScenarioService:
         suggestions.append("Valuta un ribilanciamento conservativo tramite il Portfolio Optimizer.")
         return suggestions
 
-    def list_runs(self, connection: sqlite3.Connection) -> list[ScenarioRunSummaryOut]:
-        rows = connection.execute("SELECT * FROM scenario_runs ORDER BY created_at DESC").fetchall()
+    def list_runs(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[ScenarioRunSummaryOut]:
+        query = "SELECT * FROM scenario_runs"
+        params = []
+        if portfolio_id is not None:
+            query += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        query += " ORDER BY created_at DESC"
+        
+        rows = connection.execute(query, params).fetchall()
         return [
             ScenarioRunSummaryOut(
                 id=r["id"],
@@ -283,6 +290,7 @@ class ScenarioService:
         )
         
         config = ScenarioConfig(**json.loads(row["config_json"]))
+        portfolio_id = row["portfolio_id"]
         
         asset_impacts = [
             ScenarioAssetImpactOut(
@@ -312,10 +320,8 @@ class ScenarioService:
             for r in connection.execute("SELECT * FROM scenario_class_impacts WHERE scenario_id = ?", (scenario_id,)).fetchall()
         ]
         
-        # Re-generate mitigation if needed or store in DB. Storing in summary_json for now.
-        mitigation = self._generate_mitigation(summary.percentage_loss, asset_impacts, summary) # Note: summary object here is missing total_value but generate_mitigation uses it as portfolio
         # Re-fetch portfolio for full generate_mitigation call
-        portfolio = self.portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        portfolio = self.portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
         mitigation = self._generate_mitigation(summary.percentage_loss, asset_impacts, portfolio)
 
         return ScenarioRunFullOut(

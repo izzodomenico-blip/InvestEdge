@@ -16,6 +16,7 @@ from backend.app.models.schemas import (
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signal_validation_service import SignalValidationService
 from backend.app.services.alert_service import AlertService
+from backend.app.services.user_settings_service import UserSettingsService
 
 
 def _now() -> str:
@@ -27,10 +28,12 @@ class StrategyControlService:
         self.portfolio_engine = PortfolioEngine()
         self.validation_service = SignalValidationService()
         self.alert_service = AlertService()
+        self.settings_service = UserSettingsService()
+        self.settings_service = UserSettingsService()
 
-    def generate_strategy_plan(self, connection: sqlite3.Connection, config: StrategyPlanConfig) -> StrategyPlanFullOut:
+    def generate_strategy_plan(self, connection: sqlite3.Connection, config: StrategyPlanConfig, portfolio_id: int) -> StrategyPlanFullOut:
         # 1. Get current state
-        portfolio = self.portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        portfolio = self.portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
         current_cash = portfolio.cash
         total_value = portfolio.total_value
 
@@ -158,16 +161,17 @@ class StrategyControlService:
         cursor = connection.execute(
             """
             INSERT INTO strategy_plans (
-                plan_name, strategy_mode, universe_level, config_json, 
+                portfolio_id, plan_name, strategy_mode, universe_level, config_json, 
                 total_current_value, target_invested_value, expected_cash_after_plan, 
                 estimated_orders_count, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
             """,
             (
-                config.plan_name, config.strategy_mode, config.universe_level, config.model_dump_json(),
+                portfolio_id, config.plan_name, config.strategy_mode, config.universe_level, config.model_dump_json(),
                 total_value, total_target_invested, expected_cash, len(proposed_orders), _now(), _now()
             )
         )
+
         plan_id = cursor.lastrowid
 
         # Create Alert
@@ -273,10 +277,15 @@ class StrategyControlService:
 
         return targets
 
-    def list_strategy_plans(self, connection: sqlite3.Connection) -> list[StrategyPlanSummaryOut]:
-        rows = connection.execute(
-            "SELECT * FROM strategy_plans ORDER BY created_at DESC"
-        ).fetchall()
+    def list_strategy_plans(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[StrategyPlanSummaryOut]:
+        query = "SELECT * FROM strategy_plans"
+        params = []
+        if portfolio_id is not None:
+            query += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        query += " ORDER BY created_at DESC"
+        
+        rows = connection.execute(query, params).fetchall()
         return [
             StrategyPlanSummaryOut(
                 id=row["id"],
@@ -356,6 +365,11 @@ class StrategyControlService:
         )
 
     def apply_plan_to_paper_trading(self, connection: sqlite3.Connection, plan_id: int) -> int:
+        row = connection.execute("SELECT portfolio_id FROM strategy_plans WHERE id = ?", (plan_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Plan {plan_id} not found")
+        portfolio_id = row["portfolio_id"]
+        
         plan = self.get_strategy_plan(connection, plan_id)
         if plan.summary.status == "APPLIED":
             raise ValueError("Plan already applied")
@@ -370,7 +384,7 @@ class StrategyControlService:
                 fees=o.estimated_fees,
                 note=f"Applied from strategy plan: {plan.summary.plan_name}",
             )
-            self.portfolio_engine.simulate_order(connection, payload)
+            self.portfolio_engine.simulate_order(connection, payload, portfolio_id=portfolio_id)
             orders_count += 1
             
         connection.execute(

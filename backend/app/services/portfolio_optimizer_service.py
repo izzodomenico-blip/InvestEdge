@@ -31,9 +31,9 @@ class PortfolioOptimizerService:
         self.dq_service = DataQualityService()
         self.risk_engine = RiskEngine()
 
-    def generate_optimization_run(self, connection: sqlite3.Connection, config: OptimizerConfig) -> OptimizationRunFullOut:
+    def generate_optimization_run(self, connection: sqlite3.Connection, config: OptimizerConfig, portfolio_id: int) -> OptimizationRunFullOut:
         # 1. Get current state
-        portfolio = self.portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        portfolio = self.portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
         current_total_value = portfolio.total_value if config.initial_capital_mode == "CURRENT_PORTFOLIO" else (config.custom_capital or 100000.0)
         
         # 2. Get candidates based on universe_source
@@ -133,14 +133,14 @@ class PortfolioOptimizerService:
         cursor = connection.execute(
             """
             INSERT INTO portfolio_optimization_runs (
-                run_name, optimization_method, universe_source, config_json,
+                portfolio_id, run_name, optimization_method, universe_source, config_json,
                 current_total_value, target_invested_value, target_cash,
                 expected_cash_after_rebalance, estimated_orders_count, estimated_fees,
                 estimated_turnover_percent, risk_summary_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                config.run_name, config.optimization_method, config.universe_source, config.model_dump_json(),
+                portfolio_id, config.run_name, config.optimization_method, config.universe_source, config.model_dump_json(),
                 current_total_value, total_target_invested, target_cash, expected_cash, len(proposed_orders),
                 estimated_fees, turnover_percent, json.dumps({}), _now()
             )
@@ -291,8 +291,15 @@ class PortfolioOptimizerService:
                 
         return weights
 
-    def list_runs(self, connection: sqlite3.Connection) -> list[OptimizationRunSummaryOut]:
-        rows = connection.execute("SELECT * FROM portfolio_optimization_runs ORDER BY created_at DESC").fetchall()
+    def list_runs(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[OptimizationRunSummaryOut]:
+        query = "SELECT * FROM portfolio_optimization_runs"
+        params = []
+        if portfolio_id is not None:
+            query += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        query += " ORDER BY created_at DESC"
+        
+        rows = connection.execute(query, params).fetchall()
         return [
             OptimizationRunSummaryOut(
                 id=r["id"],
@@ -377,6 +384,11 @@ class PortfolioOptimizerService:
         )
 
     def apply_rebalance_orders(self, connection: sqlite3.Connection, run_id: int) -> int:
+        row = connection.execute("SELECT portfolio_id FROM portfolio_optimization_runs WHERE id = ?", (run_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Run {run_id} not found")
+        portfolio_id = row["portfolio_id"]
+        
         run = self.get_run(connection, run_id)
         
         count = 0
@@ -390,7 +402,7 @@ class PortfolioOptimizerService:
                     fees=o.estimated_fees,
                     note=f"Applied from optimization: {run.summary.run_name}"
                 )
-                self.portfolio_engine.simulate_order(connection, payload)
+                self.portfolio_engine.simulate_order(connection, payload, portfolio_id=portfolio_id)
                 
                 connection.execute(
                     "UPDATE portfolio_rebalance_orders SET status = 'PAPER_CREATED' WHERE id = ?",

@@ -15,8 +15,8 @@ class OperationalRankingService:
     def __init__(self) -> None:
         self.validation_service = SignalValidationService()
 
-    def get_operational_ranking(self, connection: sqlite3.Connection) -> OperationalRankingOut:
-        validated_signals = self.validation_service.validate_all_signals(connection)
+    def get_operational_ranking(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> OperationalRankingOut:
+        validated_signals = self.validation_service.validate_all_signals(connection, portfolio_id=portfolio_id)
 
         buy = [s for s in validated_signals if s.action_suggested == "BUY"]
         watch = [s for s in validated_signals if s.action_suggested == "WATCH"]
@@ -35,8 +35,8 @@ class OperationalRankingService:
             updated_at=_now(),
         )
 
-    def get_portfolio_actions(self, connection: sqlite3.Connection) -> list[PortfolioActionOut]:
-        validated_signals = self.validation_service.validate_all_signals(connection)
+    def get_portfolio_actions(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[PortfolioActionOut]:
+        validated_signals = self.validation_service.validate_all_signals(connection, portfolio_id=portfolio_id)
         actions: list[PortfolioActionOut] = []
 
         for s in validated_signals:

@@ -56,44 +56,33 @@ export type SignalRecord = {
   created_at: string;
 };
 
-export type DashboardResponse = {
-  initialized: boolean;
-  message: string | null;
-  assets_count: number;
-  positions_count: number;
-  portfolio_value: number;
-  cash: number;
-  total_pnl: number;
-  total_pnl_percent: number;
-  risk_warnings_count: number;
-  top_position: PortfolioPosition | null;
-  portfolio_snapshots: Array<Pick<PortfolioSnapshot, "snapshot_date" | "total_value" | "cash" | "total_pnl" | "total_pnl_percent">>;
-  signals_count: number;
-  price_points_count: number;
-  average_score: number | null;
-  asset_type_breakdown: Record<string, number>;
-  risk_breakdown: Record<string, number>;
-  signal_breakdown: Record<string, number>;
-  latest_signals: SignalRecord[];
-  top_assets: Asset[];
-  weakest_assets: Asset[];
-  risky_assets: Asset[];
-  latest_backtest: BacktestSummary | null;
-  data_status: DataStatus;
-  universe_summary: UniverseSummary;
-  ml_status: MLStatus;
-  latest_ml_prediction: MLPrediction | null;
-  high_impact_news: NewsItem[];
-  market_sentiment: MarketSentiment;
-  system_health: SystemHealth | null;
-  top_buy_candidates: ValidatedSignal[];
-  data_quality_warnings: string[];
-  latest_strategy_plan: StrategyPlanSummary | null;
-  open_alerts_summary: AlertSummary | null;
-  latest_scheduler_run: SchedulerRun | null;
-  latest_operational_report: OperationalReport | null;
-  latest_optimization_run: OptimizationRunSummary | null;
-  latest_scenario_run: ScenarioRunSummary | null;
+export type SentimentLabel = "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+export type ImpactLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export type NewsItem = {
+  id: number;
+  asset_id: number | null;
+  symbol: string | null;
+  provider: string | null;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  source: string | null;
+  published_at: string | null;
+  sentiment_score: number;
+  sentiment_label: SentimentLabel;
+  impact_level: ImpactLevel;
+  relevance_score: number;
+  created_at: string | null;
+};
+
+export type MarketSentiment = {
+  news_count: number;
+  average_sentiment_score: number;
+  sentiment_label: SentimentLabel;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
 };
 
 export type SystemHealth = {
@@ -164,6 +153,19 @@ export type StrategyPlanConfig = {
   order_generation_mode: "SUGGEST_ONLY" | "PAPER_ORDERS";
 };
 
+export type StrategyPlanSummary = {
+  id: number;
+  plan_name: string;
+  strategy_mode: string;
+  universe_level: string;
+  total_current_value: number;
+  target_invested_value: number;
+  expected_cash_after_plan: number;
+  estimated_orders_count: number;
+  status: string;
+  created_at: string;
+};
+
 export type StrategyPlanItem = {
   id?: number;
   symbol: string;
@@ -191,19 +193,6 @@ export type StrategyPlanOrder = {
   estimated_net_amount: number;
   reason?: string | null;
   status: string;
-};
-
-export type StrategyPlanSummary = {
-  id: number;
-  plan_name: string;
-  strategy_mode: string;
-  universe_level: string;
-  total_current_value: number;
-  target_invested_value: number;
-  expected_cash_after_plan: number;
-  estimated_orders_count: number;
-  status: string;
-  created_at: string;
 };
 
 export type StrategyPlanFull = {
@@ -369,7 +358,7 @@ export type ScenarioType = "CUSTOM" | "MARKET_CRASH" | "TECH_SELL_OFF" | "CRYPTO
 export type ScenarioConfig = {
   scenario_name: string;
   scenario_type: ScenarioType;
-  portfolio_source: "CURRENT_PORTFOLIO" | "LATEST_OPTIMIZED_PORTFOLIO" | "CUSTOM_TARGET";
+  portfolio_source: "CURRENT_PORTFOLIO" | "LATEST_OPTIMIZED_PORTFOLIO" | "CUSTOM_TARGET";    
   asset_class_shocks: Record<string, number>;
   symbol_shocks: Record<string, number>;
   include_correlations: boolean;
@@ -422,6 +411,202 @@ export type ScenarioRunFull = {
   loss_contribution: Record<string, number>;
   mitigation_suggestions: string[];
   warnings: string[];
+};
+
+export type AppSnapshot = {
+  id: number;
+  snapshot_name: string;
+  snapshot_type: string;
+  file_path: string;
+  checksum: string;
+  size_bytes: number;
+  tables_summary_json?: string | null;
+  note?: string | null;
+  created_at: string;
+};
+
+export type AppExport = {
+  id: number;
+  export_name: string;
+  export_type: string;
+  file_format: string;
+  file_path: string;
+  checksum: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type AppImport = {
+  id: number;
+  import_name: string;
+  import_type: string;
+  file_name: string;
+  status: string;
+  records_processed: number;
+  records_imported: number;
+  records_failed: number;
+  errors_json?: string | null;
+  created_at: string;
+};
+
+export type HardeningCheck = {
+  id?: number;
+  check_name: string;
+  status: "OK" | "WARNING" | "ERROR";
+  message: string;
+  details_json?: string | null;
+  created_at?: string | null;
+};
+
+export type BackupStatus = {
+  backup_directory: string;
+  backups_count: number;
+  latest_backup: AppSnapshot | null;
+  database_size_bytes: number;
+  integrity_status: string;
+};
+
+export type HardeningReport = {
+  checks: HardeningCheck[];
+  overall_status: string;
+  timestamp: string;
+};
+
+export type AppSetting = {
+  id: number;
+  setting_key: string;
+  setting_value_json: string;
+  category: string;
+  description?: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+export type RiskProfile = {
+  id: number;
+  profile_name: string;
+  profile_type: string;
+  is_active: boolean;
+  max_single_asset_weight: number;
+  max_asset_class_weight: number;
+  max_crypto_weight: number;
+  min_cash_reserve_percent: number;
+  max_portfolio_drawdown_percent: number;
+  min_data_quality_score: number;
+  min_operational_confidence: string;
+  require_real_data_for_buy: boolean;
+  allow_crypto: boolean;
+  allow_single_stocks: boolean;
+  allow_bonds: boolean;
+  allow_etf: boolean;
+  allow_ml_influence: boolean;
+  allow_news_influence: boolean;
+  technical_weight: number;
+  ml_weight: number;
+  news_weight: number;
+  risk_weight: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StrategyProfile = {
+  id: number;
+  profile_name: string;
+  description?: string | null;
+  is_active: boolean;
+  universe_level: string;
+  max_positions: number;
+  rebalance_frequency: string;
+  buy_threshold: number;
+  sell_threshold: number;
+  watch_threshold: number;
+  min_score_for_buy: number;
+  min_confidence_for_buy: string;
+  stop_loss_percent: number;
+  take_profit_percent: number;
+  trailing_stop_percent?: number | null;
+  fee_percent: number;
+  cash_reserve_percent: number;
+  use_ml: boolean;
+  use_news: boolean;
+  use_scenario_risk: boolean;
+  use_optimizer: boolean;
+  config_json?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotificationPreference = {
+  id: number;
+  alert_type: string;
+  enabled: boolean;
+  min_severity: string;
+  show_in_dashboard: boolean;
+  include_in_report: boolean;
+  updated_at: string;
+};
+
+export type UIPreferences = {
+  theme: string;
+  default_landing_page: string;
+  compact_mode: boolean;
+  show_advanced_metrics: boolean;
+  default_universe_level: string;
+  default_benchmark: string;
+  default_currency: string;
+  updated_at: string;
+};
+
+export type MLTrainResult = {
+  model_id: number;
+  training_run: MLTrainingRun;
+  metrics: Record<string, unknown>;
+  features_used: string[];
+  warnings: string[];
+};
+
+export type DashboardResponse = {
+  initialized: boolean;
+  message: string | null;
+  assets_count: number;
+  positions_count: number;
+  portfolio_value: number;
+  cash: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  risk_warnings_count: number;
+  top_position: PortfolioPosition | null;
+  portfolio_snapshots: Array<Pick<PortfolioSnapshot, "snapshot_date" | "total_value" | "cash" | "total_pnl" | "total_pnl_percent">>;
+  signals_count: number;
+  price_points_count: number;
+  average_score: number | null;
+  asset_type_breakdown: Record<string, number>;
+  risk_breakdown: Record<string, number>;
+  signal_breakdown: Record<string, number>;
+  latest_signals: SignalRecord[];
+  top_assets: Asset[];
+  weakest_assets: Asset[];
+  risky_assets: Asset[];
+  latest_backtest: BacktestSummary | null;
+  data_status: DataStatus;
+  universe_summary: UniverseSummary;
+  ml_status: MLStatus;
+  latest_ml_prediction: MLPrediction | null;
+  high_impact_news: NewsItem[];
+  market_sentiment: MarketSentiment;
+  system_health: SystemHealth | null;
+  top_buy_candidates: ValidatedSignal[];
+  data_quality_warnings: string[];
+  latest_strategy_plan: StrategyPlanSummary | null;
+  open_alerts_summary: AlertSummary | null;
+  latest_scheduler_run: SchedulerRun | null;
+  latest_operational_report: OperationalReport | null;
+  latest_optimization_run: OptimizationRunSummary | null;
+  latest_scenario_run: ScenarioRunSummary | null;
+  backup_status: BackupStatus | null;
+  hardening_report: HardeningReport | null;
+  active_risk_profile: RiskProfile | null;
+  active_strategy_profile: StrategyProfile | null;
 };
 
 export type PortfolioPosition = {
@@ -816,20 +1001,6 @@ export type UniverseImportResult = UniverseImportInput & {
   total_rows: number;
 };
 
-export type MLTrainResult = {
-  model_id: number;
-  training_run: MLTrainingRun;
-  metrics: Record<string, unknown>;
-  features_used: string[];
-  warnings: string[];
-};
-
-export type MLPredictAllResult = {
-  model_id: number;
-  predictions: MLPrediction[];
-  warnings: string[];
-};
-
 export type DataProviderStatus = {
   provider: string;
   enabled: boolean;
@@ -882,26 +1053,6 @@ export type DataRefreshAllResult = {
   results: DataRefreshResult[];
 };
 
-export type SentimentLabel = "POSITIVE" | "NEGATIVE" | "NEUTRAL";
-export type ImpactLevel = "LOW" | "MEDIUM" | "HIGH";
-
-export type NewsItem = {
-  id: number;
-  asset_id: number | null;
-  symbol: string | null;
-  provider: string | null;
-  title: string;
-  summary: string | null;
-  url: string | null;
-  source: string | null;
-  published_at: string | null;
-  sentiment_score: number;
-  sentiment_label: SentimentLabel;
-  impact_level: ImpactLevel;
-  relevance_score: number;
-  created_at: string | null;
-};
-
 export type NewsRefreshResult = {
   symbol: string;
   provider: string | null;
@@ -912,17 +1063,14 @@ export type NewsRefreshResult = {
   message: string;
 };
 
-export type NewsLatest = {
-  id: number;
-  title: string;
-  summary: string | null;
-  url: string | null;
-  source: string | null;
-  published_at: string | null;
-  sentiment_label: SentimentLabel;
-  sentiment_score: number;
-  impact_level: ImpactLevel;
-  relevance_score: number;
+export type NewsStatus = {
+  enable_real_news: boolean;
+  provider_status: NewsProviderStatus[];
+  daily_usage: NewsDailyUsage;
+  cache_status: Record<string, number>;
+  last_refresh: string | null;
+  news_sentiment_weight: number;
+  news_cache_ttl_hours: number;
 };
 
 export type NewsSentimentSummary = {
@@ -937,6 +1085,8 @@ export type NewsSentimentSummary = {
   neutral_count: number;
   latest_news: NewsLatest[];
 };
+
+export type NewsSentimentSummaryOut = NewsSentimentSummary;
 
 export type NewsProviderStatus = {
   provider: string;
@@ -954,23 +1104,116 @@ export type NewsDailyUsage = {
   daily_limit: number;
 };
 
-export type NewsStatus = {
-  enable_real_news: boolean;
-  provider_status: NewsProviderStatus[];
-  daily_usage: NewsDailyUsage;
-  cache_status: Record<string, number>;
-  last_refresh: string | null;
-  news_sentiment_weight: number;
-  news_cache_ttl_hours: number;
+export type NewsLatest = {
+  id: number;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  source: string | null;
+  published_at: string | null;
+  sentiment_label: SentimentLabel;
+  sentiment_score: number;
+  impact_level: ImpactLevel;
+  relevance_score: number;
 };
 
-export type MarketSentiment = {
-  news_count: number;
-  average_sentiment_score: number;
-  sentiment_label: SentimentLabel;
-  positive_count: number;
-  negative_count: number;
-  neutral_count: number;
+export type OptimizationRunFullOut = OptimizationRunFull;
+export type ScenarioRunFullOut = ScenarioRunFull;
+export type AppSnapshotOut = AppSnapshot;
+export type AppExportOut = AppExport;
+export type AppImportOut = AppImport;
+export type HardeningCheckOut = HardeningCheck;
+export type BackupStatusOut = BackupStatus;
+export type HardeningReportOut = HardeningReport;
+export type AppSettingOut = AppSetting;
+export type RiskProfileOut = RiskProfile;
+export type StrategyProfileOut = StrategyProfile;
+export type NotificationPreferenceOut = NotificationPreference;
+export type UIPreferencesOut = UIPreferences;
+
+export type PortfolioType = "CORE" | "GROWTH" | "CRYPTO" | "DIVIDEND" | "SPECULATIVE" | "FAMILY" | "CUSTOM";
+export type TransferType = "DEPOSIT" | "WITHDRAWAL" | "INTERNAL_TRANSFER";
+
+export type Portfolio = {
+  id: number;
+  portfolio_name: string;
+  description: string | null;
+  portfolio_type: string;
+  base_currency: string;
+  initial_cash: number;
+  current_cash: number;
+  risk_profile_id: number | null;
+  strategy_profile_id: number | null;
+  is_active: boolean;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PortfolioCreateIn = {
+  portfolio_name: string;
+  description?: string | null;
+  portfolio_type?: PortfolioType;
+  base_currency?: string;
+  initial_cash?: number;
+  risk_profile_id?: number | null;
+  strategy_profile_id?: number | null;
+};
+
+export type PortfolioUpdateIn = {
+  portfolio_name?: string | null;
+  description?: string | null;
+  portfolio_type?: PortfolioType | null;
+  risk_profile_id?: number | null;
+  strategy_profile_id?: number | null;
+  is_archived?: boolean | null;
+};
+
+export type PortfolioCloneIn = {
+  new_name: string;
+  include_positions: boolean;
+  include_orders: boolean;
+};
+
+export type CashTransferIn = {
+  from_portfolio_id?: number | null;
+  to_portfolio_id?: number | null;
+  amount: number;
+  transfer_type: TransferType;
+  note?: string | null;
+};
+
+export type CashTransfer = {
+  id: number;
+  from_portfolio_id: number | null;
+  to_portfolio_id: number | null;
+  amount: number;
+  currency: string;
+  transfer_type: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type ConsolidatedSummary = {
+  total_value: number;
+  total_cash: number;
+  total_invested: number;
+  total_realized_pnl: number;
+  total_unrealized_pnl: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  portfolios_count: number;
+  active_portfolios_count: number;
+  allocation_by_asset_type: Record<string, number>;
+  allocation_by_currency: Record<string, number>;
+  portfolio_summaries: any[];
+};
+
+export type PortfolioPerformanceComparison = {
+  portfolios: any[];
+  best_performer: any | null;
+  worst_performer: any | null;
+  risk_comparison: any[];
 };
 
 async function parseError(response: Response) {
@@ -1028,6 +1271,25 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "PUT",
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(fetchErrorMessage(path, error));
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export async function apiDelete<T>(path: string): Promise<T> {
   let response: Response;
   try {
@@ -1052,24 +1314,38 @@ export const api = {
   getAssetDataQuality: (symbol: string) => apiGet<DataQualityCheck>(`/quality/data/${symbol}`),
   getAllValidatedSignals: () => apiGet<ValidatedSignal[]>("/signals/validated"),
   getAssetValidatedSignal: (symbol: string) => apiGet<ValidatedSignal>(`/signals/validated/${symbol}`),
-  getOperationalRanking: () => apiGet<OperationalRanking>("/ranking/operational"),
-  getPortfolioActions: () => apiGet<PortfolioAction[]>("/portfolio/actions"),
-  generateStrategyPlan: (config: StrategyPlanConfig) => apiPost<StrategyPlanFull>("/strategy/plans/generate", config),
-  listStrategyPlans: () => apiGet<StrategyPlanSummary[]>("/strategy/plans"),
+  getOperationalRanking: (portfolio_id?: number) => apiGet<OperationalRanking>(`/ranking/operational${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+  getPortfolioActions: (portfolio_id?: number) => apiGet<PortfolioAction[]>(`/portfolio/actions${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+  generateStrategyPlan: (config: StrategyPlanConfig, portfolio_id?: number) => apiPost<StrategyPlanFull>(`/strategy/plans/generate${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, config),
+  listStrategyPlans: (portfolio_id?: number) => apiGet<StrategyPlanSummary[]>(`/strategy/plans${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
   getStrategyPlan: (id: number) => apiGet<StrategyPlanFull>(`/strategy/plans/${id}`),
   applyStrategyPlan: (id: number) => apiPost<{ orders_created: number }>(`/strategy/plans/${id}/apply-paper`),
   deleteStrategyPlan: (id: number) => apiDelete<{ success: boolean }>(`/strategy/plans/${id}`),
   getDefaultStrategyConfig: () => apiGet<StrategyPlanConfig>("/strategy/default-config"),
   
+  // PORTFOLIOS
+  listPortfolios: (include_archived: boolean = false) => apiGet<Portfolio[]>(`/portfolios?include_archived=${include_archived}`),
+  createPortfolio: (payload: PortfolioCreateIn) => apiPost<Portfolio>("/portfolios", payload),
+  getActivePortfolio: () => apiGet<Portfolio>("/portfolios/active"),
+  activatePortfolio: (id: number) => apiPost<{ success: boolean }>(`/portfolios/${id}/activate`, {}),
+  getPortfolioDetail: (id: number) => apiGet<Portfolio>(`/portfolios/${id}`),
+  updatePortfolio: (id: number, payload: PortfolioUpdateIn) => apiPut<Portfolio>(`/portfolios/${id}`, payload),
+  deletePortfolio: (id: number) => apiDelete<{ success: boolean }>(`/portfolios/${id}`),
+  clonePortfolio: (id: number, payload: PortfolioCloneIn) => apiPost<Portfolio>(`/portfolios/${id}/clone`, payload),
+  transferCash: (payload: CashTransferIn) => apiPost<CashTransfer>("/portfolios/transfer-cash", payload),
+  getConsolidatedSummary: () => apiGet<ConsolidatedSummary>("/portfolios/consolidated-summary"),
+  getPerformanceComparison: () => apiGet<PortfolioPerformanceComparison>("/portfolios/performance-comparison"),
+
   // ALERTS
-  listAlerts: (status?: string, severity?: string, symbol?: string) => {
+  listAlerts: (status?: string, severity?: string, symbol?: string, portfolio_id?: number) => {
     let url = "/alerts?";
+    if (portfolio_id) url += `portfolio_id=${portfolio_id}&`;
     if (status) url += `status=${status}&`;
     if (severity) url += `severity=${severity}&`;
     if (symbol) url += `symbol=${symbol}&`;
     return apiGet<Alert[]>(url);
   },
-  getAlertSummary: () => apiGet<AlertSummary>("/alerts/summary"),
+  getAlertSummary: (portfolio_id?: number) => apiGet<AlertSummary>(`/alerts/summary${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
   acknowledgeAlert: (id: number) => apiPost<{ success: boolean }>(`/alerts/${id}/acknowledge`, {}),
   closeAlert: (id: number) => apiPost<{ success: boolean }>(`/alerts/${id}/close`, {}),
   getAlertRules: () => apiGet<AlertRule[]>("/alerts/rules"),
@@ -1082,15 +1358,15 @@ export const api = {
     apiPost<SchedulerRun>("/scheduler/run", payload),
 
   // REPORTS
-  listReports: () => apiGet<OperationalReport[]>("/reports"),
+  listReports: (portfolio_id?: number) => apiGet<OperationalReport[]>(`/reports${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
   getLatestReport: () => apiGet<OperationalReport | null>("/reports/latest"),
   getReport: (id: number) => apiGet<OperationalReport>(`/reports/${id}`),
-  generateReport: (report_type: string = "MANUAL") => apiPost<OperationalReport>("/reports/generate", { report_type }),
+  generateReport: (report_type: string = "MANUAL", portfolio_id?: number) => apiPost<OperationalReport>(`/reports/generate?report_type=${report_type}${portfolio_id ? `&portfolio_id=${portfolio_id}` : ""}`, {}),
 
   // OPTIMIZER
   getDefaultOptimizerConfig: () => apiGet<OptimizerConfig>("/optimizer/default-config"),
-  runOptimization: (config: OptimizerConfig) => apiPost<OptimizationRunFull>("/optimizer/run", config),
-  listOptimizationRuns: () => apiGet<OptimizationRunSummary[]>("/optimizer/runs"),
+  runOptimization: (config: OptimizerConfig, portfolio_id?: number) => apiPost<OptimizationRunFull>(`/optimizer/run${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, config),
+  listOptimizationRuns: (portfolio_id?: number) => apiGet<OptimizationRunSummary[]>(`/optimizer/runs${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
   getOptimizationRun: (id: number) => apiGet<OptimizationRunFull>(`/optimizer/runs/${id}`),
   applyRebalanceOrders: (id: number) => apiPost<{ orders_created: number }>(`/optimizer/runs/${id}/create-paper-orders`, {}),
   deleteOptimizationRun: (id: number) => apiDelete<{ success: boolean }>(`/optimizer/runs/${id}`),
@@ -1098,9 +1374,65 @@ export const api = {
   // SCENARIOS
   getDefaultScenarioConfig: () => apiGet<ScenarioConfig>("/scenarios/default-config"),
   getScenarioPresets: () => apiGet<{ id: string, label: string }[]>("/scenarios/presets"),
-  runScenarioAnalysis: (config: ScenarioConfig) => apiPost<ScenarioRunFull>("/scenarios/run", config),
-  listScenarioRuns: () => apiGet<ScenarioRunSummary[]>("/scenarios/runs"),
+  runScenarioAnalysis: (config: ScenarioConfig, portfolio_id?: number) => apiPost<ScenarioRunFull>(`/scenarios/run${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, config),
+  listScenarioRuns: (portfolio_id?: number) => apiGet<ScenarioRunSummary[]>(`/scenarios/runs${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
   getScenarioRun: (id: number) => apiGet<ScenarioRunFull>(`/scenarios/runs/${id}`),
   deleteScenarioRun: (id: number) => apiDelete<{ success: boolean }>(`/scenarios/runs/${id}`),
-  };
 
+  // PORTFOLIO CORE
+  getPortfolio: (portfolio_id?: number) => apiGet<PortfolioSummary>(`/portfolio${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+  initPortfolio: (payload: any, portfolio_id?: number) => apiPost<PortfolioSummary>(`/portfolio/init${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, payload),
+  simulateOrder: (payload: SimulatedOrderInput, portfolio_id?: number) => apiPost<OrderSimulationResponse>(`/orders/simulate${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, payload),
+  listOrders: (portfolio_id?: number) => apiGet<SimulatedOrder[]>(`/orders${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+  getPortfolioSnapshots: (portfolio_id?: number) => apiGet<PortfolioSnapshot[]>(`/portfolio/snapshots${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+  refreshPortfolio: (portfolio_id?: number) => apiPost<PortfolioSummary>(`/portfolio/refresh${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`, {}),
+  getPortfolioRecommendations: (portfolio_id?: number) => apiGet<PortfolioRecommendation[]>(`/portfolio/recommendations${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+
+  // SETTINGS
+  getAppSettings: () => apiGet<AppSetting[]>("/settings"),
+  updateAppSetting: (key: string, value_json: string, description?: string) => apiPut<{ success: boolean }>(`/settings/${key}`, { setting_value_json: value_json, description }),
+  listRiskProfiles: () => apiGet<RiskProfile[]>("/settings/risk-profiles"),
+  getActiveRiskProfile: () => apiGet<RiskProfile>("/settings/risk-profiles/active"),
+  createRiskProfile: (p: any) => apiPost<RiskProfile>("/settings/risk-profiles", p),
+  updateRiskProfile: (id: number, p: any) => apiPut<RiskProfile>(`/settings/risk-profiles/${id}`, p),
+  activateRiskProfile: (id: number) => apiPost<{ success: boolean }>(`/settings/risk-profiles/${id}/activate`, {}),
+  deleteRiskProfile: (id: number) => apiDelete<{ success: boolean }>(`/settings/risk-profiles/${id}`),
+  listStrategyProfiles: () => apiGet<StrategyProfile[]>("/settings/strategy-profiles"),
+  getActiveStrategyProfile: () => apiGet<StrategyProfile>("/settings/strategy-profiles/active"),
+  activateStrategyProfile: (id: number) => apiPost<{ success: boolean }>(`/settings/strategy-profiles/${id}/activate`, {}),
+  listNotifications: () => apiGet<NotificationPreference[]>("/settings/notifications"),
+  updateNotification: (alert_type: string, p: any) => apiPut<{ success: boolean }>("/settings/notifications", { alert_type, ...p }),
+  getUiPreferences: () => apiGet<UIPreferences>("/settings/ui"),
+  updateUiPreferences: (p: any) => apiPut<{ success: boolean }>("/settings/ui", p),
+  dashboard: (portfolio_id?: number) => apiGet<DashboardResponse>(`/dashboard${portfolio_id ? `?portfolio_id=${portfolio_id}` : ""}`),
+
+  // BACKUP
+  getBackupStatus: () => apiGet<BackupStatus>("/backup/status"),
+  createBackup: (snapshot_name?: string, note?: string) => apiPost<AppSnapshot>("/backup/create", { snapshot_name, note }),
+  listBackups: () => apiGet<AppSnapshot[]>("/backup/list"),
+  getBackupDetail: (id: number) => apiGet<AppSnapshot>(`/backup/${id}`),
+  restoreBackup: (id: number, confirm: boolean) => apiPost<{ success: boolean, message: string }>(`/backup/${id}/restore`, { confirm }),
+  deleteBackup: (id: number) => apiDelete<{ success: boolean }>(`/backup/${id}`),
+
+  // EXPORT
+  getExportTypes: () => apiGet<string[]>("/export/types"),
+  createExport: (export_type: string, file_format: string) => apiPost<AppExport>("/export/create", { export_type, file_format }),
+  listExports: () => apiGet<AppExport[]>("/export/list"),
+
+  // IMPORT
+  getImportTypes: () => apiGet<string[]>("/import/types"),
+  validateImport: (file_name: string, import_type: string) => apiPost<any>("/import/validate", { file_name, import_type }),
+  runImport: (file_name: string, import_type: string, confirm: boolean) => apiPost<AppImport>("/import/run", { file_name, import_type, confirm }),
+
+  // HARDENING
+  getHardeningReport: () => apiGet<HardeningReport>("/hardening/report"),
+  runHardeningChecks: () => apiPost<HardeningReport>("/hardening/run", {}),
+
+  // MARKET DATA
+  getAssets: () => apiGet<Asset[]>("/assets"),
+  getAsset: (symbol: string) => apiGet<Asset>(`/assets/${symbol}`),
+  getPriceHistory: (symbol: string) => apiGet<PriceHistory>(`/prices/${symbol}`),
+  getTechnicalAnalysis: (symbol: string) => apiGet<TechnicalAnalysis>(`/analysis/${symbol}`),
+  getUniverse: (level?: string) => apiGet<UniverseAsset[]>(`/universe${level ? `?level=${level}` : ""}`),
+  getUniverseSummary: () => apiGet<UniverseSummary>("/universe/summary"),
+};

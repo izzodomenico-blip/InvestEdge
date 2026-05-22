@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Activity, CheckCircle2, AlertTriangle, XCircle, Database, Server, Zap, ShieldAlert } from "lucide-react";
+import { Activity, CheckCircle2, AlertTriangle, XCircle, Database, Server, Zap, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Panel } from "../components/Panel";
-import { api, type SystemHealth, type DataQualityCheck } from "../lib/api";
+import { api, type SystemHealth, type DataQualityCheck, type HardeningReport } from "../lib/api";
 
 export function SystemAuditPage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [quality, setQuality] = useState<DataQualityCheck[]>([]);
+  const [hardening, setHardening] = useState<HardeningReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,12 +14,14 @@ export function SystemAuditPage() {
     setLoading(true);
     setError(null);
     try {
-      const [h, q] = await Promise.all([
+      const [h, q, hard] = await Promise.all([
         api.getSystemHealth(),
         api.getAllDataQuality(),
+        api.getHardeningReport(),
       ]);
       setHealth(h);
       setQuality(q);
+      setHardening(hard);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il caricamento dei dati di audit.");
     } finally {
@@ -117,6 +120,25 @@ export function SystemAuditPage() {
               </span>
             </div>
           </div>
+        </Panel>
+
+        <Panel title="Hardening" icon={<ShieldCheck className="w-5 h-5 text-emerald-500" />}>
+           <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Security Status</span>
+                <span className={`font-bold ${hardening?.overall_status === 'OK' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                   {hardening?.overall_status}
+                </span>
+              </div>
+              <div className="space-y-1">
+                 {hardening?.checks.slice(0, 3).map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[10px]">
+                       {c.status === 'OK' ? <CheckCircle2 className="w-3 h-3 text-emerald-500" /> : <AlertTriangle className="w-3 h-3 text-amber-500" />}
+                       <span className="text-slate-400 truncate">{c.check_name}</span>
+                    </div>
+                 ))}
+              </div>
+           </div>
         </Panel>
       </div>
 

@@ -24,7 +24,10 @@ export function ReportsPage() {
   async function loadInitialData() {
     setLoading(true);
     try {
-      const data = await api.listReports();
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
+      const data = await api.listReports(pId);
       setReports(data);
       if (data.length > 0) {
         setSelectedReport(await api.getReport(data[0].id));
@@ -43,7 +46,10 @@ export function ReportsPage() {
   async function handleGenerate(type: string = "MANUAL") {
     setGenerating(true);
     try {
-      const report = await api.generateReport(type);
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
+      const report = await api.generateReport(type, pId);
       setReports([report, ...reports]);
       setSelectedReport(report);
     } catch (err) {

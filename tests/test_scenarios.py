@@ -19,9 +19,14 @@ def mock_db():
     conn.execute("INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (2, '2026-05-21', 100000.0, 1)") # BTC price 100k for simplicity
     
     # 3. Add portfolio
-    conn.execute("INSERT INTO portfolio_positions (asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (1, 'AAPL', 100, 150.0, 60.0, 15000.0, 'stock', 'USD')")
-    conn.execute("INSERT INTO portfolio_positions (asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (2, 'BTC', 0.1, 100000.0, 40.0, 10000.0, 'crypto', 'USD')")
-    conn.execute("INSERT INTO portfolio_settings (id, initial_cash, current_cash) VALUES (1, 25000, 0)")
+    conn.execute(
+        """
+        INSERT INTO portfolios (id, portfolio_name, portfolio_type, initial_cash, current_cash, is_active)
+        VALUES (1, 'Default Portfolio', 'CORE', 25000, 0, 1)
+        """
+    )
+    conn.execute("INSERT INTO portfolio_positions (portfolio_id, asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (1, 1, 'AAPL', 100, 150.0, 60.0, 15000.0, 'stock', 'USD')")
+    conn.execute("INSERT INTO portfolio_positions (portfolio_id, asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (1, 2, 'BTC', 0.1, 100000.0, 40.0, 10000.0, 'crypto', 'USD')")
     
     yield conn
     conn.close()
@@ -34,7 +39,7 @@ def test_market_crash_scenario(mock_db):
         portfolio_source="CURRENT_PORTFOLIO"
     )
     
-    run = service.run_scenario_analysis(mock_db, config)
+    run = service.run_scenario_analysis(mock_db, config, portfolio_id=1)
     assert run.summary.scenario_type == "MARKET_CRASH"
     # STOCK shock is -20%, CRYPTO is -30%
     # AAPL (15000) -> 12000 (-3000)
@@ -55,7 +60,7 @@ def test_custom_symbol_shock(mock_db):
         symbol_shocks={"AAPL": -50.0}
     )
     
-    run = service.run_scenario_analysis(mock_db, config)
+    run = service.run_scenario_analysis(mock_db, config, portfolio_id=1)
     aapl_impact = next(i for i in run.asset_impacts if i.symbol == "AAPL")
     assert aapl_impact.shock_percent == -50.0
     assert aapl_impact.absolute_impact == -7500.0
@@ -68,7 +73,7 @@ def test_mitigation_suggestions(mock_db):
         portfolio_source="CURRENT_PORTFOLIO"
     )
     
-    run = service.run_scenario_analysis(mock_db, config)
+    run = service.run_scenario_analysis(mock_db, config, portfolio_id=1)
     assert len(run.mitigation_suggestions) > 0
     assert any("ribilanciamento" in s.lower() for s in run.mitigation_suggestions)
 
@@ -80,8 +85,8 @@ def test_scenario_run_persistence(mock_db):
         portfolio_source="CURRENT_PORTFOLIO"
     )
     
-    run = service.run_scenario_analysis(mock_db, config)
-    runs = service.list_runs(mock_db)
+    run = service.run_scenario_analysis(mock_db, config, portfolio_id=1)
+    runs = service.list_runs(mock_db, portfolio_id=1)
     assert len(runs) >= 1
     assert runs[0].scenario_name == "Persistent Test"
     

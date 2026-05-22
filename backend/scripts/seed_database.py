@@ -19,6 +19,7 @@ from backend.app.models import PortfolioInitIn, SimulatedOrderIn
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
 from backend.app.services.universe_service import UNIVERSE_DIR, UniverseService
+from backend.app.services.multi_portfolio_service import MultiPortfolioService
 
 
 FIXED_SEED = 20260517
@@ -105,6 +106,8 @@ def _reset_seed_data(connection) -> None:
     connection.execute("DELETE FROM portfolio_snapshots")
     connection.execute("DELETE FROM simulated_orders")
     connection.execute("DELETE FROM portfolio_positions")
+    connection.execute("DELETE FROM portfolios")
+    connection.execute("DELETE FROM portfolio_cash_transfers")
     connection.execute("DELETE FROM portfolio_settings")
     connection.execute("DELETE FROM backtest_runs")
     connection.execute("DELETE FROM ml_predictions")
@@ -153,6 +156,9 @@ def _historical_close(connection, symbol: str, days_ago: int) -> float:
 
 
 def _create_demo_portfolio(connection) -> dict[str, int]:
+    mps = MultiPortfolioService()
+    portfolio_id = mps.ensure_default_portfolio(connection)
+    
     engine = PortfolioEngine()
     engine.initialize_portfolio(
         connection,
@@ -162,6 +168,7 @@ def _create_demo_portfolio(connection) -> dict[str, int]:
             max_asset_class_weight=55,
             default_fee_percent=0.1,
         ),
+        portfolio_id=portfolio_id
     )
 
     demo_orders = [
@@ -185,14 +192,16 @@ def _create_demo_portfolio(connection) -> dict[str, int]:
                 note=f"Demo seed paper trade generato a {days_ago} giorni dal seed.",
                 strategy_tag=tag,
             ),
+            portfolio_id=portfolio_id
         )
 
-    engine.refresh_portfolio(connection, create_snapshot=True)
+    engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=True)
     positions_count = connection.execute(
-        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 0"
+        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE portfolio_id = ? AND quantity > 0",
+        (portfolio_id,)
     ).fetchone()["count"]
-    orders_count = connection.execute("SELECT COUNT(*) AS count FROM simulated_orders").fetchone()["count"]
-    snapshots_count = connection.execute("SELECT COUNT(*) AS count FROM portfolio_snapshots").fetchone()["count"]
+    orders_count = connection.execute("SELECT COUNT(*) AS count FROM simulated_orders WHERE portfolio_id = ?", (portfolio_id,)).fetchone()["count"]
+    snapshots_count = connection.execute("SELECT COUNT(*) AS count FROM portfolio_snapshots WHERE portfolio_id = ?", (portfolio_id,)).fetchone()["count"]
     return {
         "portfolio_positions_inserted": positions_count,
         "simulated_orders_inserted": orders_count,
@@ -216,6 +225,57 @@ def _create_default_alert_rules(connection: sqlite3.Connection):
             """,
             (name, a_type, severity, threshold)
         )
+
+
+def _create_default_profiles(connection: sqlite3.Connection):
+    # Risk Profiles
+    risk_profiles = [
+        ("Conservative", "CONSERVATIVE", 1, 5, 20, 2, 15, 10, 80, "HIGH", 1, 0, 0, 1, 1, 0, 0, 70, 0, 0, 30),
+        ("Balanced", "BALANCED", 1, 15, 40, 10, 5, 15, 60, "MEDIUM", 0, 1, 1, 1, 1, 1, 1, 50, 20, 15, 15),
+        ("Aggressive", "AGGRESSIVE", 1, 25, 60, 25, 2, 25, 40, "LOW", 0, 1, 1, 1, 1, 1, 1, 40, 30, 20, 10),
+    ]
+    for name, p_type, active, msw, macw, mcw, mcr, mpd, mdq, moc, rrd, ac, ass, ab, ae, aml, anl, tw, mw, nw, rw in risk_profiles:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO risk_profiles (
+                profile_name, profile_type, is_active, max_single_asset_weight, max_asset_class_weight,
+                max_crypto_weight, min_cash_reserve_percent, max_portfolio_drawdown_percent,
+                min_data_quality_score, min_operational_confidence, require_real_data_for_buy,
+                allow_crypto, allow_single_stocks, allow_bonds, allow_etf,
+                allow_ml_influence, allow_news_influence, technical_weight, ml_weight, news_weight, risk_weight,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, p_type, active if p_type == 'BALANCED' else 0, msw, macw, mcw, mcr, mpd, mdq, moc, rrd, ac, ass, ab, ae, aml, anl, tw, mw, nw, rw, SEED_CREATED_AT, SEED_CREATED_AT)
+        )
+
+    # Strategy Profiles
+    strat_profiles = [
+        ("Conservative Weekly Review", "CORE", 10, "WEEKLY", 75, 45, 60, 75, "HIGH", 8, 20, 0.1, 15, 0, 0, 1, 1),
+        ("Balanced Core Rotation", "CORE", 15, "WEEKLY", 70, 40, 55, 70, "MEDIUM", 10, 25, 0.1, 5, 1, 1, 1, 1),
+        ("Aggressive Growth Radar", "EXTENDED", 25, "DAILY", 65, 35, 50, 65, "LOW", 15, 40, 0.1, 2, 1, 1, 1, 1),
+    ]
+    for name, univ, mp, freq, bt, st, wt, msb, mcb, sl, tp, fp, crp, ml, news, sr, opt in strat_profiles:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO strategy_profiles (
+                profile_name, is_active, universe_level, max_positions, rebalance_frequency,
+                buy_threshold, sell_threshold, watch_threshold, min_score_for_buy, min_confidence_for_buy,
+                stop_loss_percent, take_profit_percent, fee_percent, cash_reserve_percent,
+                use_ml, use_news, use_scenario_risk, use_optimizer, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, 1 if "Balanced" in name else 0, univ, mp, freq, bt, st, wt, msb, mcb, sl, tp, fp, crp, ml, news, sr, opt, SEED_CREATED_AT, SEED_CREATED_AT)
+        )
+
+    # UI Preferences
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO ui_preferences (theme, default_landing_page, compact_mode, show_advanced_metrics, default_universe_level, default_benchmark, default_currency, created_at, updated_at)
+        VALUES ('dark', 'Dashboard', 0, 1, 'CORE', 'SPY', 'USD', ?, ?)
+        """,
+        (SEED_CREATED_AT, SEED_CREATED_AT)
+    )
 
 
 def seed_database(reset: bool = False) -> dict[str, Any]:
@@ -243,6 +303,7 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             _reset_seed_data(connection)
 
         _create_default_alert_rules(connection)
+        _create_default_profiles(connection)
 
         for index, asset in enumerate(ASSETS):
             connection.execute(

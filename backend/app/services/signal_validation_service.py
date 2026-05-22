@@ -7,6 +7,7 @@ from backend.app.models.schemas import ValidatedSignalOut
 from backend.app.services.data_quality_service import DataQualityService
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.assets_service import get_asset_by_symbol
+from backend.app.services.user_settings_service import UserSettingsService
 
 
 def _now() -> str:
@@ -17,11 +18,20 @@ class SignalValidationService:
     def __init__(self) -> None:
         self.data_quality_service = DataQualityService()
         self.portfolio_engine = PortfolioEngine()
+        self.settings_service = UserSettingsService()
 
-    def validate_signal(self, connection: sqlite3.Connection, symbol: str) -> ValidatedSignalOut:
+    def validate_signal(self, connection: sqlite3.Connection, symbol: str, portfolio_id: int | None = None) -> ValidatedSignalOut:
+        from backend.app.services.multi_portfolio_service import MultiPortfolioService
+        mps = MultiPortfolioService()
+        
+        if portfolio_id is None:
+            portfolio_id = mps.get_active_portfolio(connection).id
+
         asset = get_asset_by_symbol(connection, symbol)
         if not asset:
             raise ValueError(f"Asset {symbol} not found")
+            
+        profile = self.settings_service.get_active_risk_profile(connection)
 
         asset_id = asset.id
         original_signal = asset.signal or "HOLD"
@@ -30,7 +40,7 @@ class SignalValidationService:
         quality = self.data_quality_service.check_asset_quality(connection, symbol)
 
         # 2. Portfolio Constraints
-        portfolio = self.portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+        portfolio = self.portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
         position = next((p for p in portfolio.positions if p.symbol == symbol.upper()), None)
         current_weight = position.weight_percent if position else 0.0
 
@@ -52,27 +62,32 @@ class SignalValidationService:
         news_impact = news_row["impact_level"] if news_row else "LOW"
 
         validated_signal = original_signal
-        reason = "Signal maintains original technical assessment."
+        reason = f"Signal maintains original technical assessment (Profile: {profile.profile_name})."
         action = "NO_ACTION"
 
-        # Logic rules
-        if quality.score < 50:
+        # Logic rules from Profile
+        if quality.score < profile.min_data_quality_score:
             validated_signal = "HOLD"
-            reason = f"Data quality too low ({quality.score:.1f}). Exclusion required."
+            reason = f"Data quality too low ({quality.score:.1f}). Profile minimum is {profile.min_data_quality_score}."
             action = "EXCLUDE"
         elif original_signal in ["BUY", "STRONG_BUY"]:
-            if current_weight > 20.0:
+            # Check constraints from Profile
+            if current_weight > profile.max_single_asset_weight:
                 validated_signal = "HOLD"
-                reason = f"Technical BUY but portfolio weight too high ({current_weight:.1f}%). Limit risk."
+                reason = f"Technical BUY but portfolio weight too high ({current_weight:.1f}%). Profile max is {profile.max_single_asset_weight}%."
                 action = "HOLD"
-            elif ml_conf == "LOW":
+            elif profile.allow_ml_influence and ml_conf == "LOW" and profile.min_operational_confidence == "MEDIUM":
                 validated_signal = "HOLD"
-                reason = "Technical BUY but ML confidence is LOW. Waiting for confirmation."
+                reason = "Technical BUY but ML confidence is LOW. Profile requires higher confidence."
                 action = "WATCH"
-            elif news_sent == "NEGATIVE" and news_impact == "HIGH":
+            elif profile.allow_news_influence and news_sent == "NEGATIVE" and news_impact == "HIGH":
                 validated_signal = "HOLD"
-                reason = "Technical BUY but high-impact negative news detected."
+                reason = "Technical BUY but high-impact negative news detected. News influence active in Profile."
                 action = "WATCH"
+            elif profile.require_real_data_for_buy and not asset.is_real_data:
+                 validated_signal = "HOLD"
+                 reason = "Technical BUY but real data required by Profile. Asset has only seed/demo data."
+                 action = "WATCH"
             else:
                 action = "BUY"
         elif original_signal == "SELL" and current_weight > 5.0:
@@ -96,8 +111,8 @@ class SignalValidationService:
             timestamp=_now(),
         )
 
-    def validate_all_signals(self, connection: sqlite3.Connection) -> list[ValidatedSignalOut]:
+    def validate_all_signals(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[ValidatedSignalOut]:
         assets = connection.execute(
             "SELECT DISTINCT symbol FROM signals"
         ).fetchall()
-        return [self.validate_signal(connection, row["symbol"]) for row in assets]
+        return [self.validate_signal(connection, row["symbol"], portfolio_id=portfolio_id) for row in assets]

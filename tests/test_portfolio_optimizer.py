@@ -31,8 +31,13 @@ def mock_db():
     conn.execute("INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (2, '2026-05-21', 300.0, 1)")
     conn.execute("INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (3, '2026-05-21', 60000.0, 1)")
 
-    # 4. Add portfolio settings
-    conn.execute("INSERT INTO portfolio_settings (id, initial_cash, current_cash) VALUES (1, 100000, 100000)")
+    # 4. Add portfolio
+    conn.execute(
+        """
+        INSERT INTO portfolios (id, portfolio_name, portfolio_type, initial_cash, current_cash, is_active)
+        VALUES (1, 'Default Portfolio', 'CORE', 100000, 100000, 1)
+        """
+    )
     
     yield conn
     conn.close()
@@ -49,7 +54,7 @@ def test_equal_weight_optimization(mock_db):
         min_data_quality_score=0.0
     )
     
-    run = service.generate_optimization_run(mock_db, config)
+    run = service.generate_optimization_run(mock_db, config, portfolio_id=1)
     assert run.summary.optimization_method == "EQUAL_WEIGHT"
     # AAPL and MSFT are BUY, BTC is HOLD but CORE. 
     # _get_candidates filters out HOLD if not in OPERATIONAL_BUY_CANDIDATES? 
@@ -77,7 +82,7 @@ def test_score_weighted_optimization(mock_db):
         max_single_asset_weight=60.0
     )
     
-    run = service.generate_optimization_run(mock_db, config)
+    run = service.generate_optimization_run(mock_db, config, portfolio_id=1)
     aapl = next(i for i in run.items if i.symbol == "AAPL")
     msft = next(i for i in run.items if i.symbol == "MSFT")
     # MSFT (90) should have more weight than AAPL (85)
@@ -85,8 +90,8 @@ def test_score_weighted_optimization(mock_db):
 
 def test_rebalance_orders_generation(mock_db):
     # Add a current position in BTC
-    mock_db.execute("INSERT INTO portfolio_positions (asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (3, 'BTC', 1.0, 50000.0, 50.0, 60000.0, 'crypto', 'USD')")
-    mock_db.execute("UPDATE portfolio_settings SET current_cash = 50000") # Total value 110,000
+    mock_db.execute("INSERT INTO portfolio_positions (portfolio_id, asset_id, symbol, quantity, average_price, weight_percent, current_value, asset_type, currency) VALUES (1, 3, 'BTC', 1.0, 50000.0, 50.0, 60000.0, 'crypto', 'USD')")
+    mock_db.execute("UPDATE portfolios SET current_cash = 50000 WHERE id = 1") # Total value 110,000
     
     service = PortfolioOptimizerService()
     config = OptimizerConfig(
@@ -97,7 +102,7 @@ def test_rebalance_orders_generation(mock_db):
         min_data_quality_score=0.0
     )
     
-    run = service.generate_optimization_run(mock_db, config)
+    run = service.generate_optimization_run(mock_db, config, portfolio_id=1)
     # BTC target should be lower than 50% (3 assets + cash reserve)
     # A SELL order for BTC should be proposed
     btc_orders = [o for o in run.proposed_orders if o.symbol == "BTC" and o.order_type == "SELL"]
@@ -113,7 +118,7 @@ def test_apply_rebalance_orders(mock_db):
         min_data_quality_score=0.0
     )
     
-    run = service.generate_optimization_run(mock_db, config)
+    run = service.generate_optimization_run(mock_db, config, portfolio_id=1)
     assert len(run.proposed_orders) > 0
     
     count = service.apply_rebalance_orders(mock_db, run.summary.id)

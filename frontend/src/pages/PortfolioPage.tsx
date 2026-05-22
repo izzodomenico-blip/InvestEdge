@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp, Scale } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp, Scale, BriefcaseBusiness } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -19,8 +19,7 @@ import { MetricCard } from "../components/MetricCard";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import {
-  apiGet,
-  apiPost,
+  api,
   type PortfolioRecommendation,
   type PortfolioSnapshot,
   type PortfolioSummary,
@@ -68,10 +67,13 @@ export function PortfolioPage() {
     setLoading(true);
     setError(null);
     try {
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+      
       const [portfolio, snapshotData, recommendationData] = await Promise.all([
-        apiGet<PortfolioSummary>("/portfolio"),
-        apiGet<PortfolioSnapshot[]>("/portfolio/snapshots"),
-        apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
+        api.getPortfolio(pId),
+        api.getPortfolioSnapshots(pId),
+        api.getPortfolioRecommendations(pId),
       ]);
       setSummary(portfolio);
       setSnapshots(snapshotData);
@@ -87,10 +89,13 @@ export function PortfolioPage() {
     setRefreshing(true);
     setError(null);
     try {
-      const portfolio = await apiPost<PortfolioSummary>("/portfolio/refresh");
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+      
+      const portfolio = await api.refreshPortfolio(pId);
       const [snapshotData, recommendationData] = await Promise.all([
-        apiGet<PortfolioSnapshot[]>("/portfolio/snapshots"),
-        apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
+        api.getPortfolioSnapshots(pId),
+        api.getPortfolioRecommendations(pId),
       ]);
       setSummary(portfolio);
       setSnapshots(snapshotData);
@@ -133,7 +138,7 @@ export function PortfolioPage() {
     [recommendations],
   );
 
-  if (loading) {
+  if (loading && !summary) {
     return (
       <Panel title="Portafoglio">
         <div className="h-56 animate-pulse rounded-lg border border-slate-800 bg-slate-900/60" />
@@ -160,12 +165,26 @@ export function PortfolioPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end border-b border-slate-800 pb-6">
         <div>
-          <p className="text-sm font-medium text-cyan-300">Paper trading</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Portafoglio</h1>
+          <div className="flex items-center gap-2 text-sm font-medium text-cyan-400 mb-1">
+             <BriefcaseBusiness size={14} /> 
+             <span>Paper trading</span>
+             <span className="text-slate-600">•</span>
+             <span className="text-slate-400">Portafoglio Attivo</span>
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight">
+             {summary.settings ? `Portfolio Simulator` : "Portafoglio"}
+          </h1>
+          <p className="text-slate-500 text-sm mt-1">Gestione posizioni e analisi dei limiti di rischio.</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => navigate("/portfolios")}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700"
+          >
+            Gestisci Portafogli
+          </button>
           <button
             onClick={() => navigate("/optimizer")}
             className="inline-flex items-center justify-center gap-2 rounded-md border border-indigo-300/30 bg-indigo-400/10 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:bg-indigo-400/20"
@@ -185,23 +204,23 @@ export function PortfolioPage() {
       </header>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} delta="Cash + posizioni" tone="cyan" icon={BadgeDollarSign} />
-        <MetricCard label="Liquidita" value={formatCurrency(summary.cash, baseCurrency)} delta={`${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del portafoglio`} tone="green" icon={Banknote} />
-        <MetricCard label="Capitale investito" value={formatCurrency(summary.invested_value, baseCurrency)} delta={`${summary.positions.length} posizioni aperte`} tone="amber" icon={PieChartIcon} />
-        <MetricCard label="P/L totale" value={formatCurrency(summary.total_pnl, baseCurrency)} delta={formatPercent(summary.total_pnl_percent)} tone={summary.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
+        <MetricCard label="Valore totale" value={formatCurrency(summary.total_value, summary.settings.max_cash_weight > 0 ? "USD" : "USD")} delta="Cash + posizioni" tone="cyan" icon={BadgeDollarSign} />
+        <MetricCard label="Liquidita" value={formatCurrency(summary.cash)} delta={`${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del portafoglio`} tone="green" icon={Banknote} />
+        <MetricCard label="Capitale investito" value={formatCurrency(summary.invested_value)} delta={`${summary.positions.length} posizioni aperte`} tone="amber" icon={PieChartIcon} />
+        <MetricCard label="P/L totale" value={formatCurrency(summary.total_pnl)} delta={formatPercent(summary.total_pnl_percent)} tone={summary.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <MetricCard label="P/L realizzato" value={formatCurrency(summary.realized_pnl, baseCurrency)} delta="Da vendite simulate" tone={summary.realized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
-        <MetricCard label="P/L non realizzato" value={formatCurrency(summary.unrealized_pnl, baseCurrency)} delta="Su posizioni aperte" tone={summary.unrealized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
+        <MetricCard label="P/L realizzato" value={formatCurrency(summary.realized_pnl)} delta="Da vendite simulate" tone={summary.realized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
+        <MetricCard label="P/L non realizzato" value={formatCurrency(summary.unrealized_pnl)} delta="Su posizioni aperte" tone={summary.unrealized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
         <MetricCard label="Warning rischio" value={`${summary.risk_warnings.length}`} delta="Concentrazione e liquidita" tone={summary.risk_warnings.length ? "rose" : "green"} icon={AlertTriangle} />
       </div>
 
       <Panel title="Posizioni">
         {summary.positions.length === 0 ? (
           <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
-            <h2 className="font-semibold text-amber-100">Portafoglio non inizializzato</h2>
-            <p className="mt-2 text-sm text-slate-300">Esegui il seed oppure inizializza un portafoglio dal backend con `/portfolio/init`.</p>
+            <h2 className="font-semibold text-amber-100">Portafoglio vuoto</h2>
+            <p className="mt-2 text-sm text-slate-300">Usa il simulatore per aggiungere asset al portafoglio attivo.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -290,7 +309,7 @@ export function PortfolioPage() {
               <AreaChart data={snapshots} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
                 <XAxis dataKey="snapshot_date" hide />
                 <YAxis stroke="#64748B" axisLine={false} tickLine={false} width={78} />
-                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatCurrency(Number(value), baseCurrency), "Valore"]} />
+                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatCurrency(Number(value)), "Valore"]} />
                 <Area type="monotone" dataKey="total_value" stroke="#22D3EE" fill="#22D3EE" fillOpacity={0.16} strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>

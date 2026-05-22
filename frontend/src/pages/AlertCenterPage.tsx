@@ -25,9 +25,12 @@ export function AlertCenterPage() {
   async function loadData() {
     setLoading(true);
     try {
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
       const [alertsData, summaryData, rulesData] = await Promise.all([
-        api.listAlerts(filterStatus, filterSeverity),
-        api.getAlertSummary(),
+        api.listAlerts(filterStatus, filterSeverity, undefined, pId),
+        api.getAlertSummary(pId),
         api.getAlertRules()
       ]);
       setAlerts(alertsData);

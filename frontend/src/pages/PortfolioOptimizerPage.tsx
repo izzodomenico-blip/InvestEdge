@@ -47,8 +47,11 @@ export function PortfolioOptimizerPage() {
   async function loadInitialData() {
     setLoading(true);
     try {
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
       const [runsData, defaultConfig] = await Promise.all([
-        api.listOptimizationRuns(),
+        api.listOptimizationRuns(pId),
         api.getDefaultOptimizerConfig(),
       ]);
       setRuns(runsData);
@@ -69,9 +72,12 @@ export function PortfolioOptimizerPage() {
     setOptimizing(true);
     setError(null);
     try {
-      const result = await api.runOptimization(config);
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+
+      const result = await api.runOptimization(config, pId);
       setSelectedRun(result);
-      setRuns(await api.listOptimizationRuns());
+      setRuns(await api.listOptimizationRuns(pId));
       setShowConfig(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante l'ottimizzazione.");

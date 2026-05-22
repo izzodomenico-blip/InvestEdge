@@ -14,7 +14,9 @@ export function OperationalRankingPage() {
     setLoading(true);
     setError(null);
     try {
-      setRanking(await api.getOperationalRanking());
+      const pIdStr = localStorage.getItem("activePortfolioId");
+      const pId = pIdStr ? parseInt(pIdStr) : undefined;
+      setRanking(await api.getOperationalRanking(pId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il caricamento del ranking operativo.");
     } finally {

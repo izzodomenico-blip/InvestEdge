@@ -2,7 +2,20 @@ from __future__ import annotations
 
 import sqlite3
 
-from backend.app.models import DashboardOut, NewsItemOut
+from backend.app.models import (
+    DashboardOut, 
+    NewsItemOut, 
+    BackupStatusOut, 
+    HardeningReportOut,
+    StrategyPlanSummaryOut,
+    AlertSummaryOut,
+    SchedulerRunOut,
+    OperationalReportOut,
+    OptimizationRunSummaryOut,
+    ScenarioRunSummaryOut,
+    SystemHealthOut,
+    ValidatedSignalOut
+)
 from backend.app.services.assets_service import list_assets
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
@@ -21,6 +34,9 @@ from backend.app.services.scheduler_service import SchedulerService
 from backend.app.services.report_service import ReportService
 from backend.app.services.portfolio_optimizer_service import PortfolioOptimizerService
 from backend.app.services.scenario_service import ScenarioService
+from backend.app.services.backup_service import BackupService
+from backend.app.services.hardening_service import HardeningService
+from backend.app.services.user_settings_service import UserSettingsService
 
 
 portfolio_engine = PortfolioEngine()
@@ -37,12 +53,22 @@ scheduler_service = SchedulerService()
 report_service = ReportService()
 portfolio_optimizer_service = PortfolioOptimizerService()
 scenario_service = ScenarioService()
+backup_service = BackupService()
+hardening_service = HardeningService()
+settings_service = UserSettingsService()
 
 
-def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
+def get_dashboard(connection: sqlite3.Connection, portfolio_id: int | None = None) -> DashboardOut:
+    from backend.app.services.multi_portfolio_service import MultiPortfolioService
+    mps = MultiPortfolioService()
+    
+    if portfolio_id is None:
+        portfolio_id = mps.get_active_portfolio(connection).id
+
     assets_count = connection.execute("SELECT COUNT(*) AS count FROM assets").fetchone()["count"]
     positions_count = connection.execute(
-        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 0"
+        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE portfolio_id = ? AND quantity > 0",
+        (portfolio_id,)
     ).fetchone()["count"]
     signals_count = connection.execute("SELECT COUNT(*) AS count FROM signals").fetchone()["count"]
     price_points_count = connection.execute("SELECT COUNT(*) AS count FROM price_history").fetchone()["count"]
@@ -75,8 +101,8 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
 
     latest_signals = list_signals(connection, limit=5)
     assets = list_assets(connection)
-    portfolio_summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
-    snapshots = portfolio_engine.list_snapshots(connection)[-20:]
+    portfolio_summary = portfolio_engine.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=False)
+    snapshots = portfolio_engine.list_snapshots(connection, portfolio_id=portfolio_id)[-20:]
     latest_backtest_row = connection.execute(
         """
         SELECT id, name, strategy_name, total_return_percent, max_drawdown,
@@ -152,12 +178,22 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
             for q in data_quality_service.list_all_quality(connection)
             if q.score < 70
         ],
-        latest_strategy_plan=next(iter(strategy_control_service.list_strategy_plans(connection)), None),
-        open_alerts_summary=alert_service.get_alert_summary(connection),
+        latest_strategy_plan=next(iter(strategy_control_service.list_strategy_plans(connection, portfolio_id=portfolio_id)), None),
+        open_alerts_summary=alert_service.get_alert_summary(connection, portfolio_id=portfolio_id),
         latest_scheduler_run=next(iter(scheduler_service.list_runs(connection, limit=1)), None),
         latest_operational_report=report_service.get_latest_report(connection),
-        latest_optimization_run=next(iter(portfolio_optimizer_service.list_runs(connection)), None),
-        latest_scenario_run=next(iter(scenario_service.list_runs(connection)), None),
+        latest_optimization_run=next(iter(portfolio_optimizer_service.list_runs(connection, portfolio_id=portfolio_id)), None),
+        latest_scenario_run=next(iter(scenario_service.list_runs(connection, portfolio_id=portfolio_id)), None),
+        active_risk_profile=settings_service.get_active_risk_profile(connection),
+        active_strategy_profile=settings_service.get_active_strategy_profile(connection),
+        backup_status=BackupStatusOut(
+            backup_directory=str(backup_service.backup_dir),
+            backups_count=len(backup_service.list_backups(connection)),
+            latest_backup=next(iter(backup_service.list_backups(connection)), None),
+            database_size_bytes=backup_service.db_path.stat().st_size if backup_service.db_path.exists() else 0,
+            integrity_status="OK"
+        ),
+        hardening_report=hardening_service.run_checks(connection),
     )
 
 

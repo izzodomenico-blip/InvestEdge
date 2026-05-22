@@ -20,6 +20,7 @@ class AlertService:
         severity: str,
         title: str,
         message: str,
+        portfolio_id: int | None = None,
         symbol: str | None = None,
         source_module: str | None = None,
         payload: dict[str, Any] | None = None,
@@ -28,12 +29,12 @@ class AlertService:
         cursor = connection.execute(
             """
             INSERT INTO alerts (
-                alert_type, severity, symbol, title, message, status, 
+                portfolio_id, alert_type, severity, symbol, title, message, status, 
                 source_module, payload_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
             """,
             (
-                alert_type, severity, symbol, title, message, 
+                portfolio_id, alert_type, severity, symbol, title, message, 
                 source_module, json.dumps(payload) if payload else None, now, now
             )
         )
@@ -42,11 +43,15 @@ class AlertService:
     def get_open_alerts(
         self, 
         connection: sqlite3.Connection, 
+        portfolio_id: int | None = None,
         severity: str | None = None, 
         symbol: str | None = None
     ) -> list[AlertOut]:
         query = "SELECT * FROM alerts WHERE status = 'OPEN'"
         params = []
+        if portfolio_id is not None:
+            query += " AND portfolio_id = ?"
+            params.append(portfolio_id)
         if severity:
             query += " AND severity = ?"
             params.append(severity)
@@ -74,8 +79,8 @@ class AlertService:
         )
         return True
 
-    def get_alert_summary(self, connection: sqlite3.Connection) -> AlertSummaryOut:
-        open_alerts = self.get_open_alerts(connection)
+    def get_alert_summary(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> AlertSummaryOut:
+        open_alerts = self.get_open_alerts(connection, portfolio_id=portfolio_id)
         
         summary = {
             "open_count": len(open_alerts),
@@ -128,6 +133,8 @@ class AlertService:
         portfolio_engine = PortfolioEngine()
         val_service = SignalValidationService()
 
+        active_portfolios = connection.execute("SELECT id FROM portfolios WHERE is_archived = 0").fetchall()
+
         for rule in [r for r in rules if r.enabled]:
             # 1. DATA_QUALITY_BAD
             if rule.alert_type == "DATA_QUALITY_BAD":
@@ -170,20 +177,22 @@ class AlertService:
 
             # 3. PORTFOLIO_CONCENTRATION
             if rule.alert_type == "PORTFOLIO_CONCENTRATION":
-                portfolio = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
-                for pos in portfolio.positions:
-                    if pos.weight_percent > (rule.threshold_value or 20.0):
-                        existing = connection.execute(
-                            "SELECT id FROM alerts WHERE symbol = ? AND alert_type = ? AND status = 'OPEN'",
-                            (pos.symbol, rule.alert_type)
-                        ).fetchone()
-                        if not existing:
-                            self.create_alert(
-                                connection, rule.alert_type, rule.severity,
-                                f"Concentrazione elevata: {pos.symbol}",
-                                f"L'asset {pos.symbol} pesa il {pos.weight_percent:.1f}% del portafoglio.",
-                                symbol=pos.symbol, source_module="RiskEngine"
-                            )
+                for p_row in active_portfolios:
+                    p_id = p_row["id"]
+                    portfolio = portfolio_engine.refresh_portfolio(connection, portfolio_id=p_id, create_snapshot=False)
+                    for pos in portfolio.positions:
+                        if pos.weight_percent > (rule.threshold_value or 20.0):
+                            existing = connection.execute(
+                                "SELECT id FROM alerts WHERE portfolio_id = ? AND symbol = ? AND alert_type = ? AND status = 'OPEN'",
+                                (p_id, pos.symbol, rule.alert_type)
+                            ).fetchone()
+                            if not existing:
+                                self.create_alert(
+                                    connection, rule.alert_type, rule.severity,
+                                    f"Concentrazione elevata: {pos.symbol}",
+                                    f"L'asset {pos.symbol} pesa il {pos.weight_percent:.1f}% del portafoglio.",
+                                    portfolio_id=p_id, symbol=pos.symbol, source_module="RiskEngine"
+                                )
 
     def _row_to_alert(self, row: sqlite3.Row) -> AlertOut:
         return AlertOut(

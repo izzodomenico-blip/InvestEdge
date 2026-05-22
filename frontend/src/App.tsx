@@ -19,12 +19,16 @@ import { SchedulerPage } from "./pages/SchedulerPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { PortfolioOptimizerPage } from "./pages/PortfolioOptimizerPage";
 import { ScenarioAnalysisPage } from "./pages/ScenarioAnalysisPage";
+import { BackupManagementPage } from "./pages/BackupManagementPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import PortfolioManagerPage from "./pages/PortfolioManagerPage";
 
 export default function App() {
   return (
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/portfolios" element={<PortfolioManagerPage />} />
         <Route path="/watchlist" element={<WatchlistPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/simulator" element={<SimulatorPage />} />
@@ -35,6 +39,8 @@ export default function App() {
         <Route path="/strategy" element={<StrategyControlPage />} />
         <Route path="/optimizer" element={<PortfolioOptimizerPage />} />
         <Route path="/scenarios" element={<ScenarioAnalysisPage />} />
+        <Route path="/backup" element={<BackupManagementPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/alerts" element={<AlertCenterPage />} />
         <Route path="/scheduler" element={<SchedulerPage />} />
         <Route path="/reports" element={<ReportsPage />} />

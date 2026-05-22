@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
+PortfolioType = Literal["CORE", "GROWTH", "CRYPTO", "DIVIDEND", "SPECULATIVE", "FAMILY", "CUSTOM"]
+TransferType = Literal["DEPOSIT", "WITHDRAWAL", "INTERNAL_TRANSFER"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
@@ -482,6 +484,217 @@ class ScenarioRunFullOut(BaseModel):
     loss_contribution: dict[str, float]
     mitigation_suggestions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class AppSnapshotOut(BaseModel):
+    id: int
+    snapshot_name: str
+    snapshot_type: str
+    file_path: str
+    checksum: str
+    size_bytes: int
+    tables_summary_json: str | None = None
+    note: str | None = None
+    created_at: str
+
+
+class AppExportOut(BaseModel):
+    id: int
+    export_name: str
+    export_type: str
+    file_format: str
+    file_path: str
+    checksum: str
+    size_bytes: int
+    created_at: str
+
+
+class AppImportOut(BaseModel):
+    id: int
+    import_name: str
+    import_type: str
+    file_name: str
+    status: str
+    records_processed: int
+    records_imported: int
+    records_failed: int
+    errors_json: str | None = None
+    created_at: str
+
+
+class HardeningCheckOut(BaseModel):
+    id: int | None = None
+    check_name: str
+    status: Literal["OK", "WARNING", "ERROR"]
+    message: str
+    details_json: str | None = None
+    created_at: str | None = None
+
+
+class BackupStatusOut(BaseModel):
+    backup_directory: str
+    backups_count: int
+    latest_backup: AppSnapshotOut | None = None
+    database_size_bytes: int
+    integrity_status: str
+
+
+class HardeningReportOut(BaseModel):
+    checks: list[HardeningCheckOut]
+    overall_status: str
+    timestamp: str
+
+
+class AppSettingOut(BaseModel):
+    id: int
+    setting_key: str
+    setting_value_json: str
+    category: str
+    description: str | None = None
+    updated_at: str
+    created_at: str
+
+
+class AppSettingUpdateIn(BaseModel):
+    setting_value_json: str
+    description: str | None = None
+
+
+class RiskProfileOut(BaseModel):
+    id: int
+    profile_name: str
+    profile_type: str
+    is_active: bool
+    max_single_asset_weight: float
+    max_asset_class_weight: float
+    max_crypto_weight: float
+    min_cash_reserve_percent: float
+    max_portfolio_drawdown_percent: float
+    min_data_quality_score: float
+    min_operational_confidence: str
+    require_real_data_for_buy: bool
+    allow_crypto: bool
+    allow_single_stocks: bool
+    allow_bonds: bool
+    allow_etf: bool
+    allow_ml_influence: bool
+    allow_news_influence: bool
+    technical_weight: float
+    ml_weight: float
+    news_weight: float
+    risk_weight: float
+    created_at: str
+    updated_at: str
+
+
+class RiskProfileCreateIn(BaseModel):
+    profile_name: str
+    profile_type: Literal["CONSERVATIVE", "BALANCED", "AGGRESSIVE", "CUSTOM"]
+    max_single_asset_weight: float = 15.0
+    max_asset_class_weight: float = 40.0
+    max_crypto_weight: float = 10.0
+    min_cash_reserve_percent: float = 5.0
+    max_portfolio_drawdown_percent: float = 15.0
+    min_data_quality_score: float = 60.0
+    min_operational_confidence: str = "MEDIUM"
+    require_real_data_for_buy: bool = False
+    allow_crypto: bool = True
+    allow_single_stocks: bool = True
+    allow_bonds: bool = True
+    allow_etf: bool = True
+    allow_ml_influence: bool = True
+    allow_news_influence: bool = True
+    technical_weight: float = 50.0
+    ml_weight: float = 20.0
+    news_weight: float = 15.0
+    risk_weight: float = 15.0
+
+
+class StrategyProfileOut(BaseModel):
+    id: int
+    profile_name: str
+    description: str | None = None
+    is_active: bool
+    universe_level: str
+    max_positions: int
+    rebalance_frequency: str
+    buy_threshold: float
+    sell_threshold: float
+    watch_threshold: float
+    min_score_for_buy: float
+    min_confidence_for_buy: str
+    stop_loss_percent: float
+    take_profit_percent: float
+    trailing_stop_percent: float | None = None
+    fee_percent: float
+    cash_reserve_percent: float
+    use_ml: bool
+    use_news: bool
+    use_scenario_risk: bool
+    use_optimizer: bool
+    config_json: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class StrategyProfileCreateIn(BaseModel):
+    profile_name: str
+    description: str | None = None
+    universe_level: str = "CORE"
+    max_positions: int = 15
+    rebalance_frequency: str = "WEEKLY"
+    buy_threshold: float = 70.0
+    sell_threshold: float = 40.0
+    watch_threshold: float = 55.0
+    min_score_for_buy: float = 70.0
+    min_confidence_for_buy: str = "MEDIUM"
+    stop_loss_percent: float = 10.0
+    take_profit_percent: float = 25.0
+    trailing_stop_percent: float | None = None
+    fee_percent: float = 0.1
+    cash_reserve_percent: float = 5.0
+    use_ml: bool = True
+    use_news: bool = True
+    use_scenario_risk: bool = True
+    use_optimizer: bool = True
+
+
+class NotificationPreferenceOut(BaseModel):
+    id: int
+    alert_type: str
+    enabled: bool
+    min_severity: str
+    show_in_dashboard: bool
+    include_in_report: bool
+    updated_at: str
+
+
+class NotificationPreferenceUpdateIn(BaseModel):
+    enabled: bool
+    min_severity: str
+    show_in_dashboard: bool
+    include_in_report: bool
+
+
+class UIPerferencesOut(BaseModel):
+    theme: str
+    default_landing_page: str
+    compact_mode: bool
+    show_advanced_metrics: bool
+    default_universe_level: str
+    default_benchmark: str
+    default_currency: str
+    updated_at: str
+
+
+class UIPerferencesUpdateIn(BaseModel):
+    theme: str | None = None
+    default_landing_page: str | None = None
+    compact_mode: bool | None = None
+    show_advanced_metrics: bool | None = None
+    default_universe_level: str | None = None
+    default_benchmark: str | None = None
+    default_currency: str | None = None
 
 
 class DashboardOut(BaseModel):
@@ -1058,6 +1271,88 @@ class NewsStatusOut(BaseModel):
     last_refresh: str | None = None
     news_sentiment_weight: int
     news_cache_ttl_hours: int
+
+
+class PortfolioCreateIn(BaseModel):
+    portfolio_name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    portfolio_type: PortfolioType = "CORE"
+    base_currency: str = Field(default="USD", min_length=3, max_length=8)
+    initial_cash: float = Field(default=0, ge=0)
+    risk_profile_id: int | None = None
+    strategy_profile_id: int | None = None
+
+
+class PortfolioUpdateIn(BaseModel):
+    portfolio_name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    portfolio_type: PortfolioType | None = None
+    risk_profile_id: int | None = None
+    strategy_profile_id: int | None = None
+    is_archived: bool | None = None
+
+
+class PortfolioOut(BaseModel):
+    id: int
+    portfolio_name: str
+    description: str | None = None
+    portfolio_type: str
+    base_currency: str
+    initial_cash: float
+    current_cash: float
+    risk_profile_id: int | None = None
+    strategy_profile_id: int | None = None
+    is_active: bool
+    is_archived: bool
+    created_at: str
+    updated_at: str
+
+
+class PortfolioCloneIn(BaseModel):
+    new_name: str = Field(..., min_length=1, max_length=100)
+    include_positions: bool = True
+    include_orders: bool = False
+
+
+class CashTransferIn(BaseModel):
+    from_portfolio_id: int | None = None
+    to_portfolio_id: int | None = None
+    amount: float = Field(..., gt=0)
+    transfer_type: TransferType
+    note: str | None = Field(default=None, max_length=200)
+
+
+class CashTransferOut(BaseModel):
+    id: int
+    from_portfolio_id: int | None
+    to_portfolio_id: int | None
+    amount: float
+    currency: str
+    transfer_type: str
+    note: str | None
+    created_at: str
+
+
+class ConsolidatedSummaryOut(BaseModel):
+    total_value: float
+    total_cash: float
+    total_invested: float
+    total_realized_pnl: float
+    total_unrealized_pnl: float
+    total_pnl: float
+    total_pnl_percent: float
+    portfolios_count: int
+    active_portfolios_count: int
+    allocation_by_asset_type: dict[str, float]
+    allocation_by_currency: dict[str, float]
+    portfolio_summaries: list[dict[str, Any]]
+
+
+class PortfolioPerformanceComparisonOut(BaseModel):
+    portfolios: list[dict[str, Any]]
+    best_performer: dict[str, Any] | None = None
+    worst_performer: dict[str, Any] | None = None
+    risk_comparison: list[dict[str, Any]]
 
 
 DashboardOut.model_rebuild()

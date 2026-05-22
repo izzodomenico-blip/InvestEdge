@@ -2,7 +2,7 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, integrazione dati reali opzionale con cache, news/sentiment, Universe Manager, Machine Learning leggero, System Audit & Data Quality, Strategy Control Center e Alert & Scheduler. Non include collegamenti reali a broker, ordini reali, deep learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, integrazione dati reali opzionale con cache, news/sentiment, Universe Manager, Machine Learning leggero, System Audit & Data Quality, Strategy Control Center, Alert & Scheduler, Portfolio Optimizer, Scenario Analysis e Backup & Data Management. Non include collegamenti reali a broker, ordini reali, deep learning, scraping non autorizzato o trading automatico.
 
 ## Struttura
 
@@ -86,29 +86,44 @@ Sistema di monitoraggio e reporting:
 
 ## Portfolio Optimizer & Rebalancing (Step 12)
 
-Il **Portfolio Optimizer** aiuta a costruire un portafoglio target e ribilanciare quello attuale.
-- **Strategie**: `EQUAL_WEIGHT`, `SCORE_WEIGHTED`, `RISK_ADJUSTED`, `CONSERVATIVE`, `AGGRESSIVE`.
-- **Ribilanciamento**: Confronta l'allocazione attuale con quella target e genera ordini di acquisto/vendita simulati.
-- **Vincoli**: Rispetta limiti di peso per asset, classi di attività e riserva di cash.
-
-Differenza tra Strategy Plan e Optimization:
-- **Strategy Plan**: Piano operativo focalizzato sui nuovi segnali e candidati `BUY`.
-- **Portfolio Optimization**: Analisi globale del portafoglio per allineare tutti i pesi a un modello teorico ottimale.
+- **Strategie**: `EQUAL_WEIGHT`, `SCORE_WEIGHTED`, `RISK_ADJUSTED`.
+- **Ribilanciamento**: Confronta l'allocazione attuale con quella target e genera ordini simulati.
 
 ## Scenario Analysis & Stress Test (Step 13)
 
-Il modulo di **Scenario Analysis** permette di simulare l'impatto di shock estremi sul portafoglio.
 - **Preset Scenari**: `MARKET_CRASH`, `TECH_SELL_OFF`, `CRYPTO_CRASH`, `RECESSION`, `BULL_RALLY`.
-- **Shock Custom**: Possibilità di definire shock percentuali per asset class o per singolo simbolo.
-- **Analisi Rischio**: Calcola la perdita stimata, il contributo di ogni asset alla perdita e il livello di rischio (LOW, MEDIUM, HIGH, EXTREME).
-- **Suggerimenti**: Genera azioni di mitigazione basate sull'impatto simulato (es. ridurre asset concentrati, aumentare cash).
+- **Analisi Rischio**: Calcola la perdita stimata e suggerisce mitigazioni.
+
+## Backup & Data Management (Step 15)
+
+- **Backup & Restore**: Crea snapshot completi del database con checksum.
+- **Data Export/Import**: Esportazione ed importazione di dataset in formato CSV o JSON.
+- **Project Hardening**: Audit di sicurezza per file sensibili e integrità del database.
+
+## User Settings & Profiles (Step 16)
+
+InvestEdge si adatta al profilo dell'utente:
+- **Risk Profiles**: Definisce i vincoli di rischio per le modalità `CONSERVATIVE`, `BALANCED` e `AGGRESSIVE`. Controlla pesi massimi, esposizione crypto e influenza di ML/News.
+- **Strategy Profiles**: Configura i parametri operativi per il ranking e l'optimizer (soglie BUY/SELL, frequenza ribilanciamento, stop loss).
+- **Personalizzazione Operativa**: Il sistema adatta automaticamente la validazione dei segnali e i piani strategici al profilo attivo.
+- **Notifiche & UI**: Gestione centralizzata delle preferenze di avviso e dell'interfaccia.
+
+## Multi-Portfolio Simulation (Step 17)
+
+InvestEdge ora supporta la simulazione di più portafogli simultaneamente:
+- **Portafogli Indipendenti**: Crea diversi account per testare strategie diverse (es. uno conservativo per ETF, uno speculativo per Crypto).
+- **Context Switching**: Cambia rapidamente il portafoglio attivo dal selettore globale; tutte le pagine (Dashboard, Simulator, Strategy, etc.) mostreranno i dati relativi al portafoglio selezionato.
+- **Vista Consolidata**: Visualizza un riepilogo aggregato di tutti i portafogli per monitorare l'esposizione totale e il P/L complessivo.
+- **Profilo di Rischio per Portafoglio**: Ogni portafoglio può essere collegato a un profilo di rischio e a una strategia specifica.
+- **Trasferimenti Interni**: Simula lo spostamento di liquidità tra portafogli o depositi/prelievi esterni.
 
 ### Routine Giornaliera Consigliata
-1. **Scheduler**: Esegui ciclo `ALERTS + QUALITY` per verificare lo stato.
-2. **Alert Center**: Controlla nuovi alert critici.
-3. **Operational Ranking**: Verifica nuovi candidati `BUY` validati.
-4. **Strategy Center**: Genera un piano aggiornato se necessario.
-5. **Reports**: Genera report giornaliero per tracciare lo storico.
+1. **Backup**: Crea un backup prima di operazioni massive.
+2. **Scheduler**: Esegui ciclo `ALERTS + QUALITY` per verificare lo stato.
+3. **Alert Center**: Controlla nuovi alert critici.
+4. **Operational Ranking**: Verifica nuovi candidati `BUY` validati.
+5. **Strategy/Optimizer**: Genera un piano aggiornato o ottimizza i pesi.
+6. **Reports**: Genera report giornaliero per tracciare lo storico.
 
 ## Avvio backend
 

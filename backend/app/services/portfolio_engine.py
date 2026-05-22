@@ -34,55 +34,80 @@ class PortfolioEngine:
 
     risk_engine: RiskEngine = field(default_factory=RiskEngine)
 
-    def ensure_settings(self, connection: sqlite3.Connection) -> dict[str, float]:
-        row = connection.execute("SELECT * FROM portfolio_settings WHERE id = 1").fetchone()
+    def _get_portfolio_data(self, connection: sqlite3.Connection, portfolio_id: int) -> dict[str, Any]:
+        row = connection.execute(
+            """
+            SELECT p.*, rp.max_single_asset_weight, rp.max_asset_class_weight, 
+                   rp.max_crypto_weight, rp.min_cash_reserve_percent as min_cash_weight,
+                   sp.fee_percent as default_fee_percent
+            FROM portfolios p
+            LEFT JOIN risk_profiles rp ON p.risk_profile_id = rp.id
+            LEFT JOIN strategy_profiles sp ON p.strategy_profile_id = sp.id
+            WHERE p.id = ?
+            """,
+            (portfolio_id,),
+        ).fetchone()
+        
         if row is None:
-            now = _now()
-            connection.execute(
-                """
-                INSERT INTO portfolio_settings (
-                    id, initial_cash, current_cash, max_single_asset_weight, max_asset_class_weight,
-                    default_fee_percent, crypto_max_weight, min_cash_weight, max_cash_weight, created_at, updated_at
-                )
-                VALUES (1, 100000, 100000, 25, 50, 0.1, 15, 2, 35, ?, ?)
-                """,
-                (now, now),
-            )
-            row = connection.execute("SELECT * FROM portfolio_settings WHERE id = 1").fetchone()
-        return dict(row)
+            raise ValueError(f"Portafoglio con ID {portfolio_id} non trovato.")
+            
+        data = dict(row)
+        # Defaults if profiles are missing
+        if data.get("max_single_asset_weight") is None:
+            data["max_single_asset_weight"] = 25.0
+        if data.get("max_asset_class_weight") is None:
+            data["max_asset_class_weight"] = 50.0
+        if data.get("max_crypto_weight") is None:
+            data["max_crypto_weight"] = 15.0
+        if data.get("min_cash_weight") is None:
+            data["min_cash_weight"] = 2.0
+        if data.get("default_fee_percent") is None:
+            data["default_fee_percent"] = 0.1
+        
+        data["max_cash_weight"] = 100.0 # Default max cash
+        
+        return data
 
-    def initialize_portfolio(self, connection: sqlite3.Connection, payload: PortfolioInitIn) -> PortfolioSummaryOut:
+    def initialize_portfolio(self, connection: sqlite3.Connection, payload: PortfolioInitIn, portfolio_id: int | None = None) -> PortfolioSummaryOut:
+        if portfolio_id is None:
+            # If no portfolio_id, we assume we are initializing the active/default one or we fail
+            active = connection.execute("SELECT id FROM portfolios WHERE is_active = 1 LIMIT 1").fetchone()
+            if not active:
+                from backend.app.services.multi_portfolio_service import MultiPortfolioService
+                portfolio_id = MultiPortfolioService().ensure_default_portfolio(connection)
+            else:
+                portfolio_id = active["id"]
+
         now = _now()
-        connection.execute("DELETE FROM portfolio_snapshots")
-        connection.execute("DELETE FROM simulated_orders")
-        connection.execute("DELETE FROM portfolio_positions")
+        connection.execute("DELETE FROM portfolio_snapshots WHERE portfolio_id = ?", (portfolio_id,))
+        connection.execute("DELETE FROM simulated_orders WHERE portfolio_id = ?", (portfolio_id,))
+        connection.execute("DELETE FROM portfolio_positions WHERE portfolio_id = ?", (portfolio_id,))
+        
         connection.execute(
             """
-            INSERT INTO portfolio_settings (
-                id, initial_cash, current_cash, max_single_asset_weight, max_asset_class_weight,
-                default_fee_percent, crypto_max_weight, min_cash_weight, max_cash_weight, created_at, updated_at
-            )
-            VALUES (1, ?, ?, ?, ?, ?, 15, 2, 35, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                initial_cash = excluded.initial_cash,
-                current_cash = excluded.current_cash,
-                max_single_asset_weight = excluded.max_single_asset_weight,
-                max_asset_class_weight = excluded.max_asset_class_weight,
-                default_fee_percent = excluded.default_fee_percent,
-                updated_at = excluded.updated_at
+            UPDATE portfolios 
+            SET initial_cash = ?, current_cash = ?, updated_at = ?
+            WHERE id = ?
             """,
-            (
-                payload.initial_cash,
-                payload.initial_cash,
-                payload.max_single_asset_weight,
-                payload.max_asset_class_weight,
-                payload.default_fee_percent,
-                now,
-                now,
-            ),
+            (payload.initial_cash, payload.initial_cash, now, portfolio_id)
         )
-        self.refresh_portfolio(connection, create_snapshot=True)
-        return self.get_summary(connection)
+
+        # Update linked profiles if any to maintain backward compatibility with Init API
+        p_row = connection.execute("SELECT risk_profile_id, strategy_profile_id FROM portfolios WHERE id = ?", (portfolio_id,)).fetchone()
+        if p_row:
+            if p_row["risk_profile_id"]:
+                connection.execute(
+                    "UPDATE risk_profiles SET max_single_asset_weight = ?, max_asset_class_weight = ? WHERE id = ?",
+                    (payload.max_single_asset_weight, payload.max_asset_class_weight, p_row["risk_profile_id"])
+                )
+            if p_row["strategy_profile_id"]:
+                connection.execute(
+                    "UPDATE strategy_profiles SET fee_percent = ? WHERE id = ?",
+                    (payload.default_fee_percent, p_row["strategy_profile_id"])
+                )
+        
+        self.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=True)
+        return self.get_summary(connection, portfolio_id=portfolio_id)
 
     def _asset(self, connection: sqlite3.Connection, symbol: str) -> sqlite3.Row:
         row = connection.execute(
@@ -113,49 +138,50 @@ class PortfolioEngine:
             raise ValueError("Prezzo non disponibile per questo asset.")
         return float(row["close"])
 
-    def _fee(self, settings: dict[str, Any], gross_amount: float, explicit_fees: float | None) -> float:
+    def _fee(self, portfolio_data: dict[str, Any], gross_amount: float, explicit_fees: float | None) -> float:
         if explicit_fees is not None:
             return float(explicit_fees)
-        return gross_amount * (float(settings["default_fee_percent"]) / 100)
+        return gross_amount * (float(portfolio_data["default_fee_percent"]) / 100)
 
-    def _position_row(self, connection: sqlite3.Connection, asset_id: int) -> sqlite3.Row | None:
+    def _position_row(self, connection: sqlite3.Connection, portfolio_id: int, asset_id: int) -> sqlite3.Row | None:
         return connection.execute(
             """
             SELECT *
             FROM portfolio_positions
-            WHERE asset_id = ?
+            WHERE portfolio_id = ? AND asset_id = ?
             LIMIT 1
             """,
-            (asset_id,),
+            (portfolio_id, asset_id),
         ).fetchone()
 
-    def simulate_order(self, connection: sqlite3.Connection, payload: SimulatedOrderIn) -> OrderSimulationOut:
-        settings = self.ensure_settings(connection)
+    def simulate_order(self, connection: sqlite3.Connection, payload: SimulatedOrderIn, portfolio_id: int) -> OrderSimulationOut:
+        portfolio_data = self._get_portfolio_data(connection, portfolio_id)
         asset = self._asset(connection, payload.symbol)
         price = float(payload.price) if payload.price is not None else self._latest_price(connection, asset["id"])
         gross_amount = float(payload.quantity) * price
-        fees = self._fee(settings, gross_amount, payload.fees)
+        fees = self._fee(portfolio_data, gross_amount, payload.fees)
         order_type = payload.order_type
         now = _now()
 
         if order_type == "BUY":
             net_amount = gross_amount + fees
-            if float(settings["current_cash"]) < net_amount:
+            if float(portfolio_data["current_cash"]) < net_amount:
                 raise ValueError("Cash insufficiente per completare il BUY simulato.")
-            self._buy(connection, asset, payload.quantity, price, gross_amount, fees, net_amount, now)
+            self._buy(connection, portfolio_id, asset, payload.quantity, price, gross_amount, fees, net_amount, now)
         else:
             net_amount = gross_amount - fees
-            self._sell(connection, asset, payload.quantity, price, gross_amount, fees, now)
+            self._sell(connection, portfolio_id, asset, payload.quantity, price, gross_amount, fees, now)
 
         cursor = connection.execute(
             """
             INSERT INTO simulated_orders (
-                asset_id, symbol, order_type, side, quantity, price, fees, gross_amount, net_amount,
+                portfolio_id, asset_id, symbol, order_type, side, quantity, price, fees, gross_amount, net_amount,
                 order_date, note, strategy_tag, status, executed_at, notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SIMULATED', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SIMULATED', ?, ?)
             """,
             (
+                portfolio_id,
                 asset["id"],
                 asset["symbol"],
                 order_type,
@@ -172,10 +198,10 @@ class PortfolioEngine:
                 payload.note,
             ),
         )
-        self.refresh_portfolio(connection, create_snapshot=True)
+        self.refresh_portfolio(connection, portfolio_id=portfolio_id, create_snapshot=True)
         order = self.get_order(connection, int(cursor.lastrowid))
-        updated_position = self.get_position(connection, asset["id"])
-        summary = self.get_summary(connection)
+        updated_position = self.get_position(connection, portfolio_id, asset["id"])
+        summary = self.get_summary(connection, portfolio_id=portfolio_id)
         return OrderSimulationOut(
             order=order,
             updated_position=updated_position,
@@ -186,6 +212,7 @@ class PortfolioEngine:
     def _buy(
         self,
         connection: sqlite3.Connection,
+        portfolio_id: int,
         asset: sqlite3.Row,
         quantity: float,
         price: float,
@@ -194,7 +221,7 @@ class PortfolioEngine:
         net_amount: float,
         now: str,
     ) -> None:
-        position = self._position_row(connection, asset["id"])
+        position = self._position_row(connection, portfolio_id, asset["id"])
         if position is None:
             new_quantity = float(quantity)
             invested_amount = gross_amount + fees
@@ -202,13 +229,14 @@ class PortfolioEngine:
             connection.execute(
                 """
                 INSERT INTO portfolio_positions (
-                    asset_id, symbol, quantity, average_price, invested_amount, current_price,
+                    portfolio_id, asset_id, symbol, quantity, average_price, invested_amount, current_price,
                     current_value, realized_pnl, unrealized_pnl, unrealized_pnl_percent,
                     weight_percent, asset_type, currency, opened_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?)
                 """,
                 (
+                    portfolio_id,
                     asset["id"],
                     asset["symbol"],
                     new_quantity,
@@ -231,7 +259,7 @@ class PortfolioEngine:
                 UPDATE portfolio_positions
                 SET quantity = ?, average_price = ?, invested_amount = ?, current_price = ?,
                     current_value = ?, asset_type = ?, currency = ?, updated_at = ?
-                WHERE asset_id = ?
+                WHERE portfolio_id = ? AND asset_id = ?
                 """,
                 (
                     new_quantity,
@@ -242,18 +270,20 @@ class PortfolioEngine:
                     asset["asset_type"],
                     asset["currency"],
                     now,
+                    portfolio_id,
                     asset["id"],
                 ),
             )
 
         connection.execute(
-            "UPDATE portfolio_settings SET current_cash = current_cash - ?, updated_at = ? WHERE id = 1",
-            (net_amount, now),
+            "UPDATE portfolios SET current_cash = current_cash - ?, updated_at = ? WHERE id = ?",
+            (net_amount, now, portfolio_id),
         )
 
     def _sell(
         self,
         connection: sqlite3.Connection,
+        portfolio_id: int,
         asset: sqlite3.Row,
         quantity: float,
         price: float,
@@ -261,7 +291,7 @@ class PortfolioEngine:
         fees: float,
         now: str,
     ) -> None:
-        position = self._position_row(connection, asset["id"])
+        position = self._position_row(connection, portfolio_id, asset["id"])
         if position is None or float(position["quantity"]) < float(quantity):
             raise ValueError("Quantita insufficiente per completare il SELL simulato.")
 
@@ -278,7 +308,7 @@ class PortfolioEngine:
             SET quantity = ?, invested_amount = ?, current_price = ?, current_value = ?,
                 realized_pnl = realized_pnl + ?, unrealized_pnl = 0, unrealized_pnl_percent = 0,
                 updated_at = ?
-            WHERE asset_id = ?
+            WHERE portfolio_id = ? AND asset_id = ?
             """,
             (
                 new_quantity,
@@ -287,17 +317,18 @@ class PortfolioEngine:
                 new_quantity * price,
                 realized_delta,
                 now,
+                portfolio_id,
                 asset["id"],
             ),
         )
         connection.execute(
-            "UPDATE portfolio_settings SET current_cash = current_cash + ?, updated_at = ? WHERE id = 1",
-            (gross_amount - fees, now),
+            "UPDATE portfolios SET current_cash = current_cash + ?, updated_at = ? WHERE id = ?",
+            (gross_amount - fees, now, portfolio_id),
         )
 
-    def refresh_portfolio(self, connection: sqlite3.Connection, create_snapshot: bool = True) -> PortfolioSummaryOut:
-        settings = self.ensure_settings(connection)
-        rows = connection.execute("SELECT * FROM portfolio_positions").fetchall()
+    def refresh_portfolio(self, connection: sqlite3.Connection, portfolio_id: int, create_snapshot: bool = True) -> PortfolioSummaryOut:
+        portfolio_data = self._get_portfolio_data(connection, portfolio_id)
+        rows = connection.execute("SELECT * FROM portfolio_positions WHERE portfolio_id = ?", (portfolio_id,)).fetchall()
 
         active_values: dict[int, float] = {}
         invested_value = 0.0
@@ -320,26 +351,27 @@ class PortfolioEngine:
                 (current_price, current_value, unrealized, unrealized_percent, _now(), row["id"]),
             )
 
-        total_value = float(settings["current_cash"]) + invested_value
+        total_value = float(portfolio_data["current_cash"]) + invested_value
         for row_id, current_value in active_values.items():
             weight = (current_value / total_value) * 100 if total_value > 0 else 0.0
             connection.execute("UPDATE portfolio_positions SET weight_percent = ? WHERE id = ?", (weight, row_id))
 
-        summary = self.get_summary(connection, include_snapshot=False)
+        summary = self.get_summary(connection, portfolio_id=portfolio_id, include_snapshot=False)
         if create_snapshot:
-            self.create_snapshot(connection, summary)
+            self.create_snapshot(connection, portfolio_id, summary)
         return summary
 
-    def create_snapshot(self, connection: sqlite3.Connection, summary: PortfolioSummaryOut) -> None:
+    def create_snapshot(self, connection: sqlite3.Connection, portfolio_id: int, summary: PortfolioSummaryOut) -> None:
         connection.execute(
             """
             INSERT INTO portfolio_snapshots (
-                snapshot_date, total_value, invested_value, cash, realized_pnl,
+                portfolio_id, snapshot_date, total_value, invested_value, cash, realized_pnl,
                 unrealized_pnl, total_pnl, total_pnl_percent, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                portfolio_id,
                 _now(),
                 summary.total_value,
                 summary.invested_value,
@@ -352,18 +384,21 @@ class PortfolioEngine:
             ),
         )
 
-    def get_summary(self, connection: sqlite3.Connection, include_snapshot: bool = True) -> PortfolioSummaryOut:
-        settings = self.ensure_settings(connection)
-        positions = self.list_positions(connection)
-        cash = float(settings["current_cash"])
+    def get_summary(self, connection: sqlite3.Connection, portfolio_id: int, include_snapshot: bool = True) -> PortfolioSummaryOut:
+        portfolio_data = self._get_portfolio_data(connection, portfolio_id)
+        positions = self.list_positions(connection, portfolio_id)
+        cash = float(portfolio_data["current_cash"])
         invested_value = sum(position.current_value for position in positions)
         realized_pnl = float(
-            connection.execute("SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM portfolio_positions").fetchone()["total"]
+            connection.execute(
+                "SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM portfolio_positions WHERE portfolio_id = ?",
+                (portfolio_id,)
+            ).fetchone()["total"]
         )
         unrealized_pnl = sum(position.unrealized_pnl for position in positions)
         total_value = cash + invested_value
         total_pnl = realized_pnl + unrealized_pnl
-        initial_cash = float(settings["initial_cash"])
+        initial_cash = float(portfolio_data["initial_cash"])
         total_pnl_percent = (total_pnl / initial_cash) * 100 if initial_cash > 0 else 0
         allocation_by_asset_type = self.allocation_by_asset_type(positions, total_value)
         allocation_by_currency = self.allocation_by_currency(positions, total_value)
@@ -374,7 +409,7 @@ class PortfolioEngine:
                 total_value=total_value,
                 positions=[position.model_dump() for position in positions],
                 allocation_by_asset_type=allocation_by_asset_type,
-                settings=dict(settings),
+                settings=portfolio_data,
             )
         ]
 
@@ -390,22 +425,22 @@ class PortfolioEngine:
             allocation_by_asset_type=allocation_by_asset_type,
             allocation_by_currency=allocation_by_currency,
             risk_warnings=risk_warnings,
-            settings=self._settings_out(settings),
+            settings=self._settings_out(portfolio_data),
         )
 
-    def _settings_out(self, row: dict[str, Any]) -> PortfolioSettingsOut:
+    def _settings_out(self, data: dict[str, Any]) -> PortfolioSettingsOut:
         return PortfolioSettingsOut(
-            initial_cash=float(row["initial_cash"]),
-            current_cash=float(row["current_cash"]),
-            max_single_asset_weight=float(row["max_single_asset_weight"]),
-            max_asset_class_weight=float(row["max_asset_class_weight"]),
-            default_fee_percent=float(row["default_fee_percent"]),
-            crypto_max_weight=float(row["crypto_max_weight"]),
-            min_cash_weight=float(row["min_cash_weight"]),
-            max_cash_weight=float(row["max_cash_weight"]),
+            initial_cash=float(data["initial_cash"]),
+            current_cash=float(data["current_cash"]),
+            max_single_asset_weight=float(data["max_single_asset_weight"]),
+            max_asset_class_weight=float(data["max_asset_class_weight"]),
+            default_fee_percent=float(data["default_fee_percent"]),
+            crypto_max_weight=float(data["max_crypto_weight"]),
+            min_cash_weight=float(data["min_cash_weight"]),
+            max_cash_weight=float(data.get("max_cash_weight", 100.0)),
         )
 
-    def list_positions(self, connection: sqlite3.Connection) -> list[PortfolioPositionOut]:
+    def list_positions(self, connection: sqlite3.Connection, portfolio_id: int) -> list[PortfolioPositionOut]:
         rows = connection.execute(
             """
             SELECT
@@ -418,14 +453,15 @@ class PortfolioEngine:
                 ORDER BY s.created_at DESC, s.id DESC
                 LIMIT 1
             )
-            WHERE pp.quantity > 0
+            WHERE pp.portfolio_id = ? AND pp.quantity > 0
             ORDER BY pp.current_value DESC
-            """
+            """,
+            (portfolio_id,)
         ).fetchall()
-        recommendations = {item.symbol: item.final_recommendation for item in self.recommendations(connection)}
+        recommendations = {item.symbol: item.final_recommendation for item in self.recommendations(connection, portfolio_id)}
         return [self._position_out(row, recommendations.get(row["symbol"])) for row in rows]
 
-    def get_position(self, connection: sqlite3.Connection, asset_id: int) -> PortfolioPositionOut | None:
+    def get_position(self, connection: sqlite3.Connection, portfolio_id: int, asset_id: int) -> PortfolioPositionOut | None:
         row = connection.execute(
             """
             SELECT pp.*, sig.signal AS technical_signal
@@ -436,14 +472,14 @@ class PortfolioEngine:
                 ORDER BY s.created_at DESC, s.id DESC
                 LIMIT 1
             )
-            WHERE pp.asset_id = ? AND pp.quantity > 0
+            WHERE pp.portfolio_id = ? AND pp.asset_id = ? AND pp.quantity > 0
             LIMIT 1
             """,
-            (asset_id,),
+            (portfolio_id, asset_id),
         ).fetchone()
         if row is None:
             return None
-        recommendations = {item.symbol: item.final_recommendation for item in self.recommendations(connection)}
+        recommendations = {item.symbol: item.final_recommendation for item in self.recommendations(connection, portfolio_id)}
         return self._position_out(row, recommendations.get(row["symbol"]))
 
     def _position_out(self, row: sqlite3.Row, recommendation: str | None = None) -> PortfolioPositionOut:
@@ -497,16 +533,21 @@ class PortfolioEngine:
             raise ValueError("Ordine non trovato.")
         return self._order_out(row)
 
-    def list_orders(self, connection: sqlite3.Connection) -> list[SimulatedOrderOut]:
-        rows = connection.execute(
-            """
+    def list_orders(self, connection: sqlite3.Connection, portfolio_id: int | None = None) -> list[SimulatedOrderOut]:
+        query = """
             SELECT id, asset_id, symbol, COALESCE(order_type, side) AS order_type, quantity, price, fees,
                 gross_amount, net_amount, COALESCE(order_date, executed_at, created_at) AS order_date,
                 COALESCE(note, notes) AS note, strategy_tag
             FROM simulated_orders
-            ORDER BY order_date DESC, id DESC
-            """
-        ).fetchall()
+        """
+        params = []
+        if portfolio_id is not None:
+            query += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        
+        query += " ORDER BY order_date DESC, id DESC"
+        
+        rows = connection.execute(query, params).fetchall()
         return [self._order_out(row) for row in rows]
 
     def _order_out(self, row: sqlite3.Row) -> SimulatedOrderOut:
@@ -525,13 +566,15 @@ class PortfolioEngine:
             strategy_tag=row["strategy_tag"],
         )
 
-    def list_snapshots(self, connection: sqlite3.Connection) -> list[PortfolioSnapshotOut]:
+    def list_snapshots(self, connection: sqlite3.Connection, portfolio_id: int) -> list[PortfolioSnapshotOut]:
         rows = connection.execute(
             """
             SELECT *
             FROM portfolio_snapshots
+            WHERE portfolio_id = ?
             ORDER BY snapshot_date ASC, id ASC
-            """
+            """,
+            (portfolio_id,)
         ).fetchall()
         return [
             PortfolioSnapshotOut(
@@ -549,10 +592,10 @@ class PortfolioEngine:
             for row in rows
         ]
 
-    def recommendations(self, connection: sqlite3.Connection) -> list[PortfolioRecommendationOut]:
-        settings = self.ensure_settings(connection)
-        summary_positions = self._raw_positions_for_recommendations(connection)
-        total_value = float(settings["current_cash"]) + sum(float(item["current_value"] or 0) for item in summary_positions)
+    def recommendations(self, connection: sqlite3.Connection, portfolio_id: int) -> list[PortfolioRecommendationOut]:
+        portfolio_data = self._get_portfolio_data(connection, portfolio_id)
+        summary_positions = self._raw_positions_for_recommendations(connection, portfolio_id)
+        total_value = float(portfolio_data["current_cash"]) + sum(float(item["current_value"] or 0) for item in summary_positions)
         weights = {
             item["symbol"]: ((float(item["current_value"] or 0) / total_value) * 100 if total_value > 0 else 0)
             for item in summary_positions
@@ -584,7 +627,7 @@ class PortfolioEngine:
                 portfolio_weight=weight,
                 asset_type=asset["asset_type"],
                 risk_level=asset["risk_level"],
-                settings=dict(settings),
+                settings=portfolio_data,
                 asset_class_weight=class_weights.get(asset["asset_type"], 0.0),
             )
             result.append(
@@ -599,11 +642,12 @@ class PortfolioEngine:
             )
         return result
 
-    def _raw_positions_for_recommendations(self, connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    def _raw_positions_for_recommendations(self, connection: sqlite3.Connection, portfolio_id: int) -> list[sqlite3.Row]:
         return connection.execute(
             """
             SELECT symbol, asset_type, current_value
             FROM portfolio_positions
-            WHERE quantity > 0
-            """
+            WHERE portfolio_id = ? AND quantity > 0
+            """,
+            (portfolio_id,)
         ).fetchall()

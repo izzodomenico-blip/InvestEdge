@@ -31,8 +31,13 @@ def mock_db():
     conn.execute("INSERT INTO asset_universe (symbol, name, asset_type, universe_level, is_active) VALUES ('MSFT', 'Microsoft', 'stock', 'CORE', 1)")
     conn.execute("INSERT INTO asset_universe (symbol, name, asset_type, universe_level, is_active) VALUES ('BTC', 'Bitcoin', 'crypto', 'EXTENDED', 1)")
     
-    # 5. Add portfolio settings
-    conn.execute("INSERT INTO portfolio_settings (id, initial_cash, current_cash) VALUES (1, 100000, 100000)")
+    # 5. Add portfolio
+    conn.execute(
+        """
+        INSERT INTO portfolios (id, portfolio_name, portfolio_type, initial_cash, current_cash, is_active)
+        VALUES (1, 'Default Portfolio', 'CORE', 100000, 100000, 1)
+        """
+    )
     
     yield conn
     conn.close()
@@ -49,7 +54,7 @@ def test_generate_conservative_plan(mock_db):
         min_data_quality_score=0.0,
     )
     
-    plan = service.generate_strategy_plan(mock_db, config)
+    plan = service.generate_strategy_plan(mock_db, config, portfolio_id=1)
     assert plan.summary.plan_name == "Conservative Test"
     assert plan.summary.strategy_mode == "CONSERVATIVE"
     assert len(plan.items) >= 2 # AAPL and MSFT
@@ -69,7 +74,7 @@ def test_generate_aggressive_plan(mock_db):
         min_data_quality_score=0.0,
     )
     
-    plan = service.generate_strategy_plan(mock_db, config)
+    plan = service.generate_strategy_plan(mock_db, config, portfolio_id=1)
     assert plan.summary.strategy_mode == "AGGRESSIVE"
     # BTC should be included as we allowed crypto and used EXTENDED universe
     assert any(i.symbol == "BTC" for i in plan.items)
@@ -83,7 +88,7 @@ def test_apply_plan_creates_simulated_orders(mock_db):
         min_data_quality_score=0.0,
     )
     
-    plan = service.generate_strategy_plan(mock_db, config)
+    plan = service.generate_strategy_plan(mock_db, config, portfolio_id=1)
     assert plan.summary.status == "DRAFT"
     
     orders_count = service.apply_plan_to_paper_trading(mock_db, plan.summary.id)
@@ -109,7 +114,7 @@ def test_exclude_signal_blocks_buy(mock_db):
         min_data_quality_score=50.0, # This will trigger exclusion if score < 50
     )
     
-    plan = service.generate_strategy_plan(mock_db, config)
+    plan = service.generate_strategy_plan(mock_db, config, portfolio_id=1)
     msft_item = next(i for i in plan.items if i.symbol == "MSFT")
     assert msft_item.suggested_action == "HOLD"
     assert msft_item.blocker is not None
@@ -122,9 +127,9 @@ def test_list_and_delete_plans(mock_db):
         strategy_mode="BALANCED",
         min_data_quality_score=0.0,
     )
-    service.generate_strategy_plan(mock_db, config)
+    service.generate_strategy_plan(mock_db, config, portfolio_id=1)
     
-    plans = service.list_strategy_plans(mock_db)
+    plans = service.list_strategy_plans(mock_db, portfolio_id=1)
     assert len(plans) == 1
     
     service.delete_plan(mock_db, plans[0].id)
