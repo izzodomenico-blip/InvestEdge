@@ -95,7 +95,7 @@ class GoogleSheetsService:
         try:
             service = self.get_sheets_client()
             sheet = service.spreadsheets()
-            result = sheet.values().get(spreadsheet_id=spreadsheet_id, range=range_name).execute()
+            result = sheet.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
             return result.get("values", [])
         except HttpError as err:
             raise ValueError(f"Google Sheets API error: {err}")

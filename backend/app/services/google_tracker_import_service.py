@@ -39,6 +39,63 @@ class GoogleTrackerImportService:
         self.sheets_service = GoogleSheetsService()
         self.settings = get_settings()
 
+    def _parse_numeric(self, value: Any, field_name: str, row_idx: int) -> float:
+        if value is None or value == "":
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        
+        original_s = str(value).strip()
+        s = original_s
+        
+        # 1. Remove currency symbols and common noise
+        for char in ['€', '$', '£', ' ']:
+            s = s.replace(char, '')
+        
+        if not s:
+            return 0.0
+            
+        try:
+            # 2. Try direct conversion (handles standard 123.45)
+            return float(s)
+        except ValueError:
+            pass
+
+        # 3. Handle European/Italian format (comma as decimal, optional dot as thousand)
+        try:
+            # Case A: Both dot and comma are present
+            if '.' in s and ',' in s:
+                if s.rfind(',') > s.rfind('.'):
+                    # Italian: 1.234,56
+                    s = s.replace('.', '').replace(',', '.')
+                else:
+                    # US: 1,234.56
+                    s = s.replace(',', '')
+            # Case B: Only comma
+            elif ',' in s:
+                if s.count(',') > 1:
+                    # Multiple commas: 1,234,567 -> thousand separators
+                    s = s.replace(',', '')
+                else:
+                    # Single comma: 383,47 -> assume decimal
+                    s = s.replace(',', '.')
+            # Case C: Only dot (multiple dots)
+            elif '.' in s:
+                if s.count('.') > 1:
+                    # Multiple dots: 1.234.567 -> thousand separators
+                    # BUT: 383.47.00 is invalid. 
+                    # Valid thousand separators must be followed by exactly 3 digits.
+                    parts = s.split('.')
+                    if all(len(p) == 3 for p in parts[1:]):
+                        s = s.replace('.', '')
+                    else:
+                        raise ValueError("Invalid dot distribution")
+            
+            return float(s)
+        except Exception:
+            # If everything fails, raise specific error
+            raise ValueError(f"row {row_idx}, field {field_name}, invalid numeric value: {original_s}")
+
     def preview_import(self, connection: sqlite3.Connection, import_type: str) -> int:
         """
         Reads from Google Sheets and saves to external_import_* tables in PREVIEW status.
@@ -112,9 +169,32 @@ class GoogleTrackerImportService:
         dicts = self.sheets_service.rows_to_dicts(rows)
         valid_count = 0
         
-        for d in dicts:
+        for idx, d in enumerate(dicts, start=2): # Header is row 1
             symbol = d.get("symbol")
             if not symbol:
+                continue
+            
+            try:
+                qty = self._parse_numeric(d.get("quantity"), "quantity", idx)
+                avg_p = self._parse_numeric(d.get("average_price"), "average_price", idx)
+                curr_p = self._parse_numeric(d.get("current_price"), "current_price", idx)
+                mkt_v = self._parse_numeric(d.get("market_value"), "market_value", idx)
+            except ValueError as e:
+                errors.append(str(e))
+                connection.execute(
+                    """
+                    INSERT INTO external_import_positions (
+                        import_id, portfolio_name, broker_name, account_name, symbol, isin, name, 
+                        asset_type, quantity, average_price, current_price, currency, exchange, 
+                        market_value, as_of_date, validation_status, validation_message, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, ?, 'INVALID', ?, ?)
+                    """,
+                    (
+                        import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
+                        symbol, d.get("isin"), d.get("name"), d.get("asset_type"),
+                        d.get("currency"), d.get("exchange"), d.get("as_of_date"), str(e), _now()
+                    )
+                )
                 continue
             
             # Map symbol
@@ -132,9 +212,8 @@ class GoogleTrackerImportService:
                 (
                     import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
                     symbol, d.get("isin"), d.get("name"), d.get("asset_type"),
-                    float(d.get("quantity") or 0), float(d.get("average_price") or 0),
-                    float(d.get("current_price") or 0), d.get("currency"), d.get("exchange"),
-                    float(d.get("market_value") or 0), d.get("as_of_date"), asset_id, _now()
+                    qty, avg_p, curr_p, d.get("currency"), d.get("exchange"),
+                    mkt_v, d.get("as_of_date"), asset_id, _now()
                 )
             )
             valid_count += 1
@@ -155,11 +234,38 @@ class GoogleTrackerImportService:
         dicts = self.sheets_service.rows_to_dicts(rows)
         valid_count = 0
         
-        for d in dicts:
+        for idx, d in enumerate(dicts, start=2):
             symbol = d.get("symbol")
             if not symbol:
                 continue
             
+            try:
+                qty = self._parse_numeric(d.get("quantity"), "quantity", idx)
+                price = self._parse_numeric(d.get("price"), "price", idx)
+                gross = self._parse_numeric(d.get("gross_amount"), "gross_amount", idx)
+                fees = self._parse_numeric(d.get("fees"), "fees", idx)
+                taxes = self._parse_numeric(d.get("taxes"), "taxes", idx)
+                net = self._parse_numeric(d.get("net_amount"), "net_amount", idx)
+            except ValueError as e:
+                errors.append(str(e))
+                connection.execute(
+                    """
+                    INSERT INTO external_import_transactions (
+                        import_id, portfolio_name, broker_name, account_name, transaction_date, 
+                        transaction_type, symbol, isin, name, asset_type, quantity, price, 
+                        gross_amount, fees, taxes, net_amount, currency, exchange, note, 
+                        validation_status, validation_message, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, 'INVALID', ?, ?)
+                    """,
+                    (
+                        import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
+                        d.get("transaction_date"), d.get("transaction_type"), symbol, d.get("isin"),
+                        d.get("name"), d.get("asset_type"), d.get("currency"), d.get("exchange"),
+                        d.get("note"), str(e), _now()
+                    )
+                )
+                continue
+
             asset = get_asset_by_symbol(connection, symbol)
             asset_id = asset.id if asset else None
             
@@ -175,11 +281,8 @@ class GoogleTrackerImportService:
                 (
                     import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
                     d.get("transaction_date"), d.get("transaction_type"), symbol, d.get("isin"),
-                    d.get("name"), d.get("asset_type"), float(d.get("quantity") or 0),
-                    float(d.get("price") or 0), float(d.get("gross_amount") or 0),
-                    float(d.get("fees") or 0), float(d.get("taxes") or 0),
-                    float(d.get("net_amount") or 0), d.get("currency"), d.get("exchange"),
-                    d.get("note"), asset_id, _now()
+                    d.get("name"), d.get("asset_type"), qty, price, gross, fees, taxes, net, 
+                    d.get("currency"), d.get("exchange"), d.get("note"), asset_id, _now()
                 )
             )
             valid_count += 1
@@ -200,7 +303,25 @@ class GoogleTrackerImportService:
         dicts = self.sheets_service.rows_to_dicts(rows)
         valid_count = 0
         
-        for d in dicts:
+        for idx, d in enumerate(dicts, start=2):
+            try:
+                cash_amt = self._parse_numeric(d.get("cash_amount"), "cash_amount", idx)
+            except ValueError as e:
+                errors.append(str(e))
+                connection.execute(
+                    """
+                    INSERT INTO external_import_cash (
+                        import_id, portfolio_name, broker_name, account_name, currency, 
+                        cash_amount, as_of_date, validation_status, validation_message, created_at
+                    ) VALUES (?, ?, ?, ?, ?, 0, ?, 'INVALID', ?, ?)
+                    """,
+                    (
+                        import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
+                        d.get("currency", "USD"), d.get("as_of_date"), str(e), _now()
+                    )
+                )
+                continue
+
             connection.execute(
                 """
                 INSERT INTO external_import_cash (
@@ -210,8 +331,7 @@ class GoogleTrackerImportService:
                 """,
                 (
                     import_id, d.get("portfolio_name"), d.get("broker_name"), d.get("account_name"),
-                    d.get("currency", "USD"), float(d.get("cash_amount") or 0),
-                    d.get("as_of_date"), _now()
+                    d.get("currency", "USD"), cash_amt, d.get("as_of_date"), _now()
                 )
             )
             valid_count += 1

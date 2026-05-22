@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, status
 
 from backend.app.database import db_session
+from backend.app.config import get_settings
 from backend.app.models import (
     AssetCreate,
     AssetOut,
