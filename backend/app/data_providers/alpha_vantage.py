@@ -8,7 +8,7 @@ from backend.app.data_providers.base import BaseMarketDataProvider, ProviderErro
 
 class AlphaVantageProvider(BaseMarketDataProvider):
     provider_name = "alpha_vantage"
-    endpoint = "TIME_SERIES_DAILY_ADJUSTED"
+    endpoint = "TIME_SERIES_DAILY"
     base_url = "https://www.alphavantage.co/query"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -26,7 +26,8 @@ class AlphaVantageProvider(BaseMarketDataProvider):
             {
                 "function": self.endpoint,
                 "symbol": symbol.upper(),
-                "outputsize": "full",
+                # "compact" = ultimi 100 giorni (free). "full" è premium su TIME_SERIES_DAILY.
+                "outputsize": "compact",
                 "apikey": self.settings.alpha_vantage_api_key or "",
             }
         )
@@ -64,8 +65,10 @@ class AlphaVantageProvider(BaseMarketDataProvider):
                         "high": float(values.get("2. high")),
                         "low": float(values.get("3. low")),
                         "close": float(values.get("4. close")),
-                        "adjusted_close": float(values.get("5. adjusted close", values.get("4. close"))),
-                        "volume": float(values.get("6. volume", 0) or 0),
+                        "adjusted_close": float(
+                            values.get("5. adjusted close") or values.get("4. close")
+                        ),
+                        "volume": float(values.get("6. volume") or values.get("5. volume") or 0),
                         "source": "real",
                         "provider": self.provider_name,
                     }

@@ -90,7 +90,7 @@ function Mark() {
 
 export function Sidebar() {
   return (
-    <aside className="relative z-20 border-b border-slate-800/60 bg-ink-975/85 px-4 py-4 backdrop-blur-xl lg:fixed lg:inset-y-0 lg:left-0 lg:w-72 lg:border-b-0 lg:border-r lg:px-5 lg:py-7">
+    <aside className="relative z-20 border-b border-slate-800/60 bg-ink-975/85 px-4 py-4 backdrop-blur-xl lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col lg:border-b-0 lg:border-r lg:px-5 lg:py-7">
       <div className="flex items-center gap-3">
         <Mark />
         <div>
@@ -105,7 +105,7 @@ export function Sidebar() {
 
       <div className="mt-6 hidden h-px w-full bg-gradient-to-r from-cyan-300/40 via-slate-800/40 to-transparent lg:block" />
 
-      <nav className="no-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1 lg:mt-6 lg:flex-col lg:gap-6 lg:overflow-visible lg:pb-0">
+      <nav className="no-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1 lg:mt-6 lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-6 lg:overflow-y-auto lg:pb-2">
         {sections.map((section) => (
           <div key={section.label} className="flex shrink-0 gap-2 lg:flex-col lg:gap-1">
             <div className="hidden items-center gap-2 px-1 lg:flex">
@@ -161,7 +161,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="mt-8 hidden rounded-xl border border-slate-800/60 bg-slate-950/40 p-4 lg:block">
+      <div className="mt-8 hidden rounded-xl border border-slate-800/60 bg-slate-950/40 p-4 lg:mt-6 lg:block lg:shrink-0">
         <div className="flex items-center gap-2">
           <span className="relative inline-flex h-2 w-2 items-center justify-center">
             <span className="absolute inset-0 animate-pulse-soft rounded-full bg-emerald-400/70" />
