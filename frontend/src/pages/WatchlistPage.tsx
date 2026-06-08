@@ -83,7 +83,7 @@ export function WatchlistPage() {
         title="Watchlist"
         subtitle="Ogni asset del database con prezzo, segnale, score e raccomandazione contestualizzata sul portafoglio."
         actions={
-          <PageHeaderAction icon={<Plus className="h-4 w-4" aria-hidden="true" />}>
+          <PageHeaderAction icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => navigate("/universe")}>
             Aggiungi asset
           </PageHeaderAction>
         }

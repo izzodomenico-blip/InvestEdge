@@ -211,6 +211,11 @@ def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut
     return _asset_from_base_row(connection, row)
 
 
+def delete_asset(connection: sqlite3.Connection, symbol: str) -> bool:
+    cursor = connection.execute("DELETE FROM assets WHERE UPPER(symbol) = UPPER(?)", (symbol,))
+    return cursor.rowcount > 0
+
+
 def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetOut:
     cursor = connection.execute(
         """

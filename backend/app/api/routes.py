@@ -68,7 +68,7 @@ from backend.app.services.alert_service import (
     send_today_alert,
 )
 from backend.app.services.allocation_engine import AllocationEngine
-from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
+from backend.app.services.assets_service import create_asset, delete_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.market_data_service import MarketDataService
@@ -124,6 +124,15 @@ def post_asset(payload: AssetCreate) -> AssetOut:
             status_code=status.HTTP_409_CONFLICT,
             detail="Asset already exists or violates database constraints.",
         ) from exc
+
+
+@router.delete("/assets/{symbol}")
+def remove_asset(symbol: str) -> dict[str, bool | str]:
+    with db_session() as connection:
+        deleted = delete_asset(connection, symbol)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset {symbol.upper()} non trovato.")
+    return {"deleted": True, "symbol": symbol.upper()}
 
 
 @router.get("/portfolio", response_model=PortfolioSummaryOut)

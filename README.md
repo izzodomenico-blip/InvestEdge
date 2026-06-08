@@ -257,6 +257,7 @@ Endpoint iniziali:
 - `GET /assets`
 - `GET /assets/{symbol}`
 - `POST /assets`
+- `DELETE /assets/{symbol}`
 - `GET /prices/{symbol}`
 - `GET /technical-analysis/{symbol}`
 - `GET /portfolio`

@@ -255,6 +255,30 @@ def test_tax_report_empty(client: TestClient) -> None:
     assert data["total_tax_due"] == 0.0
 
 
+def test_universe_add_and_remove_asset(client: TestClient) -> None:
+    create = client.post(
+        "/assets",
+        json={"symbol": "TEST1", "name": "Test Asset", "asset_type": "stock", "currency": "USD"},
+    )
+    assert create.status_code == 201
+
+    assets = {a["symbol"] for a in client.get("/assets").json()}
+    assert "TEST1" in assets
+
+    delete = client.delete("/assets/TEST1")
+    assert delete.status_code == 200
+    assert delete.json()["deleted"] is True
+
+    assets_after = {a["symbol"] for a in client.get("/assets").json()}
+    assert "TEST1" not in assets_after
+
+
+def test_universe_remove_missing_asset(client: TestClient) -> None:
+    response = client.delete("/assets/NOPE")
+
+    assert response.status_code == 404
+
+
 def test_dashboard_after_seed(client: TestClient) -> None:
     response = client.get("/dashboard")
 

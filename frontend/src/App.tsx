@@ -13,6 +13,7 @@ import { ScenarioPage } from "./pages/ScenarioPage";
 import { SimulatorPage } from "./pages/SimulatorPage";
 import { TaxCenterPage } from "./pages/TaxCenterPage";
 import { TodayPage } from "./pages/TodayPage";
+import { UniversePage } from "./pages/UniversePage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/" element={<TodayPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/watchlist" element={<WatchlistPage />} />
+        <Route path="/universe" element={<UniversePage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/simulator" element={<SimulatorPage />} />

@@ -12,6 +12,7 @@ import {
   Search,
   Siren,
   Sparkles,
+  Telescope,
   type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -37,6 +38,7 @@ const sections: NavSection[] = [
       { to: "/", label: "Cosa fare oggi", icon: Sparkles },
       { to: "/dashboard", label: "Dashboard", icon: Gauge },
       { to: "/watchlist", label: "Watchlist", icon: Search },
+      { to: "/universe", label: "Universe", icon: Telescope },
     ],
   },
   {
