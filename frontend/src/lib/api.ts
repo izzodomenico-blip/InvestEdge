@@ -852,6 +852,19 @@ function fetchErrorMessage(path: string, error: unknown) {
   return base;
 }
 
+export function apiUrl(path: string): string {
+  return `${API_URL}${path}`;
+}
+
+export type ReportSummary = {
+  positions_count: number;
+  orders_count: number;
+  realized_events_count: number;
+  portfolio_value: number;
+  total_pnl: number;
+  estimated_tax_due: number;
+};
+
 export async function apiGet<T>(path: string): Promise<T> {
   let response: Response;
   try {

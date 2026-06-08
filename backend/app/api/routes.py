@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import Response
 
 from backend.app.database import db_session
 from backend.app.models import (
@@ -48,6 +49,7 @@ from backend.app.models import (
     PriceHistoryOut,
     RebalanceOut,
     RebalanceTradeOut,
+    ReportSummaryOut,
     ScenarioRunIn,
     ScenarioRunOut,
     SeedSummaryOut,
@@ -76,6 +78,7 @@ from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
+from backend.app.services.report_service import orders_csv, portfolio_csv, report_summary, tax_csv
 from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
 from backend.app.services.tax_service import compute_tax_report
@@ -235,6 +238,38 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
             return portfolio_engine.replace_positions(connection, items)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _csv_response(content: str, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/reports/summary", response_model=ReportSummaryOut)
+def reports_summary() -> ReportSummaryOut:
+    with db_session() as connection:
+        return ReportSummaryOut(**report_summary(connection))
+
+
+@router.get("/reports/portfolio.csv")
+def reports_portfolio_csv() -> Response:
+    with db_session() as connection:
+        return _csv_response(portfolio_csv(connection), "investedge_portafoglio.csv")
+
+
+@router.get("/reports/orders.csv")
+def reports_orders_csv() -> Response:
+    with db_session() as connection:
+        return _csv_response(orders_csv(connection), "investedge_operazioni.csv")
+
+
+@router.get("/reports/tax.csv")
+def reports_tax_csv() -> Response:
+    with db_session() as connection:
+        return _csv_response(tax_csv(connection), "investedge_fiscale.csv")
 
 
 @router.get("/tax/report", response_model=TaxReportOut)

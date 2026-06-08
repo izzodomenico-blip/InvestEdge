@@ -9,6 +9,7 @@ import { ImportPage } from "./pages/ImportPage";
 import { MachineLearningPage } from "./pages/MachineLearningPage";
 import { NewsPage } from "./pages/NewsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { ScenarioPage } from "./pages/ScenarioPage";
 import { SimulatorPage } from "./pages/SimulatorPage";
 import { TaxCenterPage } from "./pages/TaxCenterPage";
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/ml" element={<MachineLearningPage />} />
         <Route path="/scenarios" element={<ScenarioPage />} />
         <Route path="/tax" element={<TaxCenterPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/data" element={<DataCenterPage />} />

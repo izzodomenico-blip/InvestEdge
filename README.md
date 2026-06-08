@@ -144,6 +144,10 @@ L'endpoint `POST /import/google-sheets/apply` (e `/preview`) importa le posizion
 
 L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
 
+## Reports / Export
+
+Esportazione in CSV (apribile con Excel/Google Sheets) di portafoglio, operazioni e report fiscale. Endpoint: `GET /reports/summary` (panoramica), `GET /reports/portfolio.csv`, `GET /reports/orders.csv`, `GET /reports/tax.csv` (download con `Content-Disposition`). Pagina frontend "Reports".
+
 ## Centro fiscale
 
 L'endpoint `GET /tax/report` calcola plusvalenze e minusvalenze realizzate dagli ordini simulati con **lot matching FIFO**: ogni vendita viene abbinata agli acquisti più vecchi per determinare il costo. Restituisce eventi realizzati, riepilogo per anno fiscale (plus/minus, imposta dovuta), lotti aperti con plus/minus latenti e il riporto perdite (zainetto fiscale). Aliquote: 26% standard, 12,5% titoli di Stato/ETF governativi; compensazione perdite per categoria con riporto agli anni successivi. Stima indicativa, non sostituisce un commercialista. Pagina frontend "Centro fiscale".

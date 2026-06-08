@@ -279,6 +279,27 @@ def test_universe_remove_missing_asset(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_reports_summary(client: TestClient) -> None:
+    response = client.get("/reports/summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"positions_count", "orders_count", "realized_events_count", "portfolio_value", "estimated_tax_due"} <= set(data)
+
+
+def test_reports_csv_downloads(client: TestClient) -> None:
+    for path, header in [
+        ("/reports/portfolio.csv", "symbol,asset_type,quantity"),
+        ("/reports/orders.csv", "date,symbol,type"),
+        ("/reports/tax.csv", "sell_date,symbol,asset_type"),
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        assert "attachment" in response.headers["content-disposition"]
+        assert response.text.splitlines()[0].startswith(header)
+
+
 def test_dashboard_after_seed(client: TestClient) -> None:
     response = client.get("/dashboard")
 

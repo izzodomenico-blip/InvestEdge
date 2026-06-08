@@ -413,6 +413,15 @@ class TaxOpenLotOut(BaseModel):
     unrealized_gain: float | None = None
 
 
+class ReportSummaryOut(BaseModel):
+    positions_count: int
+    orders_count: int
+    realized_events_count: int
+    portfolio_value: float
+    total_pnl: float
+    estimated_tax_due: float
+
+
 class TaxReportOut(BaseModel):
     base_currency: str
     standard_rate: float
