@@ -5,6 +5,15 @@ from urllib.parse import urlencode
 
 from backend.app.data_providers.base import BaseMarketDataProvider, ProviderError
 
+# ETF europei non coperti dal piano free Alpha Vantage (solo mercati USA):
+# li mappiamo sull'equivalente USA, che traccia lo stesso indice.
+# I segnali (trend/RSI/momentum) sono validi; il prezzo assoluto e' quello del proxy USD.
+PROXY_SYMBOLS = {
+    "VWCE": "VT",     # FTSE All-World -> Vanguard Total World
+    "AGGH": "BNDW",   # Global Aggregate Bond -> Vanguard Total World Bond
+    "IB01": "SHV",    # US Treasury 0-1y -> iShares Short Treasury 0-1y
+}
+
 
 class AlphaVantageProvider(BaseMarketDataProvider):
     provider_name = "alpha_vantage"
@@ -22,10 +31,11 @@ class AlphaVantageProvider(BaseMarketDataProvider):
         return asset_type.lower() in {"stock", "etf", "bond_etf"}
 
     def _request_url(self, symbol: str) -> str:
+        upstream_symbol = PROXY_SYMBOLS.get(symbol.upper(), symbol.upper())
         query = urlencode(
             {
                 "function": self.endpoint,
-                "symbol": symbol.upper(),
+                "symbol": upstream_symbol,
                 # "compact" = ultimi 100 giorni (free). "full" è premium su TIME_SERIES_DAILY.
                 "outputsize": "compact",
                 "apikey": self.settings.alpha_vantage_api_key or "",

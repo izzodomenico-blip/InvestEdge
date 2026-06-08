@@ -904,6 +904,20 @@ def test_api_rate_limit_guard(client: TestClient) -> None:
             provider.check_rate_limit()
 
 
+def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        provider = AlphaVantageProvider(get_settings(), connection)
+        assert "symbol=VT" in provider._request_url("VWCE")
+        assert "symbol=BNDW" in provider._request_url("AGGH")
+        assert "symbol=SHV" in provider._request_url("IB01")
+        # i simboli non mappati restano invariati
+        assert "symbol=AAPL" in provider._request_url("AAPL")
+
+
 def test_provider_registry(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.provider_registry import ProviderRegistry
