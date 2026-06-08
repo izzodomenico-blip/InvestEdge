@@ -13,6 +13,8 @@ RebalanceFrequency = Literal["DAILY", "WEEKLY", "MONTHLY"]
 AllocationMethod = Literal["EQUAL_WEIGHT", "RISK_PARITY", "SCORE_WEIGHTED", "VOL_TARGET"]
 ActionType = Literal["BUY", "REDUCE", "SELL", "WATCH", "RISK", "OK"]
 ActionPriority = Literal["HIGH", "MEDIUM", "LOW"]
+MLModelType = Literal["LOGISTIC_REGRESSION", "RANDOM_FOREST", "HIST_GRADIENT_BOOSTING"]
+MLTargetType = Literal["POSITIVE_RETURN", "OUTPERFORM_BENCHMARK", "DRAWDOWN_RISK"]
 
 
 class AssetCreate(BaseModel):
@@ -214,6 +216,101 @@ class ImportStatusOut(BaseModel):
     enabled: bool
     configured: bool
     csv_url_set: bool
+
+
+class MLTrainIn(BaseModel):
+    model_name: str = Field(..., min_length=1, max_length=120)
+    model_type: MLModelType = "HIST_GRADIENT_BOOSTING"
+    target_type: MLTargetType = "POSITIVE_RETURN"
+    horizon_days: int = Field(default=14, ge=1, le=120)
+    symbols: list[str] = Field(default_factory=list)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
+    test_size_time_percent: float = Field(default=25, ge=10, le=50)
+    min_samples: int = Field(default=200, ge=20, le=100000)
+    cv_folds: int = Field(default=4, ge=2, le=8)
+
+
+class MLPredictIn(BaseModel):
+    model_id: int | None = None
+
+
+class MLTrainingRunOut(BaseModel):
+    id: int | None = None
+    model_name: str
+    target_type: str
+    horizon_days: int
+    train_start_date: str | None = None
+    train_end_date: str | None = None
+    test_start_date: str | None = None
+    test_end_date: str | None = None
+    samples_count: int
+    accuracy: float | None = None
+    precision: float | None = None
+    recall: float | None = None
+    f1_score: float | None = None
+    roc_auc: float | None = None
+    created_at: str | None = None
+
+
+class MLModelSummaryOut(BaseModel):
+    id: int
+    model_name: str
+    model_type: str
+    target_type: str
+    horizon_days: int
+    symbols_scope: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    model_path: str | None = None
+    trained_at: str | None = None
+    created_at: str | None = None
+
+
+class MLModelDetailOut(MLModelSummaryOut):
+    training_run: MLTrainingRunOut | None = None
+
+
+class MLPredictionOut(BaseModel):
+    id: int | None = None
+    symbol: str
+    model_id: int
+    horizon_days: int
+    target_type: str
+    prediction_date: str
+    probabilities: dict[str, float | None]
+    probability_positive: float | None = None
+    probability_outperform: float | None = None
+    probability_drawdown: float | None = None
+    predicted_label: str
+    confidence: str
+    features_snapshot: dict[str, float] = Field(default_factory=dict)
+    explanation: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+
+
+class MLTrainOut(BaseModel):
+    model_id: int
+    training_run: MLTrainingRunOut
+    metrics: dict[str, Any]
+    features_used: list[str]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MLPredictAllOut(BaseModel):
+    model_id: int
+    predictions: list[MLPredictionOut]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MLStatusOut(BaseModel):
+    models_count: int
+    latest_model: MLModelSummaryOut | None = None
+    latest_training_run: MLTrainingRunOut | None = None
+    available_targets: list[str]
+    available_model_types: list[str]
+    ml_ready: bool
+    message: str
 
 
 class ImportApplyOut(BaseModel):

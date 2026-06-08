@@ -28,6 +28,13 @@ from backend.app.models import (
     ImportInputIn,
     ImportPreviewOut,
     ImportStatusOut,
+    MLModelSummaryOut,
+    MLPredictAllOut,
+    MLPredictIn,
+    MLPredictionOut,
+    MLStatusOut,
+    MLTrainIn,
+    MLTrainOut,
     NewsItemOut,
     NewsRefreshAllOut,
     NewsRefreshResultOut,
@@ -60,6 +67,7 @@ from backend.app.services.assets_service import create_asset, get_asset_by_symbo
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
@@ -73,6 +81,7 @@ backtest_engine = BacktestEngine()
 allocation_engine = AllocationEngine()
 market_data_service = MarketDataService()
 news_engine = NewsEngine()
+ml_engine = MLEngine()
 
 
 @router.get("/health")
@@ -364,6 +373,53 @@ def alerts_send_today() -> AlertSendOut:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/ml/status", response_model=MLStatusOut)
+def ml_status() -> MLStatusOut:
+    with db_session() as connection:
+        return MLStatusOut(**ml_engine.get_status(connection))
+
+
+@router.post("/ml/train", response_model=MLTrainOut)
+def ml_train(payload: MLTrainIn) -> MLTrainOut:
+    try:
+        with db_session() as connection:
+            return MLTrainOut(**ml_engine.train_model(connection, payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/ml/models", response_model=list[MLModelSummaryOut])
+def ml_models() -> list[MLModelSummaryOut]:
+    with db_session() as connection:
+        return [MLModelSummaryOut(**model) for model in ml_engine.list_models(connection)]
+
+
+@router.post("/ml/predict/{symbol}", response_model=MLPredictionOut)
+def ml_predict(symbol: str, payload: MLPredictIn | None = None) -> MLPredictionOut:
+    try:
+        with db_session() as connection:
+            return MLPredictionOut(
+                **ml_engine.predict_for_symbol(connection, symbol, payload.model_id if payload else None)
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/ml/predict-all", response_model=MLPredictAllOut)
+def ml_predict_all(payload: MLPredictIn | None = None) -> MLPredictAllOut:
+    try:
+        with db_session() as connection:
+            return MLPredictAllOut(**ml_engine.predict_all_watchlist(connection, payload.model_id if payload else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/ml/predictions/{symbol}", response_model=list[MLPredictionOut])
+def ml_predictions(symbol: str, limit: int = Query(default=10, ge=1, le=50)) -> list[MLPredictionOut]:
+    with db_session() as connection:
+        return [MLPredictionOut(**item) for item in ml_engine.latest_predictions(connection, symbol, limit=limit)]
 
 
 @router.get("/dashboard", response_model=DashboardOut)

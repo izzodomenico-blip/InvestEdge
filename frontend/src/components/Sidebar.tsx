@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Brain,
   BriefcaseBusiness,
   CandlestickChart,
   Database,
@@ -50,6 +51,7 @@ const sections: NavSection[] = [
     label: "Intelligence",
     index: "03",
     items: [
+      { to: "/ml", label: "Machine Learning", icon: Brain },
       { to: "/news", label: "News", icon: Newspaper },
       { to: "/backtest", label: "Backtest", icon: BarChart3 },
       { to: "/data", label: "Dati", icon: Database },

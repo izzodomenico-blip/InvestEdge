@@ -389,6 +389,19 @@ Copia `.env.example` in `.env` e modifica i valori se necessario. Per le chiavi 
 
 Il database SQLite viene creato automaticamente in `data/investedge.db` al primo avvio del backend. Se la UI mostra `Database non inizializzato`, esegui il comando seed sopra e ricarica il frontend.
 
+## Machine Learning (AI Lab)
+
+Modulo ML sperimentale basato su scikit-learn. Endpoint: `GET /ml/status`, `POST /ml/train`, `GET /ml/models`, `POST /ml/predict/{symbol}`, `POST /ml/predict-all`, `GET /ml/predictions/{symbol}`.
+
+- **Modelli**: regressione logistica, random forest, **gradient boosting** (HistGradientBoosting, consigliato).
+- **Target**: rendimento positivo, batte il benchmark, rischio forte ribasso, su un orizzonte configurabile.
+- **28 feature**: tecniche (trend/momentum/volatilità/volume), sotto-score, sentiment news, peso in portafoglio.
+- **No look-ahead**: i target usano solo rendimenti futuri via shift; `validate_no_lookahead` blocca eventuali bias.
+- **Validazione walk-forward**: oltre allo split temporale, la metrica viene mediata su N fold a finestra espansiva — se è debole il modello non generalizza.
+- **Explainability**: feature importance (nativa o permutation importance) e probabilità con livello di confidenza.
+
+È uno strumento di supporto: fornisce probabilità, non certezze. Su dati simulati l'accuratezza è vicina al caso (~50%); diventa più informativo con dati reali, ma non garantisce rendimenti. I modelli serializzati vivono in `data/ml_models/` (non committati).
+
 ## Sviluppo: lint, test, CI
 
 Il linting Python usa ruff, configurato in `ruff.toml`. Installa le dipendenze di sviluppo e lancia i controlli:

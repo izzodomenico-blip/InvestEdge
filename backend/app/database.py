@@ -269,6 +269,58 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at
 CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
+
+CREATE TABLE IF NOT EXISTS ml_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_name TEXT NOT NULL,
+    model_type TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    symbols_scope TEXT,
+    features_json TEXT,
+    metrics_json TEXT,
+    model_path TEXT,
+    trained_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ml_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER,
+    symbol TEXT NOT NULL,
+    prediction_date TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    probability_positive REAL,
+    probability_outperform REAL,
+    probability_drawdown REAL,
+    predicted_label TEXT,
+    confidence TEXT,
+    features_snapshot_json TEXT,
+    explanation_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(model_id) REFERENCES ml_models(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS ml_training_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_name TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    train_start_date TEXT,
+    train_end_date TEXT,
+    test_start_date TEXT,
+    test_end_date TEXT,
+    samples_count INTEGER NOT NULL DEFAULT 0,
+    accuracy REAL,
+    precision REAL,
+    recall REAL,
+    f1_score REAL,
+    roc_auc REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol ON ml_predictions(symbol, created_at);
 """
 
 

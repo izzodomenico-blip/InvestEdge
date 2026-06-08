@@ -92,6 +92,65 @@ export type AlertStatus = {
   channel: string;
 };
 
+export type MLModelType = "LOGISTIC_REGRESSION" | "RANDOM_FOREST" | "HIST_GRADIENT_BOOSTING";
+export type MLTargetType = "POSITIVE_RETURN" | "OUTPERFORM_BENCHMARK" | "DRAWDOWN_RISK";
+
+export type MLTrainInput = {
+  model_name: string;
+  model_type: MLModelType;
+  target_type: MLTargetType;
+  horizon_days: number;
+  symbols: string[];
+  benchmark_symbol?: string;
+  test_size_time_percent?: number;
+  min_samples?: number;
+  cv_folds?: number;
+};
+
+export type MLStatus = {
+  models_count: number;
+  latest_model: Record<string, unknown> | null;
+  latest_training_run: Record<string, unknown> | null;
+  available_targets: string[];
+  available_model_types: string[];
+  ml_ready: boolean;
+  message: string;
+};
+
+export type MLTrainResult = {
+  model_id: number;
+  training_run: Record<string, unknown> | null;
+  metrics: Record<string, unknown>;
+  features_used: string[];
+  warnings: string[];
+};
+
+export type MLPrediction = {
+  id: number | null;
+  symbol: string;
+  model_id: number;
+  horizon_days: number;
+  target_type: string;
+  prediction_date: string;
+  probability_positive: number | null;
+  probability_outperform: number | null;
+  probability_drawdown: number | null;
+  predicted_label: string;
+  confidence: string;
+  explanation: Record<string, unknown>;
+  warnings: string[];
+};
+
+export type MLModelSummary = {
+  id: number;
+  model_name: string;
+  model_type: string;
+  target_type: string;
+  horizon_days: number;
+  metrics: Record<string, unknown>;
+  trained_at: string | null;
+};
+
 export type ImportHolding = {
   symbol: string;
   name: string;

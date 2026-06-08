@@ -159,6 +159,70 @@ def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> Non
     assert aapl["average_price"] == 150
 
 
+def test_ml_status_initially_empty(client: TestClient) -> None:
+    response = client.get("/ml/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["models_count"] == 0
+    assert data["ml_ready"] is False
+    assert "HIST_GRADIENT_BOOSTING" in data["available_model_types"]
+
+
+def test_ml_dataset_has_no_lookahead(client: TestClient) -> None:
+    from backend.app.database import db_session
+    from backend.app.services.ml_dataset_service import FEATURE_COLUMNS, MLDatasetService
+
+    service = MLDatasetService()
+    with db_session() as connection:
+        dataset = service.build_ml_dataset(
+            connection=connection,
+            symbols=["AAPL", "MSFT", "SPY"],
+            horizon_days=14,
+            target_type="POSITIVE_RETURN",
+        )
+    assert not dataset.empty
+    assert set(FEATURE_COLUMNS).issubset(dataset.columns)
+    # validate_no_lookahead raises if violated; here it must hold
+    assert service.validate_no_lookahead(dataset) is True
+
+
+def test_ml_train_and_predict(client: TestClient) -> None:
+    train_payload = {
+        "model_name": "Test GB",
+        "model_type": "HIST_GRADIENT_BOOSTING",
+        "target_type": "POSITIVE_RETURN",
+        "horizon_days": 14,
+        "symbols": ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"],
+        "min_samples": 100,
+        "cv_folds": 3,
+    }
+    train_response = client.post("/ml/train", json=train_payload)
+    assert train_response.status_code == 200
+    train_data = train_response.json()
+    assert train_data["model_id"] > 0
+    metrics = train_data["metrics"]
+    assert 0.0 <= metrics["accuracy"] <= 1.0
+    assert metrics["walk_forward"] is None or metrics["walk_forward"]["folds"] >= 1
+
+    status_response = client.get("/ml/status")
+    assert status_response.json()["models_count"] == 1
+
+    predict_response = client.post("/ml/predict/AAPL", json={})
+    assert predict_response.status_code == 200
+    prediction = predict_response.json()
+    assert prediction["symbol"] == "AAPL"
+    assert prediction["confidence"] in {"LOW", "MEDIUM", "HIGH"}
+    assert prediction["predicted_label"]
+
+
+def test_ml_predict_without_model_fails(client: TestClient) -> None:
+    response = client.post("/ml/predict/AAPL", json={})
+
+    assert response.status_code == 400
+    assert "modello" in response.json()["detail"].lower()
+
+
 def test_dashboard_after_seed(client: TestClient) -> None:
     response = client.get("/dashboard")
 
