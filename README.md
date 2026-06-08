@@ -144,6 +144,10 @@ L'endpoint `POST /import/google-sheets/apply` (e `/preview`) importa le posizion
 
 L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
 
+## Analisi scenari (stress test)
+
+L'endpoint `POST /scenarios/run` applica shock di prezzo al portafoglio attuale e stima la perdita. Scenari preset (crollo di mercato, sell-off tech, inverno cripto, rialzo tassi, shock inflazione, correzione moderata) o `CUSTOM` con shock per classe/asset. Restituisce valore sotto stress, perdita assoluta/percentuale, livello di rischio, impatto per asset e per classe, e suggerimenti di mitigazione. Sola lettura, non modifica il portafoglio. Pagina frontend "Scenari".
+
 ## Pianificatore allocazione capitale
 
 L'endpoint `POST /portfolio/allocation/plan` suggerisce pesi target e quantita per un insieme di asset. Non esegue ordini: produce un piano da applicare manualmente dal simulatore. Metodi disponibili:
@@ -154,6 +158,8 @@ L'endpoint `POST /portfolio/allocation/plan` suggerisce pesi target e quantita p
 - `VOL_TARGET`: parte da risk parity e scala la quota investita per centrare una volatilita target, lasciando il resto in liquidita.
 
 Opzioni: `max_weight` (cap per singolo asset con redistribuzione), `target_volatility`, `lookback_days`. La volatilita di portafoglio e una stima conservativa (media pesata delle volatilita, assume correlazione 1). Nel frontend il pianificatore e nella pagina Portafoglio con grafico a torta e tabella pesi/capitale/quantita.
+
+L'endpoint `POST /portfolio/allocation/apply` crea direttamente le posizioni dal piano; `POST /portfolio/allocation/rebalance` confronta il piano con il portafoglio attuale e restituisce i trade (BUY/SELL) necessari per allinearlo (ottimizzatore/ribilanciamento).
 
 ## Dati reali con cache
 

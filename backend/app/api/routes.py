@@ -46,6 +46,10 @@ from backend.app.models import (
     PortfolioSnapshotOut,
     PortfolioSummaryOut,
     PriceHistoryOut,
+    RebalanceOut,
+    RebalanceTradeOut,
+    ScenarioRunIn,
+    ScenarioRunOut,
     SeedSummaryOut,
     SignalOut,
     SimulatedOrderIn,
@@ -71,6 +75,7 @@ from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
+from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
 from backend.app.services.technical_analysis_service import get_technical_analysis
 from backend.scripts.seed_database import seed_database
@@ -217,6 +222,81 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
             if not items:
                 raise ValueError("Nessuna posizione da creare: aumenta il capitale o controlla i prezzi disponibili.")
             return portfolio_engine.replace_positions(connection, items)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/scenarios/run", response_model=ScenarioRunOut)
+def scenario_run(payload: ScenarioRunIn) -> ScenarioRunOut:
+    try:
+        with db_session() as connection:
+            return ScenarioRunOut(
+                **run_scenario(
+                    connection,
+                    scenario_type=payload.scenario_type,
+                    class_shocks=payload.class_shocks,
+                    symbol_shocks=payload.symbol_shocks,
+                )
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/portfolio/allocation/rebalance", response_model=RebalanceOut)
+def rebalance_portfolio(payload: AllocationPlanIn) -> RebalanceOut:
+    try:
+        with db_session() as connection:
+            summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
+            current = {position.symbol: position for position in summary.positions}
+            symbols = payload.symbols or list(current.keys())
+            if not symbols:
+                raise ValueError("Portafoglio vuoto: crea un portafoglio o indica gli asset da ottimizzare.")
+            total_value = summary.total_value if summary.total_value > 0 else payload.total_capital
+            plan = allocation_engine.plan(
+                connection,
+                symbols=symbols,
+                method=payload.method,
+                total_capital=total_value,
+                target_volatility=payload.target_volatility,
+                max_weight=payload.max_weight,
+                lookback_days=payload.lookback_days,
+            )
+            target = {item["symbol"]: item for item in plan["allocations"]}
+            trades: list[RebalanceTradeOut] = []
+            for symbol in dict.fromkeys([*symbols, *current.keys()]):
+                position = current.get(symbol)
+                target_item = target.get(symbol)
+                current_value = float(position.current_value) if position else 0.0
+                target_value = float(target_item["capital"]) if target_item else 0.0
+                price = (
+                    float(target_item["price"])
+                    if target_item and target_item.get("price")
+                    else (float(position.current_price) if position and position.current_price else None)
+                )
+                delta_value = round(target_value - current_value, 2)
+                action = "BUY" if delta_value > 1 else "SELL" if delta_value < -1 else "HOLD"
+                delta_quantity = round(delta_value / price, 4) if price else 0.0
+                trades.append(
+                    RebalanceTradeOut(
+                        symbol=symbol,
+                        action=action,
+                        current_weight=round((current_value / total_value * 100) if total_value > 0 else 0, 2),
+                        target_weight=round(float(target_item["weight_percent"]) if target_item else 0.0, 2),
+                        current_value=round(current_value, 2),
+                        target_value=round(target_value, 2),
+                        delta_value=delta_value,
+                        delta_quantity=delta_quantity,
+                        price=round(price, 4) if price else None,
+                    )
+                )
+            trades.sort(key=lambda trade: abs(trade.delta_value), reverse=True)
+            return RebalanceOut(
+                method=payload.method,
+                total_value=round(total_value, 2),
+                estimated_volatility=plan["estimated_volatility"],
+                trades=trades,
+                notes=plan["notes"],
+            )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

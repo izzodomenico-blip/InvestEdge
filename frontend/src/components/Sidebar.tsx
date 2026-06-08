@@ -9,6 +9,7 @@ import {
   Newspaper,
   Repeat2,
   Search,
+  Siren,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -52,6 +53,7 @@ const sections: NavSection[] = [
     index: "03",
     items: [
       { to: "/ml", label: "Machine Learning", icon: Brain },
+      { to: "/scenarios", label: "Scenari", icon: Siren },
       { to: "/news", label: "News", icon: Newspaper },
       { to: "/backtest", label: "Backtest", icon: BarChart3 },
       { to: "/data", label: "Dati", icon: Database },

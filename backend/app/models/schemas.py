@@ -15,6 +15,15 @@ ActionType = Literal["BUY", "REDUCE", "SELL", "WATCH", "RISK", "OK"]
 ActionPriority = Literal["HIGH", "MEDIUM", "LOW"]
 MLModelType = Literal["LOGISTIC_REGRESSION", "RANDOM_FOREST", "HIST_GRADIENT_BOOSTING"]
 MLTargetType = Literal["POSITIVE_RETURN", "OUTPERFORM_BENCHMARK", "DRAWDOWN_RISK"]
+ScenarioType = Literal[
+    "MARKET_CRASH",
+    "TECH_SELLOFF",
+    "CRYPTO_WINTER",
+    "RATE_HIKE",
+    "INFLATION_SHOCK",
+    "MILD_CORRECTION",
+    "CUSTOM",
+]
 
 
 class AssetCreate(BaseModel):
@@ -311,6 +320,64 @@ class MLStatusOut(BaseModel):
     available_model_types: list[str]
     ml_ready: bool
     message: str
+
+
+class ScenarioRunIn(BaseModel):
+    scenario_type: ScenarioType = "MARKET_CRASH"
+    class_shocks: dict[str, float] = Field(default_factory=dict)
+    symbol_shocks: dict[str, float] = Field(default_factory=dict)
+
+
+class ScenarioAssetImpactOut(BaseModel):
+    symbol: str
+    asset_type: str
+    current_value: float
+    shock_percent: float
+    stressed_value: float
+    absolute_impact: float
+    loss_contribution_percent: float
+
+
+class ScenarioClassImpactOut(BaseModel):
+    asset_class: str
+    current_value: float
+    stressed_value: float
+    absolute_impact: float
+    shock_percent: float
+
+
+class ScenarioRunOut(BaseModel):
+    scenario_type: str
+    scenario_label: str
+    current_value: float
+    stressed_value: float
+    cash: float
+    absolute_loss: float
+    percentage_loss: float
+    risk_level: str
+    asset_impacts: list[ScenarioAssetImpactOut]
+    class_impacts: list[ScenarioClassImpactOut]
+    mitigation: list[str]
+
+
+class RebalanceTradeOut(BaseModel):
+    symbol: str
+    action: Literal["BUY", "SELL", "HOLD"]
+    current_weight: float
+    target_weight: float
+    current_value: float
+    target_value: float
+    delta_value: float
+    delta_quantity: float
+    price: float | None = None
+
+
+class RebalanceOut(BaseModel):
+    method: str
+    total_value: float
+    estimated_volatility: float
+    trades: list[RebalanceTradeOut]
+    notes: list[str] = Field(default_factory=list)
 
 
 class ImportApplyOut(BaseModel):

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { BriefcaseBusiness, Layers, Scale } from "lucide-react";
+import { BriefcaseBusiness, Layers, Scale, Shuffle } from "lucide-react";
 
 import { Panel } from "./Panel";
 import {
@@ -11,6 +11,7 @@ import {
   type AllocationPlan,
   type AllocationPlanInput,
   type Asset,
+  type RebalanceResult,
 } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
@@ -42,6 +43,8 @@ export function AllocationPlanner() {
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
+  const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
+  const [rebalancing, setRebalancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -104,6 +107,19 @@ export function AllocationPlanner() {
       setError(err instanceof Error ? err.message : "Creazione portafoglio non riuscita.");
     } finally {
       setApplying(false);
+    }
+  }
+
+  async function runRebalance() {
+    setRebalancing(true);
+    setError(null);
+    try {
+      setRebalance(await apiPost<RebalanceResult>("/portfolio/allocation/rebalance", buildPayload()));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ribilanciamento non riuscito.");
+      setRebalance(null);
+    } finally {
+      setRebalancing(false);
     }
   }
 
@@ -296,6 +312,14 @@ export function AllocationPlanner() {
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   {applied && <span className="text-xs font-semibold text-emerald-300">{applied}</span>}
+                  <button
+                    onClick={() => void runRebalance()}
+                    disabled={rebalancing}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    <Shuffle className={`h-4 w-4 ${rebalancing ? "animate-pulse" : ""}`} aria-hidden="true" />
+                    {rebalancing ? "Calcolo..." : "Ribilancia"}
+                  </button>
                   {applied ? (
                     <button
                       onClick={() => navigate("/portfolio")}
@@ -315,6 +339,39 @@ export function AllocationPlanner() {
                   )}
                 </div>
               </div>
+
+              {rebalance && (
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/55 p-4">
+                  <p className="eyebrow-muted">Ribilanciamento vs portafoglio attuale ({formatCurrency(rebalance.total_value, "EUR")})</p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full min-w-[420px] border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
+                          <th className="px-2 pb-2 pl-0 font-medium">Asset</th>
+                          <th className="px-2 pb-2 text-right font-medium">Attuale → Target</th>
+                          <th className="px-2 pb-2 text-right font-medium">Azione</th>
+                          <th className="px-2 pb-2 pr-0 text-right font-medium">Quantità</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/80">
+                        {rebalance.trades.filter((t) => t.action !== "HOLD").map((trade) => (
+                          <tr key={trade.symbol}>
+                            <td className="px-2 py-2 pl-0 font-semibold text-white">{trade.symbol}</td>
+                            <td className="num px-2 py-2 text-right text-slate-300">{trade.current_weight.toFixed(0)}% → {trade.target_weight.toFixed(0)}%</td>
+                            <td className={`px-2 py-2 text-right font-semibold ${trade.action === "BUY" ? "text-emerald-300" : "text-rose-300"}`}>
+                              {trade.action} {formatCurrency(Math.abs(trade.delta_value), "EUR")}
+                            </td>
+                            <td className="num px-2 py-2 pr-0 text-right text-slate-300">{Math.abs(trade.delta_quantity).toLocaleString("it-IT")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {rebalance.trades.every((t) => t.action === "HOLD") && (
+                    <p className="mt-2 text-xs text-emerald-300">Portafoglio già in linea con il piano: nessun trade necessario.</p>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="flex h-full min-h-48 items-center justify-center rounded-lg border border-dashed border-slate-800 bg-slate-900/30 p-6 text-center text-sm text-slate-400">

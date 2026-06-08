@@ -564,6 +564,67 @@ export type WalkForwardResult = {
   fold_results: WalkForwardFold[];
 };
 
+export type ScenarioType =
+  | "MARKET_CRASH"
+  | "TECH_SELLOFF"
+  | "CRYPTO_WINTER"
+  | "RATE_HIKE"
+  | "INFLATION_SHOCK"
+  | "MILD_CORRECTION"
+  | "CUSTOM";
+
+export type ScenarioAssetImpact = {
+  symbol: string;
+  asset_type: string;
+  current_value: number;
+  shock_percent: number;
+  stressed_value: number;
+  absolute_impact: number;
+  loss_contribution_percent: number;
+};
+
+export type ScenarioClassImpact = {
+  asset_class: string;
+  current_value: number;
+  stressed_value: number;
+  absolute_impact: number;
+  shock_percent: number;
+};
+
+export type ScenarioResult = {
+  scenario_type: string;
+  scenario_label: string;
+  current_value: number;
+  stressed_value: number;
+  cash: number;
+  absolute_loss: number;
+  percentage_loss: number;
+  risk_level: string;
+  asset_impacts: ScenarioAssetImpact[];
+  class_impacts: ScenarioClassImpact[];
+  mitigation: string[];
+};
+
+export type RebalanceTrade = {
+  symbol: string;
+  action: "BUY" | "SELL" | "HOLD";
+  current_weight: number;
+  target_weight: number;
+  current_value: number;
+  target_value: number;
+  delta_value: number;
+  delta_quantity: number;
+  price: number | null;
+};
+
+export type RebalanceResult = {
+  method: string;
+  total_value: number;
+  estimated_volatility: number;
+  trades: RebalanceTrade[];
+  notes: string[];
+};
+
 export type AllocationMethod = "EQUAL_WEIGHT" | "RISK_PARITY" | "SCORE_WEIGHTED" | "VOL_TARGET";
 
 export type AllocationPlanInput = {

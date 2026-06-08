@@ -693,6 +693,66 @@ def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
     assert data["invested_value"] > 0
 
 
+def test_scenario_market_crash(client: TestClient) -> None:
+    # crea un portafoglio dal pianificatore così lo scenario ha posizioni
+    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "BTC", "SPY"]))
+
+    response = client.post("/scenarios/run", json={"scenario_type": "MARKET_CRASH"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scenario_type"] == "MARKET_CRASH"
+    assert data["stressed_value"] < data["current_value"]
+    assert data["absolute_loss"] < 0
+    assert data["risk_level"] in {"LOW", "MEDIUM", "HIGH", "EXTREME"}
+    assert len(data["asset_impacts"]) == 3
+    assert data["mitigation"]
+
+
+def test_scenario_custom_shocks(client: TestClient) -> None:
+    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"]))
+
+    response = client.post(
+        "/scenarios/run",
+        json={"scenario_type": "CUSTOM", "class_shocks": {"stock": -10}},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert all(abs(impact["shock_percent"] + 10) < 0.001 for impact in data["asset_impacts"])
+
+
+def test_scenario_empty_portfolio_fails(client: TestClient) -> None:
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0},
+    )
+
+    response = client.post("/scenarios/run", json={"scenario_type": "MARKET_CRASH"})
+
+    assert response.status_code == 400
+    assert "vuoto" in response.json()["detail"].lower()
+
+
+def test_rebalance_produces_trades(client: TestClient) -> None:
+    # portafoglio iniziale concentrato su AAPL
+    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"]))
+
+    response = client.post(
+        "/portfolio/allocation/rebalance",
+        json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT", "SPY"]),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    actions = {trade["symbol"]: trade["action"] for trade in data["trades"]}
+    # MSFT e SPY non sono in portafoglio -> da comprare
+    assert actions.get("MSFT") == "BUY"
+    assert actions.get("SPY") == "BUY"
+    # AAPL era 100% -> va ridotto
+    assert actions.get("AAPL") == "SELL"
+
+
 def test_allocation_invalid_symbol(client: TestClient) -> None:
     response = client.post(
         "/portfolio/allocation/plan",
