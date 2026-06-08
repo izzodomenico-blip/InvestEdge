@@ -24,6 +24,10 @@ from backend.app.models import (
     DataRefreshAllOut,
     DataRefreshResultOut,
     DataStatusOut,
+    ImportApplyOut,
+    ImportInputIn,
+    ImportPreviewOut,
+    ImportStatusOut,
     NewsItemOut,
     NewsRefreshAllOut,
     NewsRefreshResultOut,
@@ -43,6 +47,7 @@ from backend.app.models import (
     WalkForwardIn,
     WalkForwardOut,
 )
+from backend.app.services import google_sheets_import_service
 from backend.app.services.action_board_service import get_action_board
 from backend.app.services.alert_service import (
     AlertNotConfigured,
@@ -271,6 +276,30 @@ def get_signal(symbol: str) -> SignalOut:
 def action_board() -> ActionBoardOut:
     with db_session() as connection:
         return ActionBoardOut(**get_action_board(connection))
+
+
+@router.get("/import/google-sheets/status", response_model=ImportStatusOut)
+def import_google_sheets_status() -> ImportStatusOut:
+    return ImportStatusOut(**google_sheets_import_service.status())
+
+
+@router.post("/import/google-sheets/preview", response_model=ImportPreviewOut)
+def import_google_sheets_preview(payload: ImportInputIn | None = None) -> ImportPreviewOut:
+    try:
+        return ImportPreviewOut(**google_sheets_import_service.preview(payload.csv_url if payload else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/import/google-sheets/apply", response_model=ImportApplyOut)
+def import_google_sheets_apply(payload: ImportInputIn | None = None) -> ImportApplyOut:
+    try:
+        with db_session() as connection:
+            return ImportApplyOut(
+                **google_sheets_import_service.apply_import(connection, payload.csv_url if payload else None)
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/alerts/status", response_model=AlertStatusOut)

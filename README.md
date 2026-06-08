@@ -138,6 +138,12 @@ L'endpoint `POST /backtests/walk-forward` divide il periodo in N fold consecutiv
 
 Serve a smascherare l'overfitting: una strategia il cui rendimento sull'intero periodo dipende da poche finestre fortunate risulta FRAGILE, anche se il backtest singolo sembra ottimo. Nel frontend la pagina Backtest ha il terzo mode "Robustezza" con tabella per fold e badge del verdetto. Resta una simulazione su dati storici: non garantisce risultati futuri.
 
+## Import posizioni reali da Google Sheets
+
+L'endpoint `POST /import/google-sheets/apply` (e `/preview`) importa le posizioni reali da un Google Sheet **pubblicato in CSV** (File → Condividi → Pubblica sul web → CSV), senza OAuth nè librerie Google: legge l'URL CSV via HTTP. Intestazioni minime: `symbol`, `quantity`, `average_price` (accettati alias italiani: simbolo, quantità, prezzo_medio); opzionali `name`, `asset_type`, `currency`. Il parser gestisce formati europei e americani (`1.234,56`, `1,234.56`, `€ 383,47`).
+
+L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
+
 ## Pianificatore allocazione capitale
 
 L'endpoint `POST /portfolio/allocation/plan` suggerisce pesi target e quantita per un insieme di asset. Non esegue ordini: produce un piano da applicare manualmente dal simulatore. Metodi disponibili:
@@ -254,6 +260,13 @@ Endpoint iniziali:
 - `POST /backtests/compare`
 - `POST /backtests/walk-forward`
 - `POST /portfolio/allocation/plan`
+- `GET /import/google-sheets/status`
+- `POST /import/google-sheets/preview`
+- `POST /import/google-sheets/apply`
+- `GET /action-board`
+- `GET /alerts/status`
+- `POST /alerts/test`
+- `POST /alerts/send-today`
 - `GET /backtests`
 - `GET /backtests/{backtest_id}`
 - `DELETE /backtests/{backtest_id}`

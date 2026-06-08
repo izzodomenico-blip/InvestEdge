@@ -11,6 +11,7 @@ from backend.app.services.common import (
     round_safe,
     signal_from_score,
 )
+from backend.app.services.google_sheets_import_service import parse_holdings, parse_number
 from backend.app.services.risk_engine import RiskEngine
 
 # ----------------------------- common.signal_from_score -----------------------------
@@ -260,3 +261,62 @@ def test_final_recommendation_sell_signal_passes_through() -> None:
         asset_class_weight=10.0,
     )
     assert action == "SELL"
+
+
+# ----------------------------- Google Sheets import -----------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("383.47", 383.47),
+        ("383,47", 383.47),
+        ("1,234.56", 1234.56),
+        ("1.234,56", 1234.56),
+        ("€ 383,47", 383.47),
+        ("$ 1,000.00", 1000.0),
+        (123.45, 123.45),
+        (None, 0.0),
+        ("", 0.0),
+    ],
+)
+def test_import_parse_number(raw, expected) -> None:
+    assert parse_number(raw) == expected
+
+
+def test_import_parse_number_invalid() -> None:
+    with pytest.raises(ValueError, match="non valido"):
+        parse_number("383.47.00")
+
+
+def test_import_parse_holdings_basic() -> None:
+    csv_text = (
+        "symbol,quantity,average_price,currency\n"
+        "AAPL,10,150.5,USD\n"
+        'MSFT,5,"1,234.56",USD\n'
+        "ETH,0.5,2000,EUR\n"
+    )
+    result = parse_holdings(csv_text)
+    assert result["rows_total"] == 3
+    assert result["rows_valid"] == 3
+    assert result["rows_invalid"] == 0
+    msft = next(h for h in result["holdings"] if h["symbol"] == "MSFT")
+    assert msft["average_price"] == 1234.56
+
+
+def test_import_parse_holdings_italian_headers_and_errors() -> None:
+    csv_text = (
+        "Simbolo,Quantità,Prezzo medio\n"
+        "AAPL,10,150\n"
+        "BAD,3,non_un_numero\n"
+    )
+    result = parse_holdings(csv_text)
+    assert result["rows_valid"] == 1
+    assert result["rows_invalid"] == 1
+    assert result["holdings"][0]["symbol"] == "AAPL"
+
+
+def test_import_parse_holdings_missing_columns() -> None:
+    result = parse_holdings("foo,bar\n1,2\n")
+    assert result["rows_valid"] == 0
+    assert any("mancanti" in e.lower() for e in result["errors"])

@@ -24,6 +24,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_ALERTS", "false")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
+    monkeypatch.setenv("ENABLE_GOOGLE_SHEETS_IMPORT", "false")
+    monkeypatch.setenv("GOOGLE_SHEETS_CSV_URL", "")
     get_settings.cache_clear()
 
     from backend.scripts.seed_database import seed_database
@@ -114,6 +116,47 @@ def test_alerts_send_today_requires_config(client: TestClient) -> None:
     response = client.post("/alerts/send-today")
 
     assert response.status_code == 400
+
+
+def test_import_status_not_configured(client: TestClient) -> None:
+    response = client.get("/import/google-sheets/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["enabled"] is False
+    assert data["configured"] is False
+
+
+def test_import_preview_requires_url(client: TestClient) -> None:
+    response = client.post("/import/google-sheets/preview", json={"csv_url": ""})
+
+    assert response.status_code == 400
+    assert "URL" in response.json()["detail"]
+
+
+def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> None:
+    csv_text = (
+        "symbol,quantity,average_price,currency\n"
+        "AAPL,10,150,USD\n"
+        "MSFT,4,300,USD\n"
+    )
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: csv_text,
+    )
+
+    response = client.post("/import/google-sheets/apply", json={"csv_url": "http://example.test/sheet.csv"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["imported"] == 2
+
+    portfolio = client.get("/portfolio").json()
+    symbols = {position["symbol"] for position in portfolio["positions"]}
+    assert symbols == {"AAPL", "MSFT"}
+    aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
+    assert aapl["quantity"] == 10
+    assert aapl["average_price"] == 150
 
 
 def test_dashboard_after_seed(client: TestClient) -> None:

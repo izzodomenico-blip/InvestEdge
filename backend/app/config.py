@@ -49,6 +49,8 @@ class Settings:
     enable_alerts: bool = False
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    enable_google_sheets_import: bool = False
+    google_sheets_csv_url: str | None = None
 
     @property
     def database_url(self) -> str:
@@ -90,6 +92,8 @@ class Settings:
             enable_alerts=os.getenv("ENABLE_ALERTS", "false").lower() == "true",
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
+            enable_google_sheets_import=os.getenv("ENABLE_GOOGLE_SHEETS_IMPORT", "false").lower() == "true",
+            google_sheets_csv_url=os.getenv("GOOGLE_SHEETS_CSV_URL") or None,
         )
 
 

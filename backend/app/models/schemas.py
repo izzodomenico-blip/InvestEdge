@@ -189,6 +189,41 @@ class AlertStatusOut(BaseModel):
     channel: str
 
 
+class ImportInputIn(BaseModel):
+    csv_url: str | None = None
+
+
+class ImportHoldingOut(BaseModel):
+    symbol: str
+    name: str
+    asset_type: str
+    quantity: float
+    average_price: float
+    currency: str
+
+
+class ImportPreviewOut(BaseModel):
+    rows_total: int
+    rows_valid: int
+    rows_invalid: int
+    holdings: list[ImportHoldingOut]
+    errors: list[str]
+
+
+class ImportStatusOut(BaseModel):
+    enabled: bool
+    configured: bool
+    csv_url_set: bool
+
+
+class ImportApplyOut(BaseModel):
+    imported: int
+    created_assets: int
+    rows_invalid: int
+    errors: list[str]
+    portfolio_value: float
+
+
 class AlertSendOut(BaseModel):
     ok: bool
     message_id: int | None = None

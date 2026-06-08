@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   CandlestickChart,
   Database,
+  FileSpreadsheet,
   Gauge,
   Newspaper,
   Repeat2,
@@ -40,6 +41,7 @@ const sections: NavSection[] = [
     index: "02",
     items: [
       { to: "/portfolio", label: "Portafoglio", icon: BriefcaseBusiness },
+      { to: "/import", label: "Importa posizioni", icon: FileSpreadsheet },
       { to: "/simulator", label: "Simulatore", icon: Repeat2 },
       { to: "/analysis", label: "Analisi Asset", icon: CandlestickChart },
     ],

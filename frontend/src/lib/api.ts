@@ -92,6 +92,37 @@ export type AlertStatus = {
   channel: string;
 };
 
+export type ImportHolding = {
+  symbol: string;
+  name: string;
+  asset_type: string;
+  quantity: number;
+  average_price: number;
+  currency: string;
+};
+
+export type ImportPreview = {
+  rows_total: number;
+  rows_valid: number;
+  rows_invalid: number;
+  holdings: ImportHolding[];
+  errors: string[];
+};
+
+export type ImportStatus = {
+  enabled: boolean;
+  configured: boolean;
+  csv_url_set: boolean;
+};
+
+export type ImportApplyResult = {
+  imported: number;
+  created_assets: number;
+  rows_invalid: number;
+  errors: string[];
+  portfolio_value: number;
+};
+
 export type AlertSendResult = {
   ok: boolean;
   message_id: number | null;
