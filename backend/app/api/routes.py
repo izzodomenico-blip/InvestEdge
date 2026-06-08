@@ -6,17 +6,29 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from backend.app.database import db_session
 from backend.app.models import (
+    ActionBoardOut,
+    AlertSendOut,
+    AlertStatusOut,
+    AllocationPlanIn,
+    AllocationPlanOut,
+    ApiUsageOut,
     AssetCreate,
+    AssetDataStatusOut,
     AssetOut,
+    BacktestCompareIn,
+    BacktestCompareOut,
     BacktestResultOut,
     BacktestRunIn,
     BacktestSummaryOut,
     DashboardOut,
-    ApiUsageOut,
-    AssetDataStatusOut,
     DataRefreshAllOut,
     DataRefreshResultOut,
     DataStatusOut,
+    NewsItemOut,
+    NewsRefreshAllOut,
+    NewsRefreshResultOut,
+    NewsSentimentSummaryOut,
+    NewsStatusOut,
     OrderSimulationOut,
     PortfolioInitIn,
     PortfolioRecommendationOut,
@@ -28,22 +40,34 @@ from backend.app.models import (
     SimulatedOrderIn,
     SimulatedOrderOut,
     TechnicalAnalysisOut,
+    WalkForwardIn,
+    WalkForwardOut,
 )
+from backend.app.services.action_board_service import get_action_board
+from backend.app.services.alert_service import (
+    AlertNotConfigured,
+    alert_status,
+    send_test_message,
+    send_today_alert,
+)
+from backend.app.services.allocation_engine import AllocationEngine
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
-from backend.app.services.signals_service import list_signals
-from backend.app.services.signals_service import get_signal_by_symbol
+from backend.app.services.signals_service import get_signal_by_symbol, list_signals
 from backend.app.services.technical_analysis_service import get_technical_analysis
 from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
 portfolio_engine = PortfolioEngine()
 backtest_engine = BacktestEngine()
+allocation_engine = AllocationEngine()
 market_data_service = MarketDataService()
+news_engine = NewsEngine()
 
 
 @router.get("/health")
@@ -126,11 +150,48 @@ def get_portfolio_recommendations() -> list[PortfolioRecommendationOut]:
         return portfolio_engine.recommendations(connection)
 
 
+@router.post("/portfolio/allocation/plan", response_model=AllocationPlanOut)
+def plan_allocation(payload: AllocationPlanIn) -> AllocationPlanOut:
+    try:
+        with db_session() as connection:
+            return AllocationPlanOut(
+                **allocation_engine.plan(
+                    connection,
+                    symbols=payload.symbols,
+                    method=payload.method,
+                    total_capital=payload.total_capital,
+                    target_volatility=payload.target_volatility,
+                    max_weight=payload.max_weight,
+                    lookback_days=payload.lookback_days,
+                )
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.post("/backtests/run", response_model=BacktestResultOut)
 def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
     try:
         with db_session() as connection:
             return backtest_engine.run_backtest(connection, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/backtests/compare", response_model=BacktestCompareOut)
+def compare_backtests(payload: BacktestCompareIn) -> BacktestCompareOut:
+    try:
+        with db_session() as connection:
+            return BacktestCompareOut(**backtest_engine.compare_strategies(connection, payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/backtests/walk-forward", response_model=WalkForwardOut)
+def walk_forward_backtest(payload: WalkForwardIn) -> WalkForwardOut:
+    try:
+        with db_session() as connection:
+            return WalkForwardOut(**backtest_engine.walk_forward(connection, payload))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -206,10 +267,93 @@ def get_signal(symbol: str) -> SignalOut:
     return signal
 
 
+@router.get("/action-board", response_model=ActionBoardOut)
+def action_board() -> ActionBoardOut:
+    with db_session() as connection:
+        return ActionBoardOut(**get_action_board(connection))
+
+
+@router.get("/alerts/status", response_model=AlertStatusOut)
+def alerts_status() -> AlertStatusOut:
+    return AlertStatusOut(**alert_status())
+
+
+@router.post("/alerts/test", response_model=AlertSendOut)
+def alerts_test() -> AlertSendOut:
+    try:
+        return AlertSendOut(**send_test_message())
+    except AlertNotConfigured as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.post("/alerts/send-today", response_model=AlertSendOut)
+def alerts_send_today() -> AlertSendOut:
+    try:
+        with db_session() as connection:
+            return AlertSendOut(**send_today_alert(connection))
+    except AlertNotConfigured as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard() -> DashboardOut:
     with db_session() as connection:
         return get_dashboard(connection)
+
+
+@router.get("/news", response_model=list[NewsItemOut])
+def get_news(
+    limit: int = Query(default=50, ge=1, le=200),
+    symbol: str | None = Query(default=None, min_length=1, max_length=24),
+) -> list[NewsItemOut]:
+    with db_session() as connection:
+        return [NewsItemOut(**item) for item in news_engine.get_market_news(connection, limit=limit, symbol=symbol)]
+
+
+@router.get("/news/status", response_model=NewsStatusOut)
+def news_status() -> NewsStatusOut:
+    with db_session() as connection:
+        return NewsStatusOut(**news_engine.get_status(connection))
+
+
+@router.get("/news/sentiment/{symbol}", response_model=NewsSentimentSummaryOut)
+def news_sentiment(symbol: str) -> NewsSentimentSummaryOut:
+    try:
+        with db_session() as connection:
+            return NewsSentimentSummaryOut(**news_engine.get_news_sentiment_summary(connection, symbol))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/news/refresh/{symbol}", response_model=NewsRefreshResultOut)
+def refresh_news(symbol: str, force: bool = Query(default=False)) -> NewsRefreshResultOut:
+    try:
+        with db_session() as connection:
+            return NewsRefreshResultOut(**news_engine.refresh_news_for_symbol(connection, symbol, force=force))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/news/refresh-all", response_model=NewsRefreshAllOut)
+def refresh_all_news(
+    limit: int | None = Query(default=None, ge=1, le=50),
+    force: bool = Query(default=False),
+) -> NewsRefreshAllOut:
+    with db_session() as connection:
+        return NewsRefreshAllOut(**news_engine.refresh_all_news(connection, limit=limit, force=force))
+
+
+@router.get("/news/{symbol}", response_model=list[NewsItemOut])
+def get_symbol_news(symbol: str, limit: int = Query(default=50, ge=1, le=200)) -> list[NewsItemOut]:
+    try:
+        with db_session() as connection:
+            return [NewsItemOut(**item) for item in news_engine.get_news_for_symbol(connection, symbol, limit=limit)]
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/data/status", response_model=DataStatusOut)

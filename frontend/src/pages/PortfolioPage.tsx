@@ -14,7 +14,9 @@ import {
   YAxis,
 } from "recharts";
 
+import { AllocationPlanner } from "../components/AllocationPlanner";
 import { MetricCard } from "../components/MetricCard";
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import {
@@ -158,20 +160,32 @@ export function PortfolioPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">Paper trading</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Portafoglio</h1>
-        </div>
-        <button
-          onClick={() => void refreshPortfolio()}
-          disabled={refreshing}
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
-          Aggiorna prezzi
-        </button>
-      </header>
+      <PageHeader
+        eyebrow="Paper trading"
+        index="03"
+        title="Portafoglio"
+        subtitle="Posizioni simulate, allocation, P/L e warning di rischio. Nessun ordine reale viene inviato."
+        meta={
+          <>
+            <span>
+              Posizioni <span className="text-cyan-300/80">{summary.positions.length}</span>
+            </span>
+            <span>
+              Warning <span className="text-cyan-300/80">{summary.risk_warnings.length}</span>
+            </span>
+          </>
+        }
+        actions={
+          <PageHeaderAction
+            variant="primary"
+            onClick={() => void refreshPortfolio()}
+            disabled={refreshing}
+            icon={<RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />}
+          >
+            Aggiorna prezzi
+          </PageHeaderAction>
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} delta="Cash + posizioni" tone="cyan" icon={BadgeDollarSign} />
@@ -186,6 +200,8 @@ export function PortfolioPage() {
         <MetricCard label="Warning rischio" value={`${summary.risk_warnings.length}`} delta="Concentrazione e liquidita" tone={summary.risk_warnings.length ? "rose" : "green"} icon={AlertTriangle} />
       </div>
 
+      <AllocationPlanner />
+
       <Panel title="Posizioni">
         {summary.positions.length === 0 ? (
           <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
@@ -193,49 +209,49 @@ export function PortfolioPage() {
             <p className="mt-2 text-sm text-slate-300">Esegui il seed oppure inizializza un portafoglio dal backend con `/portfolio/init`.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
-                  <th className="px-3 pb-3 pl-0 font-medium">Symbol</th>
-                  <th className="px-3 pb-3 font-medium">Asset type</th>
-                  <th className="px-3 pb-3 text-right font-medium">Quantita</th>
-                  <th className="px-3 pb-3 text-right font-medium">Prezzo medio</th>
-                  <th className="px-3 pb-3 text-right font-medium">Prezzo attuale</th>
-                  <th className="px-3 pb-3 text-right font-medium">Valore</th>
-                  <th className="px-3 pb-3 text-right font-medium">P/L</th>
-                  <th className="px-3 pb-3 text-right font-medium">P/L %</th>
-                  <th className="px-3 pb-3 text-right font-medium">Peso</th>
-                  <th className="px-3 pb-3 text-center font-medium">Segnale</th>
-                  <th className="px-3 pb-3 pr-0 font-medium">Raccomandazione</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/80">
-                {summary.positions.map((position) => {
-                  const recommendation = recommendationBySymbol.get(position.symbol);
-                  return (
-                    <tr key={position.symbol} className="align-top text-sm">
-                      <td className="px-3 py-4 pl-0 font-semibold text-white">{position.symbol}</td>
-                      <td className="px-3 py-4 text-slate-300">{assetTypeLabels[position.asset_type] ?? position.asset_type}</td>
-                      <td className="px-3 py-4 text-right text-slate-300">{position.quantity.toLocaleString("it-IT")}</td>
-                      <td className="px-3 py-4 text-right text-slate-300">{formatCurrency(position.average_price, position.currency)}</td>
-                      <td className="px-3 py-4 text-right text-white">{formatCurrency(position.current_price, position.currency)}</td>
-                      <td className="px-3 py-4 text-right font-semibold text-white">{formatCurrency(position.current_value, position.currency)}</td>
-                      <td className={`px-3 py-4 text-right font-semibold ${pnlClass(position.unrealized_pnl)}`}>{formatCurrency(position.unrealized_pnl, position.currency)}</td>
-                      <td className={`px-3 py-4 text-right font-semibold ${pnlClass(position.unrealized_pnl_percent)}`}>{formatPercent(position.unrealized_pnl_percent)}</td>
-                      <td className="px-3 py-4 text-right text-cyan-200">{position.weight_percent.toFixed(2)}%</td>
-                      <td className="px-3 py-4 text-center">{position.technical_signal ? <SignalBadge signal={position.technical_signal} /> : "N/D"}</td>
-                      <td className="px-3 py-4 pr-0">
-                        <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${recommendationTone(recommendation?.final_recommendation ?? position.recommendation)}`}>
-                          {recommendation?.final_recommendation ?? position.recommendation ?? "HOLD"}
-                        </span>
-                        <p className="mt-2 max-w-72 text-xs text-slate-500">{recommendation?.reason}</p>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {summary.positions.map((position) => {
+              const recommendation = recommendationBySymbol.get(position.symbol);
+              const reco = recommendation?.final_recommendation ?? position.recommendation ?? "HOLD";
+              return (
+                <article key={position.symbol} className="rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 shadow-panel">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-mono text-base font-semibold text-white">{position.symbol}</p>
+                        {position.technical_signal ? <SignalBadge signal={position.technical_signal} size="sm" /> : null}
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {assetTypeLabels[position.asset_type] ?? position.asset_type} · {position.quantity.toLocaleString("it-IT")} quote · peso {position.weight_percent.toFixed(0)}%
+                      </p>
+                    </div>
+                    <span className={`inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(reco)}`}>
+                      {reco}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                      <p className="eyebrow-muted">Valore</p>
+                      <p className="num mt-1 text-sm font-semibold text-white">{formatCurrency(position.current_value, position.currency)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                      <p className="eyebrow-muted">P/L</p>
+                      <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl)}`}>{formatCurrency(position.unrealized_pnl, position.currency)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                      <p className="eyebrow-muted">P/L %</p>
+                      <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl_percent)}`}>{formatPercent(position.unrealized_pnl_percent)}</p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    Medio {formatCurrency(position.average_price, position.currency)} → attuale {formatCurrency(position.current_price, position.currency)}
+                  </p>
+                  {recommendation?.reason && <p className="mt-1 text-xs text-slate-500">{recommendation.reason}</p>}
+                </article>
+              );
+            })}
           </div>
         )}
       </Panel>

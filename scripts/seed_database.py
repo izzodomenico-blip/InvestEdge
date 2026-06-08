@@ -9,6 +9,5 @@ if str(ROOT_DIR) not in sys.path:
 
 from backend.scripts.seed_database import main
 
-
 if __name__ == "__main__":
     main()

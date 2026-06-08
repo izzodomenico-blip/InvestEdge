@@ -75,6 +75,11 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         last_price_date=row["last_price_date"],
         last_fetch_at=row["last_fetch_at"],
         score=row["score"],
+        technical_score=row["technical_score"],
+        news_score=row["news_score"] or 0,
+        final_score=row["final_score"],
+        news_sentiment_label=row["news_sentiment_label"],
+        news_impact_level=row["news_impact_level"],
         signal=row["signal"],
         confidence=row["confidence"],
         technical_summary=row["technical_summary"],
@@ -87,7 +92,8 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
     price_metadata = _latest_price_metadata(connection, row["id"])
     signal_row = connection.execute(
         """
-        SELECT score, signal, confidence, technical_summary
+        SELECT score, technical_score, news_score, final_score, news_sentiment_label, news_impact_level,
+            signal, confidence, technical_summary
         FROM signals
         WHERE asset_id = ?
         ORDER BY created_at DESC, id DESC
@@ -114,6 +120,11 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         last_price_date=price_metadata["last_price_date"],
         last_fetch_at=price_metadata["last_fetch_at"],
         score=signal_row["score"] if signal_row else None,
+        technical_score=signal_row["technical_score"] if signal_row else None,
+        news_score=signal_row["news_score"] if signal_row else 0,
+        final_score=signal_row["final_score"] if signal_row else None,
+        news_sentiment_label=signal_row["news_sentiment_label"] if signal_row else None,
+        news_impact_level=signal_row["news_impact_level"] if signal_row else None,
         signal=signal_row["signal"] if signal_row else None,
         confidence=signal_row["confidence"] if signal_row else None,
         technical_summary=signal_row["technical_summary"] if signal_row else None,
@@ -145,7 +156,12 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
                 WHEN previous.close IS NULL OR previous.close = 0 THEN NULL
                 ELSE ((latest.close - previous.close) / previous.close) * 100
             END AS daily_change_pct,
-            sig.score,
+            COALESCE(sig.final_score, sig.score) AS score,
+            COALESCE(sig.technical_score, sig.score) AS technical_score,
+            COALESCE(sig.news_score, 0) AS news_score,
+            COALESCE(sig.final_score, sig.score) AS final_score,
+            sig.news_sentiment_label,
+            sig.news_impact_level,
             sig.signal,
             sig.confidence,
             sig.technical_summary

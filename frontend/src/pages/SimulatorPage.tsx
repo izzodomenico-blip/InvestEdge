@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Calculator, CheckCircle2, Play, RefreshCw } from "lucide-react";
 
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import {
   apiGet,
@@ -186,19 +187,20 @@ export function SimulatorPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">Paper trading</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Simulatore</h1>
-        </div>
-        <button
-          onClick={() => void loadData()}
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-100"
-        >
-          <RefreshCw className="h-4 w-4" aria-hidden="true" />
-          Ricarica
-        </button>
-      </header>
+      <PageHeader
+        eyebrow="Paper trading"
+        index="04"
+        title="Simulatore"
+        subtitle="Inserisci ordini BUY/SELL simulati: aggiornano cash, prezzo medio e P/L senza inviare nulla a broker reali."
+        actions={
+          <PageHeaderAction
+            onClick={() => void loadData()}
+            icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          >
+            Ricarica
+          </PageHeaderAction>
+        }
+      />
 
       {error && (
         <div className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-200">

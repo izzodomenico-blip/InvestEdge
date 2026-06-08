@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import statistics
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -10,27 +10,29 @@ import pandas as pd
 
 from backend.app.models import (
     BacktestBenchmarkComparisonOut,
+    BacktestCompareIn,
     BacktestEquityPointOut,
+    BacktestNetAnalysisOut,
     BacktestPositionOut,
     BacktestResultOut,
     BacktestRunIn,
     BacktestSummaryOut,
     BacktestTradeOut,
+    WalkForwardIn,
+)
+from backend.app.services.common import (
+    SCORE_BUY,
+    SCORE_HOLD,
+    SCORE_REDUCE,
+    SCORE_STRONG_BUY,
+)
+from backend.app.services.common import (
+    now_local as _now,
+)
+from backend.app.services.common import (
+    round_safe as _round,
 )
 from backend.app.services.technical_analysis import TechnicalAnalysisService
-
-
-def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def _round(value: float | int | None, digits: int = 6) -> float:
-    if value is None:
-        return 0.0
-    number = float(value)
-    if not np.isfinite(number):
-        return 0.0
-    return round(number, digits)
 
 
 def _date(value: str) -> pd.Timestamp:
@@ -49,6 +51,20 @@ class _Position:
 
     def value(self, price: float) -> float:
         return self.quantity * price
+
+
+STRATEGY_LABELS: dict[str, str] = {
+    "SCORE_THRESHOLD": "Score threshold",
+    "BUY_AND_HOLD": "Buy & hold",
+    "TOP_N_SCORE": "Top N score",
+}
+
+# Modello fiscale/costi Italia (semplificato, per stima "netto in tasca")
+TAX_RATE_STANDARD = 26.0      # azioni, ETF, cripto: 26% sulle plusvalenze realizzate
+TAX_RATE_BONDS = 12.5         # titoli di Stato white-list ed ETF obbligazionari govt
+STAMP_DUTY_ANNUAL = 0.2       # imposta di bollo titoli: 0.2% annuo sul controvalore
+SLIPPAGE_PER_SIDE = 0.05      # slippage/spread stimato per lato, in percento
+BOND_ASSET_TYPES = {"bond", "bond_etf"}
 
 
 @dataclass
@@ -88,6 +104,208 @@ class BacktestEngine:
         backtest_id = self._persist(connection, config, summary, state)
         return self.get_backtest(connection, backtest_id)
 
+    def compare_strategies(self, connection: sqlite3.Connection, payload: BacktestCompareIn) -> dict[str, Any]:
+        """Esegue piu strategie sullo stesso periodo/universo senza persistere i run."""
+        symbols = self._normalize_symbols(payload.symbols)
+        start_date = _date(payload.start_date)
+        end_date = _date(payload.end_date)
+        if end_date < start_date:
+            raise ValueError("La data fine deve essere successiva alla data inizio.")
+
+        strategy_names: list[str] = []
+        for name in payload.strategy_names:
+            if name not in strategy_names:
+                strategy_names.append(name)
+        if len(strategy_names) < 2:
+            raise ValueError("Seleziona almeno due strategie diverse.")
+
+        market_data = self._load_market_data(connection, symbols, end_date)
+        if not market_data:
+            raise ValueError("Database non inizializzato o storico prezzi non disponibile. Esegui il seed.")
+
+        benchmark_symbol = payload.benchmark_symbol.upper()
+        benchmark_data = self._load_market_data(connection, [benchmark_symbol], end_date).get(benchmark_symbol)
+
+        available_dates = self._available_dates(market_data, start_date, end_date)
+        if not available_dates:
+            raise ValueError("Nessun dato prezzo disponibile nel periodo richiesto.")
+
+        benchmark_curve = self._benchmark_curve(
+            benchmark_symbol,
+            benchmark_data,
+            available_dates,
+            payload.initial_cash,
+        )
+
+        entries: list[dict[str, Any]] = []
+        for strategy_name in strategy_names:
+            config = BacktestRunIn(
+                name=f"{payload.name} - {strategy_name}",
+                strategy_name=strategy_name,
+                symbols=symbols,
+                initial_cash=payload.initial_cash,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                benchmark_symbol=payload.benchmark_symbol,
+                buy_threshold=payload.buy_threshold,
+                sell_threshold=payload.sell_threshold,
+                max_asset_weight=payload.max_asset_weight,
+                fee_percent=payload.fee_percent,
+                stop_loss_percent=payload.stop_loss_percent,
+                take_profit_percent=payload.take_profit_percent,
+                rebalance_frequency=payload.rebalance_frequency,
+                top_n=payload.top_n,
+            )
+            state = self._simulate(config, symbols, market_data, available_dates)
+            self._attach_benchmark(state["equity_curve"], benchmark_curve)
+            summary = self._calculate_summary(config, state, available_dates, benchmark_curve)
+            entries.append(
+                {
+                    "strategy_name": strategy_name,
+                    "label": STRATEGY_LABELS.get(strategy_name, strategy_name),
+                    "summary": summary,
+                    "equity_curve": state["equity_curve"],
+                }
+            )
+
+        ranked = sorted(entries, key=lambda item: item["summary"].total_return_percent, reverse=True)
+        for position, entry in enumerate(ranked, start=1):
+            entry["rank"] = position
+
+        benchmark_return = ranked[0]["summary"].benchmark_return_percent if ranked else 0.0
+        return {
+            "name": payload.name,
+            "start_date": payload.start_date,
+            "end_date": payload.end_date,
+            "benchmark_symbol": benchmark_symbol,
+            "benchmark_return_percent": benchmark_return,
+            "best_strategy": ranked[0]["strategy_name"] if ranked else "",
+            "entries": entries,
+        }
+
+    def walk_forward(self, connection: sqlite3.Connection, payload: WalkForwardIn) -> dict[str, Any]:
+        """Validazione out-of-sample: divide il periodo in N fold consecutivi e
+        misura la consistenza della strategia su ciascun sottoperiodo indipendente.
+        Smaschera il rischio che il rendimento dipenda da una sola finestra fortunata."""
+        symbols = self._normalize_symbols(payload.symbols)
+        start_date = _date(payload.start_date)
+        end_date = _date(payload.end_date)
+        if end_date < start_date:
+            raise ValueError("La data fine deve essere successiva alla data inizio.")
+
+        market_data = self._load_market_data(connection, symbols, end_date)
+        if not market_data:
+            raise ValueError("Database non inizializzato o storico prezzi non disponibile. Esegui il seed.")
+
+        benchmark_symbol = payload.benchmark_symbol.upper()
+        benchmark_data = self._load_market_data(connection, [benchmark_symbol], end_date).get(benchmark_symbol)
+
+        available_dates = self._available_dates(market_data, start_date, end_date)
+        if len(available_dates) < payload.folds * 2:
+            raise ValueError("Periodo troppo corto per il numero di fold richiesto.")
+
+        full_summary = self._summary_for_dates(payload, symbols, market_data, benchmark_data, available_dates)
+
+        fold_size = len(available_dates) // payload.folds
+        fold_results: list[dict[str, Any]] = []
+        for index in range(payload.folds):
+            start_idx = index * fold_size
+            end_idx = len(available_dates) if index == payload.folds - 1 else (index + 1) * fold_size
+            fold_dates = available_dates[start_idx:end_idx]
+            if len(fold_dates) < 2:
+                continue
+            summary = self._summary_for_dates(payload, symbols, market_data, benchmark_data, fold_dates)
+            fold_results.append(
+                {
+                    "fold": index + 1,
+                    "start_date": summary.start_date,
+                    "end_date": summary.end_date,
+                    "total_return_percent": summary.total_return_percent,
+                    "cagr": summary.cagr,
+                    "max_drawdown": summary.max_drawdown,
+                    "sharpe_ratio": summary.sharpe_ratio,
+                    "alpha_vs_benchmark": summary.alpha_vs_benchmark,
+                    "total_trades": summary.total_trades,
+                    "final_value": summary.final_value,
+                }
+            )
+
+        returns = [item["total_return_percent"] for item in fold_results]
+        alphas = [item["alpha_vs_benchmark"] for item in fold_results]
+        positive = sum(1 for value in returns if value > 0)
+        beating = sum(1 for value in alphas if value > 0)
+        count = len(fold_results)
+        mean_return = statistics.fmean(returns) if returns else 0.0
+        median_return = statistics.median(returns) if returns else 0.0
+        std_return = statistics.stdev(returns) if len(returns) > 1 else 0.0
+        mean_alpha = statistics.fmean(alphas) if alphas else 0.0
+
+        positive_ratio = positive / count if count else 0.0
+        beating_ratio = beating / count if count else 0.0
+        consistency, verdict = self._consistency_verdict(
+            positive_ratio, beating_ratio, mean_return, mean_alpha, count
+        )
+
+        return {
+            "strategy_name": payload.strategy_name,
+            "folds": count,
+            "full_period_return_percent": full_summary.total_return_percent,
+            "mean_return_percent": _round(mean_return, 2),
+            "median_return_percent": _round(median_return, 2),
+            "std_return_percent": _round(std_return, 2),
+            "positive_folds": positive,
+            "folds_beating_benchmark": beating,
+            "worst_fold_return_percent": _round(min(returns), 2) if returns else 0.0,
+            "best_fold_return_percent": _round(max(returns), 2) if returns else 0.0,
+            "mean_alpha_vs_benchmark": _round(mean_alpha, 2),
+            "consistency": consistency,
+            "verdict": verdict,
+            "fold_results": fold_results,
+        }
+
+    def _summary_for_dates(
+        self,
+        config: BacktestRunIn,
+        symbols: list[str],
+        market_data: dict[str, pd.DataFrame],
+        benchmark_data: pd.DataFrame | None,
+        dates: list[pd.Timestamp],
+    ) -> BacktestSummaryOut:
+        state = self._simulate(config, symbols, market_data, dates)
+        benchmark_curve = self._benchmark_curve(
+            config.benchmark_symbol.upper(), benchmark_data, dates, config.initial_cash
+        )
+        self._attach_benchmark(state["equity_curve"], benchmark_curve)
+        return self._calculate_summary(config, state, dates, benchmark_curve)
+
+    def _consistency_verdict(
+        self,
+        positive_ratio: float,
+        beating_ratio: float,
+        mean_return: float,
+        mean_alpha: float,
+        count: int,
+    ) -> tuple[str, str]:
+        if count == 0:
+            return "FRAGILE", "Nessun fold valutabile."
+        if positive_ratio >= 0.7 and mean_alpha > 0:
+            return (
+                "ROBUSTA",
+                f"Positiva in {positive_ratio * 100:.0f}% dei periodi con alpha medio {mean_alpha:+.1f}%. "
+                "Comportamento consistente, ma resta una simulazione: nessuna garanzia sul futuro.",
+            )
+        if positive_ratio <= 0.4 or mean_return <= 0:
+            return (
+                "FRAGILE",
+                f"Positiva solo nel {positive_ratio * 100:.0f}% dei periodi (rendimento medio {mean_return:+.1f}%). "
+                "Il risultato sull'intero periodo dipende probabilmente da poche finestre fortunate: alto rischio di overfitting.",
+            )
+        return (
+            "INCERTA",
+            f"Positiva nel {positive_ratio * 100:.0f}% dei periodi, batte il benchmark nel {beating_ratio * 100:.0f}%. "
+            "Segnali misti: non affidarti a questa strategia senza ulteriori verifiche.",
+        )
+
     def prepare_price_frame_for_backtest(self, prices: pd.DataFrame) -> pd.DataFrame:
         """Precompute rolling indicators and score rows without using future values."""
         frame = self.technical_service.enrich_price_history(prices)
@@ -95,9 +313,18 @@ class BacktestEngine:
             return frame
 
         frame["rolling_score"] = frame.apply(self._score_row, axis=1)
+        # Bins derivati dalle soglie condivise: ogni soglia e estremo destro escluso (epsilon).
+        eps = 0.001
         frame["rolling_signal"] = pd.cut(
             frame["rolling_score"],
-            bins=[-1, 39.999, 54.999, 69.999, 79.999, 101],
+            bins=[
+                -1,
+                SCORE_REDUCE - eps,
+                SCORE_HOLD - eps,
+                SCORE_BUY - eps,
+                SCORE_STRONG_BUY - eps,
+                101,
+            ],
             labels=["SELL", "REDUCE", "HOLD", "BUY", "STRONG_BUY"],
         ).astype(str)
         return frame
@@ -160,17 +387,21 @@ class BacktestEngine:
         self._hydrate_benchmark_from_run(connection, summary, equity_curve)
 
         benchmark_final = summary.initial_cash * (1 + (summary.benchmark_return_percent / 100))
+        trades = [self._trade_from_row(row) for row in trade_rows]
         return BacktestResultOut(
             backtest_id=backtest_id,
             summary=summary,
             equity_curve=equity_curve,
-            trades=[self._trade_from_row(row) for row in trade_rows],
+            trades=trades,
             final_positions=[self._position_from_row(row) for row in position_rows],
             benchmark_comparison=BacktestBenchmarkComparisonOut(
                 benchmark_symbol=summary.benchmark_symbol,
                 benchmark_return_percent=summary.benchmark_return_percent,
                 alpha_vs_benchmark=summary.alpha_vs_benchmark,
                 benchmark_final_value=_round(benchmark_final),
+            ),
+            net_analysis=BacktestNetAnalysisOut(
+                **self._net_analysis(connection, summary, trades, equity_curve)
             ),
         )
 
@@ -243,7 +474,7 @@ class BacktestEngine:
         trades: list[BacktestTradeOut] = []
         equity_curve: list[BacktestEquityPointOut] = []
         latest_rows: dict[str, pd.Series] = {}
-        record_index = {symbol: 0 for symbol in symbols}
+        record_index = dict.fromkeys(symbols, 0)
         records = {symbol: frame.to_dict("records") for symbol, frame in market_data.items() if symbol in symbols}
         peak_value = float(config.initial_cash)
         last_rebalance_key: str | None = None
@@ -689,6 +920,75 @@ class BacktestEngine:
             benchmark_return_percent=_round(benchmark_return),
             alpha_vs_benchmark=_round(total_return - benchmark_return),
         )
+
+    def _net_analysis(
+        self,
+        connection: sqlite3.Connection,
+        summary: BacktestSummaryOut,
+        trades: list[BacktestTradeOut],
+        equity_curve: list[BacktestEquityPointOut],
+    ) -> dict[str, Any]:
+        """Stima netta in tasca: tasse italiane sulle plusvalenze realizzate,
+        slippage/spread e imposta di bollo. Semplificazioni: compensazione perdite
+        solo entro la stessa classe (standard vs obbligazionario), bollo su controvalore
+        medio, slippage stimato per lato. Le plusvalenze NON realizzate non sono tassate."""
+        type_rows = connection.execute("SELECT UPPER(symbol) AS symbol, asset_type FROM assets").fetchall()
+        type_map = {row["symbol"]: row["asset_type"] for row in type_rows}
+
+        gain_standard = 0.0
+        gain_bonds = 0.0
+        commission = 0.0
+        slippage = 0.0
+        for trade in trades:
+            commission += float(trade.fees)
+            slippage += abs(float(trade.gross_amount)) * (SLIPPAGE_PER_SIDE / 100)
+            if trade.order_type == "SELL":
+                asset_type = type_map.get(trade.symbol.upper(), "stock")
+                if asset_type in BOND_ASSET_TYPES:
+                    gain_bonds += float(trade.pnl)
+                else:
+                    gain_standard += float(trade.pnl)
+
+        taxable_standard = max(0.0, gain_standard)
+        taxable_bonds = max(0.0, gain_bonds)
+        taxable_total = taxable_standard + taxable_bonds
+        capital_gains_tax = taxable_standard * (TAX_RATE_STANDARD / 100) + taxable_bonds * (TAX_RATE_BONDS / 100)
+
+        mean_equity = (
+            sum(point.portfolio_value for point in equity_curve) / len(equity_curve)
+            if equity_curve
+            else summary.final_value
+        )
+        years = max((_date(summary.end_date) - _date(summary.start_date)).days, 1) / 365.25
+        stamp_duty = mean_equity * (STAMP_DUTY_ANNUAL / 100) * years
+
+        initial = summary.initial_cash
+        final_value = summary.final_value
+        net_final = final_value - capital_gains_tax - slippage - stamp_duty
+        net_return = ((net_final / initial) - 1) * 100 if initial > 0 else 0.0
+        effective_rate = (capital_gains_tax / taxable_total * 100) if taxable_total > 0 else 0.0
+
+        notes = [
+            "Tasse stimate sulle sole plusvalenze realizzate (26% standard, 12,5% titoli di Stato/ETF govt).",
+            "Le plusvalenze non realizzate sulle posizioni finali non sono tassate.",
+            f"Slippage stimato {SLIPPAGE_PER_SIDE:.2f}% per operazione, bollo {STAMP_DUTY_ANNUAL:.1f}% annuo sul controvalore medio.",
+            "Commissioni gia incluse nel valore finale lordo; qui mostrate solo per trasparenza.",
+        ]
+
+        return {
+            "gross_return_percent": summary.total_return_percent,
+            "gross_profit": _round(final_value - initial, 2),
+            "commission_costs": _round(commission, 2),
+            "slippage_costs": _round(slippage, 2),
+            "realized_gains_taxable": _round(taxable_total, 2),
+            "capital_gains_tax": _round(capital_gains_tax, 2),
+            "stamp_duty": _round(stamp_duty, 2),
+            "total_costs_and_taxes": _round(capital_gains_tax + slippage + stamp_duty, 2),
+            "net_final_value": _round(net_final, 2),
+            "net_return_percent": _round(net_return, 2),
+            "effective_tax_rate_percent": _round(effective_rate, 2),
+            "notes": notes,
+        }
 
     def _persist(
         self,

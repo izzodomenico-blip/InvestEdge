@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BadgeDollarSign, BarChart3, Database, ShieldAlert, TrendingUp } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Activity, AlertTriangle, BadgeDollarSign, BarChart3, CheckCircle2, Database, FlaskConical, RefreshCw, ShieldAlert, TrendingUp } from "lucide-react";
+
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import {
   Area,
   AreaChart,
@@ -28,6 +31,18 @@ const assetTypeLabels: Record<string, string> = {
   crypto: "Cripto",
   bond: "Bond",
   bond_etf: "ETF bond",
+};
+
+const newsSentimentTone: Record<string, string> = {
+  POSITIVE: "border-emerald-300/30 bg-emerald-400/10 text-emerald-200",
+  NEUTRAL: "border-cyan-300/30 bg-cyan-400/10 text-cyan-200",
+  NEGATIVE: "border-rose-300/30 bg-rose-400/10 text-rose-200",
+};
+
+const newsImpactTone: Record<string, string> = {
+  HIGH: "border-rose-300/30 bg-rose-400/10 text-rose-200",
+  MEDIUM: "border-amber-300/30 bg-amber-400/10 text-amber-200",
+  LOW: "border-slate-700 bg-slate-900 text-slate-300",
 };
 
 export function DashboardPage() {
@@ -95,18 +110,36 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">InvestEdge</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Dashboard</h1>
-        </div>
-        <button
-          onClick={() => void loadDashboard()}
-          className="rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20"
-        >
-          Aggiorna
-        </button>
-      </header>
+      <PageHeader
+        eyebrow="InvestEdge / Cockpit"
+        index="01"
+        title="Dashboard"
+        subtitle="Panoramica unificata di portafoglio, segnali, news e stato dati. Aggiornata su richiesta, senza chiamate API automatiche."
+        meta={
+          <>
+            <span>
+              Asset <span className="text-cyan-300/80">{dashboard.assets_count}</span>
+            </span>
+            <span>
+              Posizioni <span className="text-cyan-300/80">{dashboard.positions_count}</span>
+            </span>
+            <span>
+              Segnali <span className="text-cyan-300/80">{dashboard.signals_count}</span>
+            </span>
+          </>
+        }
+        actions={
+          <PageHeaderAction
+            variant="primary"
+            icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+            onClick={() => void loadDashboard()}
+          >
+            Aggiorna
+          </PageHeaderAction>
+        }
+      />
+
+      <DataModeBanner mode={dashboard.data_status.data_mode} enableRealData={dashboard.data_status.enable_real_data} />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Asset monitorati" value={`${dashboard.assets_count}`} delta="Universe seed locale" tone="cyan" icon={Activity} />
@@ -140,6 +173,51 @@ export function DashboardPage() {
           </div>
         </div>
       </Panel>
+
+      <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Market news sentiment">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Sentiment</p>
+              <span className={`mt-2 inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${newsSentimentTone[dashboard.market_news_summary.sentiment_label] ?? newsSentimentTone.NEUTRAL}`}>
+                {dashboard.market_news_summary.sentiment_label ?? "NEUTRAL"}
+              </span>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">News count</p>
+              <p className="mt-1 font-semibold text-white">{dashboard.market_news_summary.news_count ?? 0}</p>
+              <p className="mt-1 text-xs text-slate-500">Ultimi 7 giorni</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <p className="text-sm text-slate-500">Impatto</p>
+              <span className={`mt-2 inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${newsImpactTone[dashboard.market_news_summary.impact_level] ?? newsImpactTone.LOW}`}>
+                {dashboard.market_news_summary.impact_level ?? "LOW"}
+              </span>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Ultime news high impact">
+          <div className="space-y-3">
+            {dashboard.latest_high_impact_news.map((item) => (
+              <article key={`${item.id}-${item.title}`} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase text-slate-500">{item.symbol ?? "N/D"} - {item.source ?? "N/D"}</p>
+                    <p className="mt-2 line-clamp-2 text-sm font-semibold text-white">{item.title}</p>
+                  </div>
+                  <span className={`inline-flex shrink-0 rounded-md border px-2.5 py-1 text-xs font-semibold ${newsSentimentTone[item.sentiment_label ?? "NEUTRAL"] ?? newsSentimentTone.NEUTRAL}`}>
+                    {item.sentiment_label ?? "NEUTRAL"}
+                  </span>
+                </div>
+              </article>
+            ))}
+            {dashboard.latest_high_impact_news.length === 0 && (
+              <p className="text-sm text-slate-400">Nessuna news high impact salvata.</p>
+            )}
+          </div>
+        </Panel>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Strong buy" value={`${dashboard.signal_breakdown.STRONG_BUY ?? 0}`} delta="Segnali tecnici ad alta forza" tone="green" icon={TrendingUp} />
@@ -311,6 +389,102 @@ export function DashboardPage() {
             ))}
           </div>
         </Panel>
+      </div>
+    </div>
+  );
+}
+
+type DataModeBannerProps = {
+  mode: "SEED" | "MIXED" | "REAL";
+  enableRealData: boolean;
+};
+
+function DataModeBanner({ mode, enableRealData }: DataModeBannerProps) {
+  if (mode === "REAL" && enableRealData) {
+    return (
+      <div className="relative overflow-hidden rounded-2xl border border-emerald-300/25 bg-gradient-to-br from-emerald-400/[0.08] via-slate-950/40 to-slate-950/60 p-5 shadow-panel">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-emerald-400/20 blur-3xl" />
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-4">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400/10 text-emerald-200">
+              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow text-emerald-300/90">Stato dati / live</p>
+              <p className="mt-1 font-display text-lg font-medium leading-tight text-white">
+                Stai vedendo dati reali.
+              </p>
+              <p className="mt-1 max-w-xl text-sm text-emerald-100/80">
+                Tutti i prezzi nel database provengono da provider esterni configurati.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "MIXED") {
+    return (
+      <div className="relative overflow-hidden rounded-2xl border border-cyan-300/25 bg-gradient-to-br from-cyan-400/[0.08] via-slate-950/40 to-slate-950/60 p-5 shadow-panel">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-cyan-400/20 blur-3xl" />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-300/30 bg-cyan-400/10 text-cyan-200">
+              <Database className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">Stato dati / misti</p>
+              <p className="mt-1 font-display text-lg font-medium leading-tight text-white">
+                Dataset misto: reale + seed.
+              </p>
+              <p className="mt-1 max-w-xl text-sm text-cyan-100/80">
+                Alcuni asset hanno prezzi reali, altri usano ancora dati seed. Aggiorna i restanti dal Data Center.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/data"
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2.5 text-sm font-medium text-cyan-50 transition-all hover:border-cyan-300/60 hover:bg-cyan-400/25 hover:shadow-glow"
+          >
+            Apri Data Center →
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const title = enableRealData
+    ? "Stai vedendo dati simulati."
+    : "Stai vedendo dati simulati (modalita demo).";
+  const subtitle = enableRealData
+    ? "Real data abilitati ma nessun asset ancora aggiornato. Apri il Data Center e clicca Aggiorna tutti i dati."
+    : "ENABLE_REAL_DATA=false. Configura backend/.env con le tue API key, poi torna qui per attivare dati reali.";
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-amber-300/30 bg-gradient-to-br from-amber-400/[0.09] via-slate-950/40 to-slate-950/60 p-5 shadow-panel">
+      <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-amber-400/15 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -left-12 -bottom-16 h-40 w-40 rounded-full bg-rose-400/8 blur-3xl" />
+      <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-4">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-300/30 bg-amber-400/10 text-amber-200">
+            <FlaskConical className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="eyebrow text-amber-300/90">Stato dati / sandbox</p>
+            <p className="mt-1 font-display text-lg font-medium leading-tight text-white">
+              {title}
+            </p>
+            <p className="mt-1 max-w-xl text-sm text-amber-100/85">{subtitle}</p>
+          </div>
+        </div>
+        <Link
+          to="/data"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-amber-300/40 bg-amber-400/15 px-4 py-2.5 text-sm font-medium text-amber-50 transition-all hover:border-amber-300/60 hover:bg-amber-400/25"
+        >
+          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+          Apri Data Center
+        </Link>
       </div>
     </div>
   );

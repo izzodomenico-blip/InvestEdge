@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pytest
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.services.backtest_engine import BacktestEngine
@@ -17,6 +17,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
     monkeypatch.setenv("COINGECKO_API_KEY", "")
     monkeypatch.setenv("FRED_API_KEY", "")
+    monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
+    monkeypatch.setenv("NEWS_DAILY_LIMIT", "20")
+    monkeypatch.setenv("NEWS_CACHE_TTL_HOURS", "6")
+    monkeypatch.setenv("NEWS_SENTIMENT_WEIGHT", "5")
+    monkeypatch.setenv("ENABLE_ALERTS", "false")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
     get_settings.cache_clear()
 
     from backend.scripts.seed_database import seed_database
@@ -66,6 +73,47 @@ def test_signals_after_seed(client: TestClient) -> None:
     assert len(data) == 25
     assert data[0]["signal"] in {"STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"}
     assert 0 <= data[0]["score"] <= 100
+
+
+def test_action_board_after_seed(client: TestClient) -> None:
+    response = client.get("/action-board")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"generated_at", "data_mode", "headline", "counts", "actions"} <= set(data)
+    assert data["data_mode"] == "SEED"
+    assert isinstance(data["actions"], list)
+    assert len(data["actions"]) >= 1
+    valid_types = {"BUY", "REDUCE", "SELL", "WATCH", "RISK", "OK"}
+    valid_priorities = {"HIGH", "MEDIUM", "LOW"}
+    for action in data["actions"]:
+        assert action["type"] in valid_types
+        assert action["priority"] in valid_priorities
+        assert action["title"]
+        assert action["reason"]
+
+
+def test_alerts_status_not_configured(client: TestClient) -> None:
+    response = client.get("/alerts/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["channel"] == "telegram"
+    assert data["enabled"] is False
+    assert data["configured"] is False
+
+
+def test_alerts_test_requires_config(client: TestClient) -> None:
+    response = client.post("/alerts/test")
+
+    assert response.status_code == 400
+    assert "Telegram" in response.json()["detail"]
+
+
+def test_alerts_send_today_requires_config(client: TestClient) -> None:
+    response = client.post("/alerts/send-today")
+
+    assert response.status_code == 400
 
 
 def test_dashboard_after_seed(client: TestClient) -> None:
@@ -337,6 +385,32 @@ def test_run_backtest_score_threshold(client: TestClient) -> None:
     assert "alpha_vs_benchmark" in data["benchmark_comparison"]
 
 
+def test_backtest_net_analysis(client: TestClient) -> None:
+    response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
+
+    assert response.status_code == 200
+    net = response.json()["net_analysis"]
+    assert net is not None
+    # struttura completa
+    assert {
+        "gross_return_percent",
+        "net_return_percent",
+        "capital_gains_tax",
+        "slippage_costs",
+        "stamp_duty",
+        "net_final_value",
+        "total_costs_and_taxes",
+    } <= set(net)
+    # i costi non sono negativi e il netto non supera il lordo
+    assert net["capital_gains_tax"] >= 0
+    assert net["slippage_costs"] >= 0
+    assert net["stamp_duty"] >= 0
+    assert net["net_return_percent"] <= net["gross_return_percent"] + 1e-6
+    # con plusvalenze tassabili l'aliquota effettiva resta entro il 26%
+    if net["realized_gains_taxable"] > 0:
+        assert 0 < net["effective_tax_rate_percent"] <= 26.0 + 1e-6
+
+
 def test_run_backtest_buy_and_hold(client: TestClient) -> None:
     response = client.post("/backtests/run", json=_backtest_payload("BUY_AND_HOLD"))
 
@@ -355,6 +429,157 @@ def test_run_backtest_top_n_score(client: TestClient) -> None:
     assert data["summary"]["strategy_name"] == "TOP_N_SCORE"
     assert len(data["equity_curve"]) > 50
     assert data["summary"]["total_trades"] >= 1
+
+
+def _compare_payload() -> dict[str, object]:
+    return {
+        "name": "Confronto test",
+        "strategy_names": ["SCORE_THRESHOLD", "BUY_AND_HOLD", "TOP_N_SCORE"],
+        "symbols": ["AAPL", "MSFT", "SPY", "QQQ"],
+        "initial_cash": 100000,
+        "start_date": "2025-01-01",
+        "end_date": "2026-05-15",
+        "benchmark_symbol": "SPY",
+        "buy_threshold": 55,
+        "sell_threshold": 40,
+        "max_asset_weight": 0.2,
+        "fee_percent": 0.1,
+        "stop_loss_percent": 8,
+        "take_profit_percent": 25,
+        "rebalance_frequency": "WEEKLY",
+        "top_n": 2,
+    }
+
+
+def test_compare_strategies_endpoint(client: TestClient) -> None:
+    response = client.post("/backtests/compare", json=_compare_payload())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["entries"]) == 3
+    assert {entry["strategy_name"] for entry in data["entries"]} == {
+        "SCORE_THRESHOLD",
+        "BUY_AND_HOLD",
+        "TOP_N_SCORE",
+    }
+    ranks = sorted(entry["rank"] for entry in data["entries"])
+    assert ranks == [1, 2, 3]
+    best = next(entry for entry in data["entries"] if entry["rank"] == 1)
+    assert best["strategy_name"] == data["best_strategy"]
+    assert all(len(entry["equity_curve"]) > 50 for entry in data["entries"])
+    # i run di confronto non vengono persistiti nello storico
+    history = client.get("/backtests").json()
+    assert all("Confronto test" not in item["name"] for item in history)
+
+
+def test_compare_strategies_requires_two(client: TestClient) -> None:
+    payload = _compare_payload()
+    payload["strategy_names"] = ["SCORE_THRESHOLD"]
+
+    response = client.post("/backtests/compare", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_walk_forward_endpoint(client: TestClient) -> None:
+    payload = _backtest_payload("SCORE_THRESHOLD")
+    payload["folds"] = 4
+
+    response = client.post("/backtests/walk-forward", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["folds"] == 4
+    assert len(data["fold_results"]) == 4
+    assert data["consistency"] in {"ROBUSTA", "INCERTA", "FRAGILE"}
+    assert data["positive_folds"] <= data["folds"]
+    assert data["verdict"]
+    folds_seen = [fold["fold"] for fold in data["fold_results"]]
+    assert folds_seen == [1, 2, 3, 4]
+
+
+def test_walk_forward_period_too_short(client: TestClient) -> None:
+    payload = _backtest_payload("BUY_AND_HOLD")
+    payload["start_date"] = "2026-05-10"
+    payload["end_date"] = "2026-05-15"
+    payload["folds"] = 12
+
+    response = client.post("/backtests/walk-forward", json=payload)
+
+    assert response.status_code == 400
+    assert "fold" in response.json()["detail"].lower()
+
+
+def _allocation_payload(method: str = "RISK_PARITY", **overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "symbols": ["AAPL", "MSFT", "SPY", "QQQ"],
+        "method": method,
+        "total_capital": 100000,
+        "target_volatility": 0.15,
+        "lookback_days": 120,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_allocation_equal_weight(client: TestClient) -> None:
+    response = client.post("/portfolio/allocation/plan", json=_allocation_payload("EQUAL_WEIGHT"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["allocations"]) == 4
+    for item in data["allocations"]:
+        assert abs(item["weight_percent"] - 25.0) < 0.5
+        assert item["suggested_quantity"] >= 0
+    assert abs(data["invested_capital"] + data["cash_buffer"] - data["total_capital"]) < 0.01
+
+
+def test_allocation_risk_parity_weights_sum(client: TestClient) -> None:
+    response = client.post("/portfolio/allocation/plan", json=_allocation_payload("RISK_PARITY"))
+
+    assert response.status_code == 200
+    data = response.json()
+    total_weight = sum(item["weight_percent"] for item in data["allocations"])
+    assert abs(total_weight - 100.0) < 1.0
+    # risk parity: l'asset meno volatile pesa piu del piu volatile
+    by_vol = sorted(data["allocations"], key=lambda item: item["volatility"])
+    assert by_vol[0]["weight_percent"] >= by_vol[-1]["weight_percent"]
+
+
+def test_allocation_vol_target_keeps_cash(client: TestClient) -> None:
+    response = client.post(
+        "/portfolio/allocation/plan",
+        json=_allocation_payload("VOL_TARGET", target_volatility=0.05),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["invested_capital"] <= data["total_capital"]
+    assert data["cash_buffer"] >= 0
+    # target molto basso => parte del capitale resta liquida
+    assert data["cash_buffer"] > 0
+
+
+def test_allocation_max_weight_cap(client: TestClient) -> None:
+    response = client.post(
+        "/portfolio/allocation/plan",
+        json=_allocation_payload("RISK_PARITY", max_weight=0.3),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    for item in data["allocations"]:
+        assert item["weight_percent"] <= 30.5
+
+
+def test_allocation_invalid_symbol(client: TestClient) -> None:
+    response = client.post(
+        "/portfolio/allocation/plan",
+        json=_allocation_payload("EQUAL_WEIGHT", symbols=["NOPE"]),
+    )
+
+    assert response.status_code == 400
+    assert "NOPE" in response.json()["detail"]
 
 
 def test_backtest_history_and_detail_endpoints(client: TestClient) -> None:
@@ -521,3 +746,158 @@ def test_repeated_refresh_does_not_duplicate_price_history(client: TestClient) -
         ).fetchone()["count"]
 
     assert after == before
+
+
+def test_sentiment_positive_keyword() -> None:
+    from backend.app.services.sentiment_engine import classify_sentiment
+
+    result = classify_sentiment("Earnings beat and revenue growth support a dividend increase.")
+
+    assert result["sentiment_label"] == "POSITIVE"
+    assert result["sentiment_score"] > 0
+
+
+def test_sentiment_negative_keyword() -> None:
+    from backend.app.services.sentiment_engine import classify_sentiment
+
+    result = classify_sentiment("Guidance cut follows an investigation and revenue decline.")
+
+    assert result["sentiment_label"] == "NEGATIVE"
+    assert result["sentiment_score"] < 0
+
+
+def test_sentiment_neutral_without_keywords() -> None:
+    from backend.app.services.sentiment_engine import classify_sentiment
+
+    result = classify_sentiment("")
+
+    assert result["sentiment_label"] == "NEUTRAL"
+    assert result["sentiment_score"] == 0
+
+
+def test_news_impact_levels() -> None:
+    from backend.app.services.sentiment_engine import estimate_impact
+
+    assert estimate_impact({"title": "Upgrade after earnings beat", "summary": "", "sentiment_score": 0.7, "relevance_score": 90}) == "HIGH"
+    assert estimate_impact({"title": "Revenue growth update", "summary": "", "sentiment_score": 0.2, "relevance_score": 55}) == "MEDIUM"
+    assert estimate_impact({"title": "Market update", "summary": "", "sentiment_score": 0.0, "relevance_score": 20}) == "LOW"
+
+
+def test_news_deduplication(client: TestClient) -> None:
+    from backend.app.database import db_session
+    from backend.app.services.news_engine import NewsEngine
+
+    item = {
+        "provider": "test",
+        "title": "AAPL earnings beat",
+        "summary": "Earnings beat and revenue growth.",
+        "url": "https://example.test/aapl-earnings",
+        "source": "Unit Test",
+        "published_at": "2026-05-18T10:00:00",
+        "sentiment_score": 0.6,
+        "sentiment_label": "POSITIVE",
+        "relevance_score": 90,
+    }
+    with db_session() as connection:
+        engine = NewsEngine()
+        first = engine.save_news_to_db(connection, "AAPL", [item])
+        second = engine.save_news_to_db(connection, "AAPL", [item])
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM news_items WHERE symbol = 'AAPL' AND url = ?",
+            (item["url"],),
+        ).fetchone()["count"]
+
+    assert first == (1, 0)
+    assert second == (0, 1)
+    assert count == 1
+
+
+def test_refresh_news_with_real_news_disabled(client: TestClient) -> None:
+    response = client.post("/news/refresh/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "AAPL"
+    assert data["provider"] == "mock_news"
+    assert data["used_fallback"] is True
+    assert "News reali disattivate" in data["message"]
+
+
+def test_refresh_news_fallback_when_api_key_missing(client: TestClient, monkeypatch) -> None:
+    from backend.app.config import get_settings
+
+    monkeypatch.setenv("ENABLE_REAL_NEWS", "true")
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
+    get_settings.cache_clear()
+
+    response = client.post("/news/refresh/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider"] == "mock_news"
+    assert data["used_fallback"] is True
+    assert "Provider news non configurato" in data["message"]
+
+    monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
+    get_settings.cache_clear()
+
+
+def test_news_endpoint(client: TestClient) -> None:
+    client.post("/news/refresh/AAPL")
+    response = client.get("/news?symbol=AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert {"title", "sentiment_label", "impact_level", "relevance_score"} <= set(data[0])
+
+
+def test_symbol_news_endpoint(client: TestClient) -> None:
+    client.post("/news/refresh/AAPL")
+    response = client.get("/news/AAPL")
+
+    assert response.status_code == 200
+    assert all(item["symbol"] == "AAPL" for item in response.json())
+
+
+def test_news_sentiment_endpoint(client: TestClient) -> None:
+    client.post("/news/refresh/AAPL")
+    response = client.get("/news/sentiment/AAPL")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "AAPL"
+    assert data["news_count"] >= 1
+    assert data["sentiment_label"] in {"POSITIVE", "NEGATIVE", "NEUTRAL"}
+    assert {"positive_count", "negative_count", "neutral_count", "latest_news"} <= set(data)
+
+
+def test_news_status_endpoint(client: TestClient) -> None:
+    response = client.get("/news/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["enable_real_news"] is False
+    assert {provider["provider"] for provider in data["provider_status"]} >= {"alpha_vantage_news", "mock_news"}
+    assert data["daily_usage"]["calls_count"] == 0
+
+
+def test_data_refresh_all_endpoint(client: TestClient) -> None:
+    response = client.post("/data/refresh-all?limit=3")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["requested"] == 3
+    assert data["summary"]["fallback"] == 3
+    assert len(data["results"]) == 3
+    assert all(item["used_fallback"] is True for item in data["results"])
+
+
+def test_news_refresh_all_endpoint(client: TestClient) -> None:
+    response = client.post("/news/refresh-all?limit=3")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["requested"] == 3
+    assert len(data["results"]) == 3
+    assert all(item["provider"] == "mock_news" for item in data["results"])

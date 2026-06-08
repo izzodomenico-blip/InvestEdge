@@ -7,7 +7,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv(ROOT_DIR / "backend" / ".env", override=True)
@@ -43,13 +42,20 @@ class Settings:
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
+    enable_real_news: bool = False
+    news_cache_ttl_hours: int = 6
+    news_daily_limit: int = 20
+    news_sentiment_weight: float = 5.0
+    enable_alerts: bool = False
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.database_path}"
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         db_path = Path(os.getenv("INVESTEDGE_DB_PATH", ROOT_DIR / "data" / "investedge.db"))
         if not db_path.is_absolute():
             db_path = ROOT_DIR / db_path
@@ -77,6 +83,13 @@ class Settings:
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),
+            enable_real_news=os.getenv("ENABLE_REAL_NEWS", "false").lower() == "true",
+            news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
+            news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
+            news_sentiment_weight=float(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),
+            enable_alerts=os.getenv("ENABLE_ALERTS", "false").lower() == "true",
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
         )
 
 

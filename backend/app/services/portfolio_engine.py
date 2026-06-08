@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from backend.app.models import (
@@ -17,15 +16,9 @@ from backend.app.models import (
     SimulatedOrderIn,
     SimulatedOrderOut,
 )
+from backend.app.services.common import now_local as _now
+from backend.app.services.common import round_safe as _round
 from backend.app.services.risk_engine import RiskEngine
-
-
-def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def _round(value: float) -> float:
-    return round(float(value), 6)
 
 
 @dataclass
@@ -53,34 +46,44 @@ class PortfolioEngine:
 
     def initialize_portfolio(self, connection: sqlite3.Connection, payload: PortfolioInitIn) -> PortfolioSummaryOut:
         now = _now()
-        connection.execute("DELETE FROM portfolio_snapshots")
-        connection.execute("DELETE FROM simulated_orders")
-        connection.execute("DELETE FROM portfolio_positions")
-        connection.execute(
-            """
-            INSERT INTO portfolio_settings (
-                id, initial_cash, current_cash, max_single_asset_weight, max_asset_class_weight,
-                default_fee_percent, crypto_max_weight, min_cash_weight, max_cash_weight, created_at, updated_at
+        # Savepoint locale: il wipe + reinsert e atomico anche se il chiamante
+        # non avvolge la chiamata in db_session. Se l'insert fallisce, i DELETE
+        # vengono annullati e il portafoglio precedente resta intatto.
+        connection.execute("SAVEPOINT portfolio_init")
+        try:
+            connection.execute("DELETE FROM portfolio_snapshots")
+            connection.execute("DELETE FROM simulated_orders")
+            connection.execute("DELETE FROM portfolio_positions")
+            connection.execute(
+                """
+                INSERT INTO portfolio_settings (
+                    id, initial_cash, current_cash, max_single_asset_weight, max_asset_class_weight,
+                    default_fee_percent, crypto_max_weight, min_cash_weight, max_cash_weight, created_at, updated_at
+                )
+                VALUES (1, ?, ?, ?, ?, ?, 15, 2, 35, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    initial_cash = excluded.initial_cash,
+                    current_cash = excluded.current_cash,
+                    max_single_asset_weight = excluded.max_single_asset_weight,
+                    max_asset_class_weight = excluded.max_asset_class_weight,
+                    default_fee_percent = excluded.default_fee_percent,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    payload.initial_cash,
+                    payload.initial_cash,
+                    payload.max_single_asset_weight,
+                    payload.max_asset_class_weight,
+                    payload.default_fee_percent,
+                    now,
+                    now,
+                ),
             )
-            VALUES (1, ?, ?, ?, ?, ?, 15, 2, 35, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                initial_cash = excluded.initial_cash,
-                current_cash = excluded.current_cash,
-                max_single_asset_weight = excluded.max_single_asset_weight,
-                max_asset_class_weight = excluded.max_asset_class_weight,
-                default_fee_percent = excluded.default_fee_percent,
-                updated_at = excluded.updated_at
-            """,
-            (
-                payload.initial_cash,
-                payload.initial_cash,
-                payload.max_single_asset_weight,
-                payload.max_asset_class_weight,
-                payload.default_fee_percent,
-                now,
-                now,
-            ),
-        )
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT portfolio_init")
+            connection.execute("RELEASE SAVEPOINT portfolio_init")
+            raise
+        connection.execute("RELEASE SAVEPOINT portfolio_init")
         self.refresh_portfolio(connection, create_snapshot=True)
         return self.get_summary(connection)
 

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
 from backend.app.data_providers.base import BaseMarketDataProvider, ProviderError
-
 
 SYMBOL_TO_COIN_ID = {
     "BTC": "bitcoin",
@@ -93,4 +92,4 @@ class CoinGeckoProvider(BaseMarketDataProvider):
         return [rows_by_date[key] for key in sorted(rows_by_date)]
 
     def _date_from_ms(self, timestamp_ms: object) -> str:
-        return datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=timezone.utc).date().isoformat()
+        return datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=UTC).date().isoformat()

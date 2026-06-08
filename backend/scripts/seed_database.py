@@ -16,9 +16,9 @@ if str(ROOT_DIR) not in sys.path:
 
 from backend.app.database import db_session, init_db
 from backend.app.models import PortfolioInitIn, SimulatedOrderIn
+from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
-
 
 FIXED_SEED = 20260517
 SEED_END_DATE = date(2026, 5, 17)
@@ -109,6 +109,7 @@ def _reset_seed_data(connection) -> None:
 
     symbols = [asset["symbol"] for asset in ASSETS]
     placeholders = ",".join("?" for _ in symbols)
+    connection.execute(f"DELETE FROM news_items WHERE UPPER(symbol) IN ({placeholders})", symbols)
     asset_rows = connection.execute(
         f"SELECT id FROM assets WHERE symbol IN ({placeholders})",
         symbols,
@@ -126,6 +127,7 @@ def _reset_seed_data(connection) -> None:
         f"DELETE FROM signals WHERE asset_id IN ({id_placeholders}) AND source = 'scoring_engine'",
         asset_ids,
     )
+    connection.execute(f"DELETE FROM news_items WHERE asset_id IN ({id_placeholders})", asset_ids)
     connection.execute(f"DELETE FROM assets WHERE id IN ({id_placeholders})", asset_ids)
 
 
@@ -295,16 +297,22 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             connection.execute(
                 """
                 INSERT INTO signals (
-                    asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+                    asset_id, symbol, signal, score, technical_score, news_score, final_score,
+                    news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
                     reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
                 """,
                 (
                     asset_id,
                     score["symbol"],
                     score["signal"],
                     score["score"],
+                    score["score"],
+                    0,
+                    score["score"],
+                    "NEUTRAL",
+                    "LOW",
                     score["risk_level"],
                     score["confidence"],
                     score["technical_summary"],
@@ -322,6 +330,8 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         if reset:
             portfolio_summary = _create_demo_portfolio(connection)
 
+        news_summary = _seed_demo_news(connection)
+
     completed_at = datetime.now().isoformat(timespec="seconds")
     return {
         "reset": reset,
@@ -329,9 +339,24 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         "price_rows_inserted": price_rows_inserted,
         "signals_inserted": signals_inserted,
         **portfolio_summary,
+        **news_summary,
         "started_at": started_at,
         "completed_at": completed_at,
     }
+
+
+def _seed_demo_news(connection) -> dict[str, int]:
+    engine = NewsEngine()
+    inserted = 0
+    updated = 0
+    for asset in ASSETS:
+        try:
+            result = engine.refresh_news_for_symbol(connection, asset["symbol"], force=True)
+        except Exception:
+            continue
+        inserted += int(result.get("items_inserted", 0) or 0)
+        updated += int(result.get("items_updated", 0) or 0)
+    return {"news_items_inserted": inserted, "news_items_updated": updated}
 
 
 def main() -> None:

@@ -5,17 +5,22 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pandas as pd
 
 from backend.app.config import get_settings
-from backend.app.data_providers import MissingApiKey, ProviderError, ProviderRegistry, RateLimitExceeded, RealDataDisabled
+from backend.app.data_providers import (
+    MissingApiKey,
+    ProviderError,
+    ProviderRegistry,
+    RateLimitExceeded,
+    RealDataDisabled,
+)
 from backend.app.data_providers.base import BaseMarketDataProvider
+from backend.app.services.common import now_utc as _now
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
-
-
-def _now() -> str:
-    return datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
+from backend.app.services.sentiment_engine import aggregate_news_sentiment
 
 
 class MarketDataService:
@@ -73,7 +78,7 @@ class MarketDataService:
             return self._fallback_result(asset["symbol"], provider.provider_name, str(exc))
         except ProviderError as exc:
             return self._fallback_result(asset["symbol"], provider.provider_name, f"{exc} Uso dati locali.")
-        except Exception:
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
             return self._fallback_result(
                 asset["symbol"],
                 provider.provider_name,
@@ -336,21 +341,35 @@ class MarketDataService:
             symbol=asset["symbol"],
             risk_level=asset["risk_level"],
         )
+        news_summary = aggregate_news_sentiment(connection, asset["symbol"], lookback_days=7)
+        news_score = 0.0
+        if news_summary["news_count"] > 0:
+            weight = get_settings().news_sentiment_weight
+            news_score = float(news_summary["average_sentiment_score"]) * weight
+            news_score = max(-weight, min(weight, news_score))
+        final_score = round(max(0.0, min(100.0, float(score["score"]) + news_score)), 2)
+        final_signal = self.scoring_engine._signal_from_score(final_score)
         now = _now()
         connection.execute("DELETE FROM signals WHERE asset_id = ? AND source = 'scoring_engine'", (asset_id,))
         connection.execute(
             """
             INSERT INTO signals (
-                asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+                asset_id, symbol, signal, score, technical_score, news_score, final_score,
+                news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
                 reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
             """,
             (
                 asset["id"],
                 score["symbol"],
-                score["signal"],
+                final_signal,
+                final_score,
                 score["score"],
+                round(news_score, 2),
+                final_score,
+                news_summary["sentiment_label"],
+                news_summary["impact_level"],
                 score["risk_level"],
                 score["confidence"],
                 score["technical_summary"],

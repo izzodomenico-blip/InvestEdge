@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Database, KeyRound, RefreshCw, Server, ShieldCheck } from "lucide-react";
 
 import { MetricCard } from "../components/MetricCard";
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import {
   apiGet,
   apiPost,
   type Asset,
+  type DataRefreshAllResult,
   type DataRefreshResult,
   type DataStatus,
 } from "../lib/api";
@@ -36,6 +38,7 @@ export function DataCenterPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingSymbol, setRefreshingSymbol] = useState<string | null>(null);
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +74,24 @@ export function DataCenterPage() {
     }
   }
 
+  async function refreshAllPrices() {
+    setRefreshingAll(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await apiPost<DataRefreshAllResult>("/data/refresh-all");
+      const s = result.summary;
+      setMessage(
+        `Aggiornamento completato: ${s.updated}/${s.requested} reali, ${s.fallback} fallback, ${s.rows_inserted} righe nuove, ${s.rows_updated} aggiornate.`,
+      );
+      await loadDataCenter();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refresh batch non riuscito.");
+    } finally {
+      setRefreshingAll(false);
+    }
+  }
+
   useEffect(() => {
     void loadDataCenter();
   }, []);
@@ -88,19 +109,47 @@ export function DataCenterPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">Data layer</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Data Center</h1>
-        </div>
-        <button
-          onClick={() => void loadDataCenter()}
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20"
-        >
-          <RefreshCw className="h-4 w-4" aria-hidden="true" />
-          Aggiorna stato
-        </button>
-      </header>
+      <PageHeader
+        eyebrow="Data layer / control"
+        index="08"
+        title="Data Center"
+        subtitle="Stato dei provider, uso API, cache e refresh manuale. Le chiamate esterne partono solo da qui, mai automaticamente."
+        meta={
+          status
+            ? (
+              <>
+                <span>
+                  Modo <span className="text-cyan-300/80">{status.data_mode}</span>
+                </span>
+                <span>
+                  Real data <span className="text-cyan-300/80">{status.enable_real_data ? "ON" : "OFF"}</span>
+                </span>
+                <span>
+                  Asset <span className="text-cyan-300/80">{assets.length}</span>
+                </span>
+              </>
+            )
+            : undefined
+        }
+        actions={
+          <>
+            <PageHeaderAction
+              onClick={() => void loadDataCenter()}
+              icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+            >
+              Aggiorna stato
+            </PageHeaderAction>
+            <PageHeaderAction
+              variant="primary"
+              onClick={() => void refreshAllPrices()}
+              disabled={refreshingAll || assets.length === 0}
+              icon={<RefreshCw className={`h-4 w-4 ${refreshingAll ? "animate-spin" : ""}`} aria-hidden="true" />}
+            >
+              {refreshingAll ? "Aggiornamento..." : "Aggiorna tutti i dati"}
+            </PageHeaderAction>
+          </>
+        }
+      />
 
       {error && (
         <Panel title="Errore">

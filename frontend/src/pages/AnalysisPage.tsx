@@ -2,9 +2,17 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
-import { apiGet, type Asset, type PriceHistory, type TechnicalAnalysis } from "../lib/api";
+import {
+  apiGet,
+  type Asset,
+  type NewsSentimentSummary,
+  type NewsStatus,
+  type PriceHistory,
+  type TechnicalAnalysis,
+} from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
 const subscoreLabels: Record<string, string> = {
@@ -25,6 +33,18 @@ const indicatorLabels: Array<[string, string, "number" | "percent"]> = [
   ["max_drawdown", "Max drawdown", "percent"],
 ];
 
+const sentimentTone: Record<string, string> = {
+  POSITIVE: "border-emerald-300/30 bg-emerald-400/10 text-emerald-200",
+  NEUTRAL: "border-cyan-300/30 bg-cyan-400/10 text-cyan-200",
+  NEGATIVE: "border-rose-300/30 bg-rose-400/10 text-rose-200",
+};
+
+const impactTone: Record<string, string> = {
+  HIGH: "border-rose-300/30 bg-rose-400/10 text-rose-200",
+  MEDIUM: "border-amber-300/30 bg-amber-400/10 text-amber-200",
+  LOW: "border-slate-700 bg-slate-900 text-slate-300",
+};
+
 function formatIndicator(value: number | null | undefined, kind: "number" | "percent" = "number") {
   if (value == null || Number.isNaN(value)) {
     return "N/D";
@@ -40,6 +60,8 @@ export function AnalysisPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [prices, setPrices] = useState<PriceHistory | null>(null);
   const [analysis, setAnalysis] = useState<TechnicalAnalysis | null>(null);
+  const [newsStatus, setNewsStatus] = useState<NewsStatus | null>(null);
+  const [newsSummary, setNewsSummary] = useState<NewsSentimentSummary | null>(null);
   const [loadingAssets, setLoadingAssets] = useState(true);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,11 +104,19 @@ export function AnalysisPage() {
           apiGet<PriceHistory>(`/prices/${selectedSymbol}`),
           apiGet<TechnicalAnalysis>(`/technical-analysis/${selectedSymbol}`),
         ]);
+        const [newsStatusResponse, newsSummaryResponse] = await Promise.all([
+          apiGet<NewsStatus>("/news/status").catch(() => null),
+          apiGet<NewsSentimentSummary>(`/news/sentiment/${selectedSymbol}`).catch(() => null),
+        ]);
         setPrices(priceResponse);
         setAnalysis(analysisResponse);
+        setNewsStatus(newsStatusResponse);
+        setNewsSummary(newsSummaryResponse);
       } catch (err) {
         setPrices(null);
         setAnalysis(null);
+        setNewsStatus(null);
+        setNewsSummary(null);
         setError(err instanceof Error ? err.message : "Asset non trovato o analisi non disponibile.");
       } finally {
         setLoadingAnalysis(false);
@@ -107,10 +137,12 @@ export function AnalysisPage() {
   if (!loadingAssets && assets.length === 0) {
     return (
       <div className="space-y-6">
-        <header>
-          <p className="text-sm font-medium text-cyan-300">Technical analysis</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Analisi Asset</h1>
-        </header>
+        <PageHeader
+          eyebrow="Technical analysis"
+          index="05"
+          title="Analisi Asset"
+          subtitle="Indicatori, segnali e scoring spiegabile per ogni asset in watchlist."
+        />
         <Panel title="Database non inizializzato">
           <p className="text-slate-300">Database non inizializzato.</p>
           <p className="mt-3 text-sm text-slate-500">Esegui `backend\.venv\Scripts\python.exe scripts\seed_database.py --reset` e ricarica la pagina.</p>
@@ -124,23 +156,35 @@ export function AnalysisPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">Technical analysis</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Analisi Asset</h1>
-        </div>
-        <select
-          value={selectedSymbol}
-          onChange={(event) => setSearchParams({ symbol: event.target.value })}
-          className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
-        >
-          {assets.map((asset) => (
-            <option key={asset.symbol} value={asset.symbol}>
-              {asset.symbol} - {asset.name}
-            </option>
-          ))}
-        </select>
-      </header>
+      <PageHeader
+        eyebrow="Technical analysis"
+        index="05"
+        title="Analisi Asset"
+        subtitle="Indicatori, scoring spiegabile, supporti/resistenze e sentiment news per asset."
+        meta={
+          <>
+            <span>
+              Asset selezionato <span className="text-cyan-300/80">{selectedSymbol}</span>
+            </span>
+            <span>
+              Universo <span className="text-cyan-300/80">{assets.length}</span>
+            </span>
+          </>
+        }
+        actions={
+          <select
+            value={selectedSymbol}
+            onChange={(event) => setSearchParams({ symbol: event.target.value })}
+            className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-3 py-2.5 font-mono text-sm tracking-tight text-white outline-none transition-colors focus:border-cyan-300/60"
+          >
+            {assets.map((asset) => (
+              <option key={asset.symbol} value={asset.symbol}>
+                {asset.symbol} — {asset.name}
+              </option>
+            ))}
+          </select>
+        }
+      />
 
       {error && (
         <Panel title="Errore">
@@ -211,6 +255,57 @@ export function AnalysisPage() {
                 <p className="text-xs uppercase text-slate-500">Last fetch</p>
                 <p className="mt-2 font-semibold text-white">{latestPoint?.fetched_at ?? "N/D"}</p>
               </div>
+            </div>
+          </Panel>
+
+          <Panel title="News asset">
+            {!newsStatus?.enable_real_news && (
+              <div className="mb-4 rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                News reali disattivate. Stai usando news demo/locali.
+              </div>
+            )}
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Sentiment 7 giorni</p>
+                <p className="mt-2 font-semibold text-white">{newsSummary?.sentiment_label ?? "NEUTRAL"}</p>
+                <p className="mt-1 text-sm text-slate-500">{newsSummary?.news_count ?? 0} news</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">News score</p>
+                <p className={(analysis.news_score ?? 0) >= 0 ? "mt-2 font-semibold text-emerald-300" : "mt-2 font-semibold text-rose-300"}>
+                  {(analysis.news_score ?? 0) > 0 ? "+" : ""}{(analysis.news_score ?? 0).toFixed(2)}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">max +/- 5</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Final score</p>
+                <p className="mt-2 font-semibold text-white">{(analysis.final_score ?? analysis.score).toFixed(1)}/100</p>
+                <p className="mt-1 text-sm text-slate-500">Score tecnico + news</p>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <p className="text-xs uppercase text-slate-500">Impatto</p>
+                <span className={`mt-2 inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${impactTone[newsSummary?.impact_level ?? "LOW"] ?? impactTone.LOW}`}>
+                  {newsSummary?.impact_level ?? "LOW"}
+                </span>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {(newsSummary?.latest_news ?? []).slice(0, 5).map((item) => (
+                <article key={`${item.id}-${item.title}`} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-xs uppercase text-slate-500">{item.source ?? "N/D"} - {item.published_at ?? "N/D"}</p>
+                      <h3 className="mt-2 text-sm font-semibold text-white">{item.title}</h3>
+                    </div>
+                    <span className={`inline-flex w-fit rounded-md border px-2.5 py-1 text-xs font-semibold ${sentimentTone[item.sentiment_label ?? "NEUTRAL"] ?? sentimentTone.NEUTRAL}`}>
+                      {item.sentiment_label ?? "NEUTRAL"}
+                    </span>
+                  </div>
+                </article>
+              ))}
+              {(newsSummary?.latest_news ?? []).length === 0 && (
+                <p className="text-sm text-slate-500">Nessuna news recente salvata per questo asset.</p>
+              )}
             </div>
           </Panel>
 

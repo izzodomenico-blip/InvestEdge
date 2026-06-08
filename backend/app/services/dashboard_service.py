@@ -5,12 +5,13 @@ import sqlite3
 from backend.app.models import DashboardOut
 from backend.app.services.assets_service import list_assets
 from backend.app.services.market_data_service import MarketDataService
+from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.signals_service import list_signals
 
-
 portfolio_engine = PortfolioEngine()
 market_data_service = MarketDataService()
+news_engine = NewsEngine()
 
 
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
@@ -112,4 +113,6 @@ def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
         ],
         latest_backtest=dict(latest_backtest_row) if latest_backtest_row else None,
         data_status=market_data_service.get_global_status(connection),
+        latest_high_impact_news=news_engine.get_market_news(connection, limit=5, impact_level="HIGH"),
+        market_news_summary=news_engine.get_market_sentiment_summary(connection, lookback_days=7),
     )

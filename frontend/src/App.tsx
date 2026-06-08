@@ -8,13 +8,15 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NewsPage } from "./pages/NewsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { SimulatorPage } from "./pages/SimulatorPage";
+import { TodayPage } from "./pages/TodayPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
 export default function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<TodayPage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/watchlist" element={<WatchlistPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/simulator" element={<SimulatorPage />} />

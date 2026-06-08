@@ -6,7 +6,6 @@ from contextlib import contextmanager
 
 from backend.app.config import get_settings
 
-
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -119,6 +118,11 @@ CREATE TABLE IF NOT EXISTS signals (
     symbol TEXT,
     signal TEXT NOT NULL CHECK(signal IN ('STRONG_BUY', 'BUY', 'HOLD', 'REDUCE', 'SELL')),
     score REAL NOT NULL,
+    technical_score REAL,
+    news_score REAL NOT NULL DEFAULT 0,
+    final_score REAL,
+    news_sentiment_label TEXT,
+    news_impact_level TEXT,
     risk_level TEXT,
     confidence TEXT,
     technical_summary TEXT,
@@ -136,13 +140,20 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE TABLE IF NOT EXISTS news_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id INTEGER,
+    symbol TEXT,
+    provider TEXT NOT NULL DEFAULT 'local',
     title TEXT NOT NULL,
+    summary TEXT,
     url TEXT,
     source TEXT,
     published_at TEXT,
     sentiment_score REAL,
-    summary TEXT,
+    sentiment_label TEXT,
+    impact_level TEXT,
+    relevance_score REAL,
+    raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
 );
 
@@ -250,6 +261,8 @@ CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(s
 CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
 CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
@@ -267,6 +280,11 @@ MIGRATIONS = {
     ],
     "signals": [
         ("symbol", "ALTER TABLE signals ADD COLUMN symbol TEXT"),
+        ("technical_score", "ALTER TABLE signals ADD COLUMN technical_score REAL"),
+        ("news_score", "ALTER TABLE signals ADD COLUMN news_score REAL NOT NULL DEFAULT 0"),
+        ("final_score", "ALTER TABLE signals ADD COLUMN final_score REAL"),
+        ("news_sentiment_label", "ALTER TABLE signals ADD COLUMN news_sentiment_label TEXT"),
+        ("news_impact_level", "ALTER TABLE signals ADD COLUMN news_impact_level TEXT"),
         ("risk_level", "ALTER TABLE signals ADD COLUMN risk_level TEXT"),
         ("confidence", "ALTER TABLE signals ADD COLUMN confidence TEXT"),
         ("technical_summary", "ALTER TABLE signals ADD COLUMN technical_summary TEXT"),
@@ -303,6 +321,15 @@ MIGRATIONS = {
         ("is_real_data", "ALTER TABLE price_history ADD COLUMN is_real_data INTEGER NOT NULL DEFAULT 0"),
         ("fetched_at", "ALTER TABLE price_history ADD COLUMN fetched_at TEXT"),
     ],
+    "news_items": [
+        ("symbol", "ALTER TABLE news_items ADD COLUMN symbol TEXT"),
+        ("provider", "ALTER TABLE news_items ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'"),
+        ("sentiment_label", "ALTER TABLE news_items ADD COLUMN sentiment_label TEXT"),
+        ("impact_level", "ALTER TABLE news_items ADD COLUMN impact_level TEXT"),
+        ("relevance_score", "ALTER TABLE news_items ADD COLUMN relevance_score REAL"),
+        ("raw_json", "ALTER TABLE news_items ADD COLUMN raw_json TEXT"),
+        ("updated_at", "ALTER TABLE news_items ADD COLUMN updated_at TEXT"),
+    ],
     "api_cache": [
         ("endpoint", "ALTER TABLE api_cache ADD COLUMN endpoint TEXT"),
         ("symbol", "ALTER TABLE api_cache ADD COLUMN symbol TEXT"),
@@ -327,6 +354,11 @@ CREATE TABLE signals_new (
     symbol TEXT,
     signal TEXT NOT NULL CHECK(signal IN ('STRONG_BUY', 'BUY', 'HOLD', 'REDUCE', 'SELL')),
     score REAL NOT NULL,
+    technical_score REAL,
+    news_score REAL NOT NULL DEFAULT 0,
+    final_score REAL,
+    news_sentiment_label TEXT,
+    news_impact_level TEXT,
     risk_level TEXT,
     confidence TEXT,
     technical_summary TEXT,
@@ -342,11 +374,24 @@ CREATE TABLE signals_new (
 );
 
 INSERT INTO signals_new (
-    id, asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+    id, asset_id, symbol, signal, score, technical_score, news_score, final_score,
+    news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
     reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
 )
 SELECT
-    id, asset_id, symbol, signal, score, risk_level, confidence, technical_summary,
+    id,
+    asset_id,
+    symbol,
+    signal,
+    score,
+    COALESCE(technical_score, score),
+    COALESCE(news_score, 0),
+    COALESCE(final_score, score),
+    news_sentiment_label,
+    news_impact_level,
+    risk_level,
+    confidence,
+    technical_summary,
     reasons_json,
     subscores_json,
     indicators_json,
@@ -399,8 +444,26 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date)"
     )
+    connection.execute("UPDATE signals SET technical_score = score WHERE technical_score IS NULL")
+    connection.execute("UPDATE signals SET final_score = score WHERE final_score IS NULL")
+    connection.execute("UPDATE signals SET news_score = 0 WHERE news_score IS NULL")
+    connection.execute("UPDATE news_items SET symbol = UPPER(symbol) WHERE symbol IS NOT NULL")
+    connection.execute(
+        """
+        UPDATE news_items
+        SET symbol = (
+            SELECT assets.symbol
+            FROM assets
+            WHERE assets.id = news_items.asset_id
+        )
+        WHERE symbol IS NULL AND asset_id IS NOT NULL
+        """
+    )
+    connection.execute("UPDATE news_items SET updated_at = created_at WHERE updated_at IS NULL")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url)")
 
 
 @contextmanager

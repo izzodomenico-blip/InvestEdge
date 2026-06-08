@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
@@ -11,6 +10,9 @@ RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
 BacktestStrategy = Literal["SCORE_THRESHOLD", "BUY_AND_HOLD", "TOP_N_SCORE"]
 RebalanceFrequency = Literal["DAILY", "WEEKLY", "MONTHLY"]
+AllocationMethod = Literal["EQUAL_WEIGHT", "RISK_PARITY", "SCORE_WEIGHTED", "VOL_TARGET"]
+ActionType = Literal["BUY", "REDUCE", "SELL", "WATCH", "RISK", "OK"]
+ActionPriority = Literal["HIGH", "MEDIUM", "LOW"]
 
 
 class AssetCreate(BaseModel):
@@ -34,6 +36,11 @@ class AssetOut(AssetCreate):
     last_price_date: str | None = None
     last_fetch_at: str | None = None
     score: float | None = None
+    technical_score: float | None = None
+    news_score: float | None = None
+    final_score: float | None = None
+    news_sentiment_label: str | None = None
+    news_impact_level: str | None = None
     signal: SignalType | None = None
     confidence: str | None = None
     technical_summary: str | None = None
@@ -100,12 +107,93 @@ class SignalOut(BaseModel):
     symbol: str
     signal: SignalType
     score: float
+    technical_score: float | None = None
+    news_score: float = 0
+    final_score: float | None = None
+    news_sentiment_label: str | None = None
+    news_impact_level: str | None = None
     risk_level: str | None = None
     confidence: str | None = None
     technical_summary: str | None = None
     reasons: list[dict[str, str]] = Field(default_factory=list)
     subscores: dict[str, float] = Field(default_factory=dict)
     created_at: str
+
+
+class NewsItemOut(BaseModel):
+    id: int | None = None
+    symbol: str | None = None
+    provider: str
+    title: str
+    summary: str | None = None
+    url: str | None = None
+    source: str | None = None
+    published_at: str | None = None
+    sentiment_score: float | None = None
+    sentiment_label: str | None = None
+    impact_level: str | None = None
+    relevance_score: float | None = None
+    raw_json: dict[str, Any] | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class NewsRefreshResultOut(BaseModel):
+    symbol: str
+    provider: str | None = None
+    items_inserted: int
+    items_updated: int
+    used_cache: bool
+    used_fallback: bool
+    message: str
+
+
+class NewsRefreshAllOut(BaseModel):
+    summary: dict[str, int]
+    results: list[NewsRefreshResultOut]
+
+
+class NewsProviderStatusOut(BaseModel):
+    provider: str
+    enabled: bool
+    api_key_configured: bool
+    daily_limit: int
+    calls_today: int
+    supports: list[str] = Field(default_factory=list)
+
+
+class NewsStatusOut(BaseModel):
+    enable_real_news: bool
+    provider_status: list[NewsProviderStatusOut]
+    daily_usage: dict[str, Any]
+    cache_status: dict[str, int]
+    last_refresh: str | None = None
+
+
+class NewsSentimentSummaryOut(BaseModel):
+    symbol: str
+    lookback_days: int
+    news_count: int
+    average_sentiment_score: float
+    sentiment_label: str
+    impact_level: str
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    latest_news: list[NewsItemOut] = Field(default_factory=list)
+
+
+class AlertStatusOut(BaseModel):
+    enabled: bool
+    configured: bool
+    channel: str
+
+
+class AlertSendOut(BaseModel):
+    ok: bool
+    message_id: int | None = None
+    actions_sent: int | None = None
+    headline: str | None = None
 
 
 class DashboardOut(BaseModel):
@@ -132,6 +220,8 @@ class DashboardOut(BaseModel):
     portfolio_snapshots: list[dict[str, float | str]] = Field(default_factory=list)
     latest_backtest: dict[str, float | int | str | None] | None = None
     data_status: dict[str, object] = Field(default_factory=dict)
+    latest_high_impact_news: list[NewsItemOut] = Field(default_factory=list)
+    market_news_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class TechnicalAnalysisOut(BaseModel):
@@ -142,6 +232,11 @@ class TechnicalAnalysisOut(BaseModel):
     support_resistance: dict[str, float | None] = Field(default_factory=dict)
     subscores: dict[str, float] = Field(default_factory=dict)
     score: float
+    technical_score: float | None = None
+    news_score: float = 0
+    final_score: float | None = None
+    news_sentiment_label: str | None = None
+    news_impact_level: str | None = None
     signal: SignalType
     risk_level: str
     confidence: str
@@ -345,6 +440,21 @@ class BacktestBenchmarkComparisonOut(BaseModel):
     benchmark_final_value: float
 
 
+class BacktestNetAnalysisOut(BaseModel):
+    gross_return_percent: float
+    gross_profit: float
+    commission_costs: float
+    slippage_costs: float
+    realized_gains_taxable: float
+    capital_gains_tax: float
+    stamp_duty: float
+    total_costs_and_taxes: float
+    net_final_value: float
+    net_return_percent: float
+    effective_tax_rate_percent: float
+    notes: list[str] = Field(default_factory=list)
+
+
 class BacktestResultOut(BaseModel):
     backtest_id: int
     summary: BacktestSummaryOut
@@ -352,6 +462,128 @@ class BacktestResultOut(BaseModel):
     trades: list[BacktestTradeOut]
     final_positions: list[BacktestPositionOut]
     benchmark_comparison: BacktestBenchmarkComparisonOut
+    net_analysis: BacktestNetAnalysisOut | None = None
+
+
+class BacktestCompareIn(BaseModel):
+    name: str = Field(default="Confronto strategie", min_length=1, max_length=120)
+    strategy_names: list[BacktestStrategy] = Field(..., min_length=2, max_length=3)
+    symbols: list[str] = Field(..., min_length=1)
+    initial_cash: float = Field(default=100000, gt=0)
+    start_date: str
+    end_date: str
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
+    buy_threshold: float = Field(default=70, ge=0, le=100)
+    sell_threshold: float = Field(default=40, ge=0, le=100)
+    max_asset_weight: float = Field(default=0.15, gt=0, le=1)
+    fee_percent: float = Field(default=0.1, ge=0, le=5)
+    stop_loss_percent: float | None = Field(default=8, gt=0, le=100)
+    take_profit_percent: float | None = Field(default=25, gt=0, le=500)
+    rebalance_frequency: RebalanceFrequency = "WEEKLY"
+    top_n: int | None = Field(default=5, ge=1, le=25)
+
+
+class BacktestCompareEntryOut(BaseModel):
+    strategy_name: str
+    label: str
+    rank: int
+    summary: BacktestSummaryOut
+    equity_curve: list[BacktestEquityPointOut]
+
+
+class BacktestCompareOut(BaseModel):
+    name: str
+    start_date: str
+    end_date: str
+    benchmark_symbol: str | None = None
+    benchmark_return_percent: float
+    best_strategy: str
+    entries: list[BacktestCompareEntryOut]
+
+
+class WalkForwardIn(BacktestRunIn):
+    folds: int = Field(default=4, ge=2, le=12)
+
+
+class WalkForwardFoldOut(BaseModel):
+    fold: int
+    start_date: str
+    end_date: str
+    total_return_percent: float
+    cagr: float
+    max_drawdown: float
+    sharpe_ratio: float
+    alpha_vs_benchmark: float
+    total_trades: int
+    final_value: float
+
+
+class WalkForwardOut(BaseModel):
+    strategy_name: str
+    folds: int
+    full_period_return_percent: float
+    mean_return_percent: float
+    median_return_percent: float
+    std_return_percent: float
+    positive_folds: int
+    folds_beating_benchmark: int
+    worst_fold_return_percent: float
+    best_fold_return_percent: float
+    mean_alpha_vs_benchmark: float
+    consistency: Literal["ROBUSTA", "INCERTA", "FRAGILE"]
+    verdict: str
+    fold_results: list[WalkForwardFoldOut]
+
+
+class ActionItemOut(BaseModel):
+    type: ActionType
+    priority: ActionPriority
+    symbol: str | None = None
+    title: str
+    reason: str
+    signal: str | None = None
+    score: float | None = None
+    weight_percent: float | None = None
+
+
+class ActionBoardOut(BaseModel):
+    generated_at: str
+    data_mode: str
+    enable_real_data: bool
+    headline: str
+    counts: dict[str, int]
+    actions: list[ActionItemOut]
+
+
+class AllocationPlanIn(BaseModel):
+    symbols: list[str] = Field(..., min_length=1, max_length=25)
+    method: AllocationMethod = "RISK_PARITY"
+    total_capital: float = Field(default=100000, gt=0)
+    target_volatility: float | None = Field(default=0.15, gt=0, le=2)
+    max_weight: float | None = Field(default=None, gt=0, le=1)
+    lookback_days: int = Field(default=120, ge=20, le=750)
+
+
+class AllocationItemOut(BaseModel):
+    symbol: str
+    name: str
+    weight_percent: float
+    capital: float
+    price: float | None = None
+    suggested_quantity: int
+    volatility: float
+    score: float | None = None
+
+
+class AllocationPlanOut(BaseModel):
+    method: str
+    total_capital: float
+    invested_capital: float
+    cash_buffer: float
+    target_volatility: float | None = None
+    estimated_volatility: float
+    allocations: list[AllocationItemOut]
+    notes: list[str] = Field(default_factory=list)
 
 
 class DataProviderStatusOut(BaseModel):

@@ -4,9 +4,11 @@ import sqlite3
 
 import pandas as pd
 
+from backend.app.config import get_settings
 from backend.app.models import TechnicalAnalysisOut
 from backend.app.services.assets_service import get_asset_by_symbol
 from backend.app.services.scoring_engine import ScoringEngine
+from backend.app.services.sentiment_engine import aggregate_news_sentiment
 
 
 def get_technical_analysis(connection: sqlite3.Connection, symbol: str) -> TechnicalAnalysisOut | None:
@@ -33,6 +35,14 @@ def get_technical_analysis(connection: sqlite3.Connection, symbol: str) -> Techn
         symbol=asset.symbol,
         risk_level=asset.risk_level,
     )
+    news_summary = aggregate_news_sentiment(connection, asset.symbol, lookback_days=7)
+    if news_summary["news_count"] == 0:
+        news_score = 0.0
+    else:
+        weight = get_settings().news_sentiment_weight
+        news_score = float(news_summary["average_sentiment_score"]) * weight
+        news_score = max(-weight, min(weight, news_score))
+    final_score = round(max(0.0, min(100.0, float(score["score"]) + news_score)), 2)
 
     return TechnicalAnalysisOut(
         asset=asset,
@@ -42,6 +52,11 @@ def get_technical_analysis(connection: sqlite3.Connection, symbol: str) -> Techn
         support_resistance=score["support_resistance"],
         subscores=score["subscores"],
         score=score["score"],
+        technical_score=score["score"],
+        news_score=round(news_score, 2),
+        final_score=final_score,
+        news_sentiment_label=news_summary["sentiment_label"],
+        news_impact_level=news_summary["impact_level"],
         signal=score["signal"],
         risk_level=score["risk_level"],
         confidence=score["confidence"],

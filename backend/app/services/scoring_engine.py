@@ -5,11 +5,9 @@ from typing import Any
 
 import pandas as pd
 
+from backend.app.services.common import clamp as _clamp
+from backend.app.services.common import signal_from_score
 from backend.app.services.technical_analysis import TechnicalAnalysisService
-
-
-def _clamp(value: float, minimum: float = 0.0, maximum: float = 100.0) -> float:
-    return max(minimum, min(maximum, value))
 
 
 def _is_number(value: Any) -> bool:
@@ -23,15 +21,7 @@ class ScoringEngine:
     technical_analysis: TechnicalAnalysisService = field(default_factory=TechnicalAnalysisService)
 
     def _signal_from_score(self, score: float) -> str:
-        if score >= 80:
-            return "STRONG_BUY"
-        if score >= 70:
-            return "BUY"
-        if score >= 55:
-            return "HOLD"
-        if score >= 40:
-            return "REDUCE"
-        return "SELL"
+        return signal_from_score(score)
 
     def _risk_level(self, volatility: float | None, max_drawdown: float | None, asset_risk_level: str) -> str:
         normalized = asset_risk_level.lower()

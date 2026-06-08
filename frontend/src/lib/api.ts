@@ -1,6 +1,8 @@
 const API_URL =
   import.meta.env.VITE_API_BASE_URL ??
-  "http://127.0.0.1:8001";
+  (typeof window !== "undefined" && !import.meta.env.DEV
+    ? window.location.origin
+    : "http://127.0.0.1:8001");
 
 if (import.meta.env.DEV) {
   console.info("[InvestEdge] API_URL", API_URL);
@@ -31,6 +33,11 @@ export type Asset = {
   last_price_date: string | null;
   last_fetch_at: string | null;
   score: number | null;
+  technical_score: number | null;
+  news_score: number | null;
+  final_score: number | null;
+  news_sentiment_label: string | null;
+  news_impact_level: string | null;
   signal: Signal | null;
   confidence: string | null;
   technical_summary: string | null;
@@ -43,12 +50,53 @@ export type SignalRecord = {
   symbol: string;
   signal: Signal;
   score: number;
+  technical_score: number | null;
+  news_score: number;
+  final_score: number | null;
+  news_sentiment_label: string | null;
+  news_impact_level: string | null;
   risk_level: string | null;
   confidence: string | null;
   technical_summary: string | null;
   reasons: Reason[];
   subscores: Record<string, number>;
   created_at: string;
+};
+
+export type ActionType = "BUY" | "REDUCE" | "SELL" | "WATCH" | "RISK" | "OK";
+export type ActionPriority = "HIGH" | "MEDIUM" | "LOW";
+
+export type ActionItem = {
+  type: ActionType;
+  priority: ActionPriority;
+  symbol: string | null;
+  title: string;
+  reason: string;
+  signal: string | null;
+  score: number | null;
+  weight_percent: number | null;
+};
+
+export type ActionBoard = {
+  generated_at: string;
+  data_mode: "SEED" | "MIXED" | "REAL";
+  enable_real_data: boolean;
+  headline: string;
+  counts: Record<string, number>;
+  actions: ActionItem[];
+};
+
+export type AlertStatus = {
+  enabled: boolean;
+  configured: boolean;
+  channel: string;
+};
+
+export type AlertSendResult = {
+  ok: boolean;
+  message_id: number | null;
+  actions_sent: number | null;
+  headline: string | null;
 };
 
 export type DashboardResponse = {
@@ -75,6 +123,8 @@ export type DashboardResponse = {
   risky_assets: Asset[];
   latest_backtest: BacktestSummary | null;
   data_status: DataStatus;
+  latest_high_impact_news: NewsItem[];
+  market_news_summary: MarketNewsSummary;
 };
 
 export type PortfolioPosition = {
@@ -226,6 +276,11 @@ export type TechnicalAnalysis = {
   support_resistance: Record<string, number | null>;
   subscores: Record<string, number>;
   score: number;
+  technical_score: number | null;
+  news_score: number;
+  final_score: number | null;
+  news_sentiment_label: string | null;
+  news_impact_level: string | null;
   signal: Signal;
   risk_level: string;
   confidence: string;
@@ -319,6 +374,21 @@ export type BacktestPosition = {
   unrealized_pnl: number;
 };
 
+export type BacktestNetAnalysis = {
+  gross_return_percent: number;
+  gross_profit: number;
+  commission_costs: number;
+  slippage_costs: number;
+  realized_gains_taxable: number;
+  capital_gains_tax: number;
+  stamp_duty: number;
+  total_costs_and_taxes: number;
+  net_final_value: number;
+  net_return_percent: number;
+  effective_tax_rate_percent: number;
+  notes: string[];
+};
+
 export type BacktestResult = {
   backtest_id: number;
   summary: BacktestSummary;
@@ -331,6 +401,110 @@ export type BacktestResult = {
     alpha_vs_benchmark: number;
     benchmark_final_value: number;
   };
+  net_analysis: BacktestNetAnalysis | null;
+};
+
+export type BacktestCompareInput = {
+  name?: string;
+  strategy_names: BacktestStrategy[];
+  symbols: string[];
+  initial_cash: number;
+  start_date: string;
+  end_date: string;
+  benchmark_symbol: string;
+  buy_threshold: number;
+  sell_threshold: number;
+  max_asset_weight: number;
+  fee_percent: number;
+  stop_loss_percent?: number;
+  take_profit_percent?: number;
+  rebalance_frequency: RebalanceFrequency;
+  top_n?: number;
+};
+
+export type BacktestCompareEntry = {
+  strategy_name: string;
+  label: string;
+  rank: number;
+  summary: BacktestSummary;
+  equity_curve: BacktestEquityPoint[];
+};
+
+export type BacktestCompareResult = {
+  name: string;
+  start_date: string;
+  end_date: string;
+  benchmark_symbol: string | null;
+  benchmark_return_percent: number;
+  best_strategy: string;
+  entries: BacktestCompareEntry[];
+};
+
+export type WalkForwardInput = BacktestRunInput & {
+  folds: number;
+};
+
+export type WalkForwardFold = {
+  fold: number;
+  start_date: string;
+  end_date: string;
+  total_return_percent: number;
+  cagr: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  alpha_vs_benchmark: number;
+  total_trades: number;
+  final_value: number;
+};
+
+export type WalkForwardResult = {
+  strategy_name: string;
+  folds: number;
+  full_period_return_percent: number;
+  mean_return_percent: number;
+  median_return_percent: number;
+  std_return_percent: number;
+  positive_folds: number;
+  folds_beating_benchmark: number;
+  worst_fold_return_percent: number;
+  best_fold_return_percent: number;
+  mean_alpha_vs_benchmark: number;
+  consistency: "ROBUSTA" | "INCERTA" | "FRAGILE";
+  verdict: string;
+  fold_results: WalkForwardFold[];
+};
+
+export type AllocationMethod = "EQUAL_WEIGHT" | "RISK_PARITY" | "SCORE_WEIGHTED" | "VOL_TARGET";
+
+export type AllocationPlanInput = {
+  symbols: string[];
+  method: AllocationMethod;
+  total_capital: number;
+  target_volatility?: number | null;
+  max_weight?: number | null;
+  lookback_days?: number;
+};
+
+export type AllocationItem = {
+  symbol: string;
+  name: string;
+  weight_percent: number;
+  capital: number;
+  price: number | null;
+  suggested_quantity: number;
+  volatility: number;
+  score: number | null;
+};
+
+export type AllocationPlan = {
+  method: string;
+  total_capital: number;
+  invested_capital: number;
+  cash_buffer: number;
+  target_volatility: number | null;
+  estimated_volatility: number;
+  allocations: AllocationItem[];
+  notes: string[];
 };
 
 export type DataProviderStatus = {
@@ -384,6 +558,80 @@ export type DataRefreshAllResult = {
   summary: Record<string, number>;
   results: DataRefreshResult[];
 };
+
+export type NewsSentimentLabel = "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+export type NewsImpactLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export type NewsItem = {
+  id: number | null;
+  symbol: string | null;
+  provider: string;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  source: string | null;
+  published_at: string | null;
+  sentiment_score: number | null;
+  sentiment_label: NewsSentimentLabel | string | null;
+  impact_level: NewsImpactLevel | string | null;
+  relevance_score: number | null;
+  raw_json: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type NewsRefreshResult = {
+  symbol: string;
+  provider: string | null;
+  items_inserted: number;
+  items_updated: number;
+  used_cache: boolean;
+  used_fallback: boolean;
+  message: string;
+};
+
+export type NewsRefreshAllResult = {
+  summary: Record<string, number>;
+  results: NewsRefreshResult[];
+};
+
+export type NewsProviderStatus = {
+  provider: string;
+  enabled: boolean;
+  api_key_configured: boolean;
+  daily_limit: number;
+  calls_today: number;
+  supports: string[];
+};
+
+export type NewsStatus = {
+  enable_real_news: boolean;
+  provider_status: NewsProviderStatus[];
+  daily_usage: {
+    provider: string;
+    usage_date: string;
+    calls_count: number;
+    daily_limit: number;
+    updated_at: string | null;
+  };
+  cache_status: Record<string, number>;
+  last_refresh: string | null;
+};
+
+export type NewsSentimentSummary = {
+  symbol: string;
+  lookback_days: number;
+  news_count: number;
+  average_sentiment_score: number;
+  sentiment_label: NewsSentimentLabel | string;
+  impact_level: NewsImpactLevel | string;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  latest_news: NewsItem[];
+};
+
+export type MarketNewsSummary = Omit<NewsSentimentSummary, "symbol" | "latest_news">;
 
 async function parseError(response: Response) {
   try {

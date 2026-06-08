@@ -1,17 +1,26 @@
 .venv/
+backend/.venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 *.pyc
 
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/*.log
+data/.investedge.lock
 
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.pkg_hash.txt
+frontend/*.tsbuildinfo
 
+# Variabili ambiente e chiavi reali: mai committare
 .env
+backend/.env
+*.env.local
 .DS_Store
 
 .backend.log

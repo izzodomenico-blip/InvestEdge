@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
 import json
+import sqlite3
 
 from backend.app.models import SignalOut
 
@@ -33,6 +33,11 @@ def _signal_from_row(row: sqlite3.Row) -> SignalOut:
         symbol=row["symbol"],
         signal=row["signal"],
         score=row["score"],
+        technical_score=row["technical_score"],
+        news_score=row["news_score"] or 0,
+        final_score=row["final_score"],
+        news_sentiment_label=row["news_sentiment_label"],
+        news_impact_level=row["news_impact_level"],
         risk_level=row["risk_level"],
         confidence=row["confidence"],
         technical_summary=row["technical_summary"],
@@ -50,7 +55,12 @@ def list_signals(connection: sqlite3.Connection, limit: int = 50) -> list[Signal
             s.asset_id,
             COALESCE(s.symbol, a.symbol) AS symbol,
             s.signal,
-            s.score,
+            COALESCE(s.final_score, s.score) AS score,
+            COALESCE(s.technical_score, s.score) AS technical_score,
+            COALESCE(s.news_score, 0) AS news_score,
+            COALESCE(s.final_score, s.score) AS final_score,
+            s.news_sentiment_label,
+            s.news_impact_level,
             COALESCE(s.risk_level, a.risk_level) AS risk_level,
             s.confidence,
             COALESCE(s.technical_summary, s.rationale) AS technical_summary,
@@ -75,7 +85,12 @@ def get_signal_by_symbol(connection: sqlite3.Connection, symbol: str) -> SignalO
             s.asset_id,
             COALESCE(s.symbol, a.symbol) AS symbol,
             s.signal,
-            s.score,
+            COALESCE(s.final_score, s.score) AS score,
+            COALESCE(s.technical_score, s.score) AS technical_score,
+            COALESCE(s.news_score, 0) AS news_score,
+            COALESCE(s.final_score, s.score) AS final_score,
+            s.news_sentiment_label,
+            s.news_impact_level,
             COALESCE(s.risk_level, a.risk_level) AS risk_level,
             s.confidence,
             COALESCE(s.technical_summary, s.rationale) AS technical_summary,

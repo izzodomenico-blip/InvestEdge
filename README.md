@@ -2,7 +2,22 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest e integrazione dati reali opzionale con cache. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, confronto multi-strategia, pianificatore di allocazione capitale, integrazione dati reali opzionale con cache e modulo news/sentiment. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
+
+## Avvio rapido (one-click)
+
+Su Windows, doppio click su `Avvia-InvestEdge.bat` nella cartella del progetto. Lo script `scripts/launcher.ps1`:
+
+- crea il virtualenv e installa le dipendenze se mancanti o cambiate (hash di `requirements.txt`/`package-lock.json`);
+- builda il frontend se `frontend/dist` e assente o piu vecchio di `src`;
+- inizializza il database con il seed se vuoto;
+- sceglie la prima porta libera tra 8001 e 8010;
+- avvia un singolo processo uvicorn che serve sia l'API sia il frontend buildato;
+- apre il browser e scrive un log in `data/launcher.log`.
+
+Un lock file `data/.investedge.lock` evita avvii doppi. Flag utili: `-ForceSeed`, `-ForceRebuild`, `-ForceReinstall`, `-NoBrowser`.
+
+In questa modalita il backend serve il frontend statico quando `INVESTEDGE_SERVE_FRONTEND=1`; la modalita di sviluppo classica (uvicorn + `npm run dev` separati) resta invariata.
 
 ## Struttura
 
@@ -63,6 +78,8 @@ Lo scoring e spiegabile e combina:
 
 Ogni segnale salva score, confidence, risk_level, motivazioni, sotto-score e indicatori usati.
 
+Lo score tecnico resta separato da quello news. Quando sono presenti news recenti, `final_score` puo includere una variazione leggera pari al massimo a `NEWS_SENTIMENT_WEIGHT` punti in positivo o negativo. Se non ci sono news recenti, `news_score = 0` e `final_score = technical_score`.
+
 ## Paper trading e portafoglio
 
 Il paper trading e completamente simulato: ogni BUY o SELL aggiorna solo SQLite e non invia ordini a broker reali.
@@ -111,7 +128,37 @@ Sono supportati stop loss, take profit, commissioni, cash residuo, peso massimo 
 
 Attenzione: il backtest e una simulazione su dati storici generati localmente. Non garantisce rendimenti futuri e puo favorire overfitting se si ottimizzano troppe soglie sullo stesso periodo.
 
+## Confronto multi-strategia
+
+L'endpoint `POST /backtests/compare` esegue 2 o 3 strategie sullo stesso periodo, universo e benchmark, caricando i dati di mercato una sola volta e senza persistere i singoli run. Restituisce per ogni strategia il riepilogo metriche e la equity curve, piu un ranking per rendimento totale e l'indicazione della strategia migliore. Nel frontend la pagina Backtest ha un toggle Singolo/Confronto con tabella metriche affiancate ed equity curve sovrapposte.
+
+## Validazione walk-forward (robustezza)
+
+L'endpoint `POST /backtests/walk-forward` divide il periodo in N fold consecutivi e indipendenti, eseguendo la strategia su ciascun sottoperiodo separatamente. Restituisce metriche per fold, statistiche aggregate (rendimento medio/mediano, dispersione, periodi positivi, fold che battono il benchmark) e un verdetto di consistenza: `ROBUSTA`, `INCERTA` o `FRAGILE`.
+
+Serve a smascherare l'overfitting: una strategia il cui rendimento sull'intero periodo dipende da poche finestre fortunate risulta FRAGILE, anche se il backtest singolo sembra ottimo. Nel frontend la pagina Backtest ha il terzo mode "Robustezza" con tabella per fold e badge del verdetto. Resta una simulazione su dati storici: non garantisce risultati futuri.
+
+## Pianificatore allocazione capitale
+
+L'endpoint `POST /portfolio/allocation/plan` suggerisce pesi target e quantita per un insieme di asset. Non esegue ordini: produce un piano da applicare manualmente dal simulatore. Metodi disponibili:
+
+- `EQUAL_WEIGHT`: stesso peso a ogni asset.
+- `RISK_PARITY`: peso inversamente proporzionale alla volatilita annualizzata (inverse-vol), cosi ogni asset contribuisce un rischio simile.
+- `SCORE_WEIGHTED`: peso proporzionale allo score tecnico oltre 50.
+- `VOL_TARGET`: parte da risk parity e scala la quota investita per centrare una volatilita target, lasciando il resto in liquidita.
+
+Opzioni: `max_weight` (cap per singolo asset con redistribuzione), `target_volatility`, `lookback_days`. La volatilita di portafoglio e una stima conservativa (media pesata delle volatilita, assume correlazione 1). Nel frontend il pianificatore e nella pagina Portafoglio con grafico a torta e tabella pesi/capitale/quantita.
+
 ## Dati reali con cache
+
+### Attivazione rapida
+
+1. Copia `backend/.env.example` in `backend/.env`.
+2. Inserisci almeno la chiave Alpha Vantage (gratuita: https://www.alphavantage.co/support/#api-key) e imposta `ENABLE_REAL_DATA=true` (e `ENABLE_REAL_NEWS=true` per le news).
+3. Riavvia `Avvia-InvestEdge.bat`.
+4. Apri la pagina **Dati** e clicca **Aggiorna tutti i dati** (e nella pagina **News**, **Aggiorna tutte**).
+
+Finche non fai questo, l'app mostra dati simulati: il banner in dashboard indica la modalita corrente (SEED/MIXED/REAL). Il file `backend/.env` non va mai committato (e gia in `.gitignore`).
 
 Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente all'apertura della dashboard. I refresh reali partono solo dagli endpoint `/data/refresh/*` o dalla pagina frontend `Dati`.
 
@@ -148,6 +195,39 @@ COINGECKO_DAILY_LIMIT=100
 FRED_DAILY_LIMIT=100
 ```
 
+## News reali e sentiment base
+
+Il modulo News collega notizie agli asset senza fare scraping web e senza trasformare il sentiment in una previsione certa. Le news sono un supporto decisionale: il motore sentiment e euristico, basato su keyword, e puo sbagliare tono o importanza.
+
+Provider disponibili:
+
+- `AlphaVantageNewsProvider`: usa Alpha Vantage News & Sentiment solo se `ENABLE_REAL_NEWS=true` e la chiave Alpha Vantage e configurata.
+- `NewsProviderMock`: fallback deterministico per test, demo e assenza di configurazione reale.
+
+Modalita operative:
+
+- con `ENABLE_REAL_NEWS=false` il backend non chiama API esterne e usa news demo/locali;
+- con real news abilitate ma API key assente, l'app non va in crash e usa news locali;
+- se la cache news e valida, il backend riusa `api_cache`;
+- se il limite giornaliero e raggiunto o il provider fallisce, vengono usate news gia presenti nel database o fallback demo;
+- dashboard e watchlist non avviano chiamate news esterne automaticamente;
+- nessuna API key viene stampata nei log, nel frontend, nei test o nella documentazione.
+
+Variabili news:
+
+```env
+ENABLE_REAL_NEWS=false
+NEWS_CACHE_TTL_HOURS=6
+NEWS_DAILY_LIMIT=20
+NEWS_SENTIMENT_WEIGHT=5
+```
+
+Campi principali salvati in `news_items`: `symbol`, `provider`, `title`, `summary`, `url`, `source`, `published_at`, `sentiment_score`, `sentiment_label`, `impact_level`, `relevance_score` e `raw_json`.
+
+Keyword positive iniziali: earnings beat, revenue growth, raises guidance, upgrade, partnership, approval, buyback, dividend increase.
+
+Keyword negative iniziali: earnings miss, revenue decline, lawsuit, downgrade, investigation, recall, bankruptcy, guidance cut, regulatory risk.
+
 ## Avvio backend
 
 ```powershell
@@ -171,6 +251,9 @@ Endpoint iniziali:
 - `POST /orders/simulate`
 - `GET /orders`
 - `POST /backtests/run`
+- `POST /backtests/compare`
+- `POST /backtests/walk-forward`
+- `POST /portfolio/allocation/plan`
 - `GET /backtests`
 - `GET /backtests/{backtest_id}`
 - `DELETE /backtests/{backtest_id}`
@@ -179,6 +262,12 @@ Endpoint iniziali:
 - `POST /data/refresh/{symbol}?force=false`
 - `POST /data/refresh-all?limit=5&force=false`
 - `GET /data/usage`
+- `GET /news?limit=50&symbol=AAPL`
+- `GET /news/{symbol}`
+- `POST /news/refresh/{symbol}?force=false`
+- `POST /news/refresh-all?limit=50&force=false`
+- `GET /news/sentiment/{symbol}`
+- `GET /news/status`
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
@@ -287,9 +376,23 @@ Copia `.env.example` in `.env` e modifica i valori se necessario. Per le chiavi 
 
 Il database SQLite viene creato automaticamente in `data/investedge.db` al primo avvio del backend. Se la UI mostra `Database non inizializzato`, esegui il comando seed sopra e ricarica il frontend.
 
+## Sviluppo: lint, test, CI
+
+Il linting Python usa ruff, configurato in `ruff.toml`. Installa le dipendenze di sviluppo e lancia i controlli:
+
+```powershell
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
+backend\.venv\Scripts\ruff.exe check backend tests scripts
+backend\.venv\Scripts\ruff.exe format backend tests scripts
+```
+
+Hook pre-commit disponibili in `.pre-commit-config.yaml` (ruff + controlli base). Attiva con `pip install pre-commit && pre-commit install`.
+
+La pipeline CI in `.github/workflows/ci.yml` esegue su push e pull request: ruff + pytest sul backend e build del frontend. Il frontend non usa eslint separato: il type-check avviene con `tsc -b` durante `npm run build`.
+
 ## Prossime estensioni previste
 
-- news e sentiment reali tramite provider autorizzati
-- analisi scenario e confronti multi-strategia
-- gestione capitale e pesi avanzata
+- analisi scenario avanzata (shock di prezzo, regime change)
+- ottimizzazione pesi con matrice di correlazione reale (oltre la stima conservativa attuale)
+- code-splitting del bundle frontend
 - integrazioni broker solo in una fase futura e solo se esplicitamente abilitate

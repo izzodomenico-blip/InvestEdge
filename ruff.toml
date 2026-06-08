@@ -1,0 +1,33 @@
+# Configurazione ruff per InvestEdge (backend Python)
+target-version = "py311"
+line-length = 120
+
+extend-exclude = [
+    "backend/.venv",
+    "frontend",
+    "data",
+]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort (ordine import)
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # comprehensions
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # lunghezza riga gestita dal formatter
+    "B008",  # chiamate nei default (FastAPI Depends/Query pattern)
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["B011"]
+# Gli script manipolano sys.path prima degli import di progetto: E402 atteso.
+"**/seed_database.py" = ["E402"]
+"scripts/**" = ["E402"]
+
+[lint.isort]
+known-first-party = ["backend"]

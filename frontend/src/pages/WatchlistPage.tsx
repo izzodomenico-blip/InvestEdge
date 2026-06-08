@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import { apiGet, type Asset, type PortfolioRecommendation } from "../lib/api";
@@ -24,16 +25,6 @@ function recommendationTone(value: string | null | undefined) {
   }
   if (value === "BUY_ALLOWED") {
     return "border-emerald-300/20 bg-emerald-400/10 text-emerald-200";
-  }
-  return "border-slate-700 bg-slate-900 text-slate-300";
-}
-
-function sourceTone(asset: Asset) {
-  if (asset.is_real_data) {
-    return "border-emerald-300/20 bg-emerald-400/10 text-emerald-200";
-  }
-  if (asset.last_source === "seed") {
-    return "border-amber-300/20 bg-amber-400/10 text-amber-200";
   }
   return "border-slate-700 bg-slate-900 text-slate-300";
 }
@@ -86,16 +77,17 @@ export function WatchlistPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-sm font-medium text-cyan-300">Multi-asset</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Watchlist</h1>
-        </div>
-        <button className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Aggiungi asset
-        </button>
-      </header>
+      <PageHeader
+        eyebrow="Multi-asset / universe"
+        index="02"
+        title="Watchlist"
+        subtitle="Ogni asset del database con prezzo, segnale, score e raccomandazione contestualizzata sul portafoglio."
+        actions={
+          <PageHeaderAction icon={<Plus className="h-4 w-4" aria-hidden="true" />}>
+            Aggiungi asset
+          </PageHeaderAction>
+        }
+      />
 
       <Panel>
         <div className="mb-5 flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
@@ -120,78 +112,68 @@ export function WatchlistPage() {
         )}
 
         {!loading && !error && assets.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1560px] border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
-                  <th className="px-3 pb-3 pl-0 font-medium">Asset</th>
-                  <th className="px-3 pb-3 font-medium">Tipo</th>
-                  <th className="px-3 pb-3 font-medium">Settore</th>
-                  <th className="px-3 pb-3 text-right font-medium">Prezzo</th>
-                  <th className="px-3 pb-3 text-right font-medium">Giorno</th>
-                  <th className="px-3 pb-3 text-center font-medium">Segnale</th>
-                  <th className="px-3 pb-3 text-right font-medium">Score</th>
-                  <th className="px-3 pb-3 font-medium">Confidenza</th>
-                  <th className="px-3 pb-3 font-medium">Rischio</th>
-                  <th className="px-3 pb-3 text-right font-medium">Peso ptf</th>
-                  <th className="px-3 pb-3 font-medium">Raccomandazione</th>
-                  <th className="px-3 pb-3 font-medium">Source</th>
-                  <th className="px-3 pb-3 font-medium">Provider</th>
-                  <th className="px-3 pb-3 font-medium">Data prezzo</th>
-                  <th className="px-3 pb-3 pr-0 font-medium">Sintesi tecnica</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/80">
-                {filteredAssets.map((asset) => {
-                  const recommendation = recommendationBySymbol.get(asset.symbol);
-                  return (
-                    <tr
-                      key={asset.symbol}
-                      onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
-                      className="cursor-pointer align-top text-sm transition hover:bg-cyan-400/5"
-                    >
-                      <td className="px-3 py-4 pl-0">
-                        <p className="font-semibold text-white">{asset.symbol}</p>
-                        <p className="mt-1 text-slate-500">{asset.name}</p>
-                      </td>
-                      <td className="px-3 py-4 text-slate-300">{assetTypeLabels[asset.asset_type] ?? asset.asset_type}</td>
-                      <td className="px-3 py-4 text-slate-400">{asset.sector ?? "-"}</td>
-                      <td className="px-3 py-4 text-right font-medium text-white">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {filteredAssets.map((asset) => {
+              const recommendation = recommendationBySymbol.get(asset.symbol);
+              const change = asset.daily_change_pct ?? 0;
+              return (
+                <button
+                  key={asset.symbol}
+                  onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
+                  className="group flex flex-col gap-3 rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 text-left shadow-panel transition-all duration-200 hover:-translate-y-[2px] hover:border-cyan-300/25"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-mono text-base font-semibold text-white">{asset.symbol}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
+                    </div>
+                    {asset.signal ? <SignalBadge signal={asset.signal} size="sm" /> : null}
+                  </div>
+
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="eyebrow-muted">Prezzo</p>
+                      <p className="num mt-1 text-lg font-semibold text-white">
                         {asset.last_price == null ? "N/D" : formatCurrency(asset.last_price, asset.currency)}
-                      </td>
-                      <td className={`px-3 py-4 text-right font-semibold ${(asset.daily_change_pct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                        {asset.daily_change_pct == null ? "N/D" : formatPercent(asset.daily_change_pct)}
-                      </td>
-                      <td className="px-3 py-4 text-center">{asset.signal ? <SignalBadge signal={asset.signal} /> : "N/D"}</td>
-                      <td className="px-3 py-4 text-right text-slate-200">{asset.score == null ? "N/D" : `${asset.score.toFixed(1)}/100`}</td>
-                      <td className="px-3 py-4 text-slate-300">{asset.confidence ?? "N/D"}</td>
-                      <td className="px-3 py-4 capitalize text-slate-400">{asset.risk_level.replace("_", " ")}</td>
-                      <td className="px-3 py-4 text-right text-cyan-200">{recommendation ? `${recommendation.portfolio_weight.toFixed(2)}%` : "0.00%"}</td>
-                      <td className="px-3 py-4">
-                        <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${recommendationTone(recommendation?.final_recommendation)}`}>
-                          {recommendation?.final_recommendation ?? "HOLD"}
-                        </span>
-                        <p className="mt-2 max-w-56 truncate text-xs text-slate-500" title={recommendation?.reason}>
-                          {recommendation?.reason ?? "Nessuna posizione aperta."}
-                        </p>
-                      </td>
-                      <td className="px-3 py-4">
-                        <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${sourceTone(asset)}`}>
-                          {asset.is_real_data ? "real" : asset.last_source ?? "N/D"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-4 text-slate-300">{asset.provider ?? "Locale"}</td>
-                      <td className="px-3 py-4 text-slate-400">{asset.last_price_date ?? "N/D"}</td>
-                      <td className="max-w-80 px-3 py-4 pr-0 text-slate-400">
-                        <span className="block max-w-80 truncate" title={asset.technical_summary ?? "N/D"}>
-                          {asset.technical_summary ?? "N/D"}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="eyebrow-muted">Giorno</p>
+                      <p className={`num mt-1 text-sm font-semibold ${change >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {asset.daily_change_pct == null ? "N/D" : formatPercent(change)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="eyebrow-muted">Score</p>
+                      <p className="num mt-1 text-sm font-semibold text-cyan-200">
+                        {asset.score == null ? "N/D" : `${asset.score.toFixed(0)}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(recommendation?.final_recommendation)}`}>
+                      {recommendation?.final_recommendation ?? "HOLD"}
+                    </span>
+                    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                      {assetTypeLabels[asset.asset_type] ?? asset.asset_type}
+                    </span>
+                    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] capitalize text-slate-400">
+                      {asset.risk_level.replace("_", " ")}
+                    </span>
+                    {recommendation && recommendation.portfolio_weight > 0 && (
+                      <span className="rounded-md border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-200">
+                        in ptf {recommendation.portfolio_weight.toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+
+                  {recommendation?.reason && (
+                    <p className="line-clamp-2 text-xs text-slate-500">{recommendation.reason}</p>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
       </Panel>

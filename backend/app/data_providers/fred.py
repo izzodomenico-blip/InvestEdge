@@ -5,7 +5,6 @@ from urllib.parse import urlencode
 
 from backend.app.data_providers.base import BaseMarketDataProvider, ProviderError
 
-
 SYMBOL_TO_SERIES_ID = {
     "DGS10": "DGS10",
     "DGS2": "DGS2",
