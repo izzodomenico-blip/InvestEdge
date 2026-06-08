@@ -10,7 +10,6 @@ import httpx
 from backend.app.config import get_settings
 from backend.app.models import AssetCreate
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol
-from backend.app.services.common import now_utc
 from backend.app.services.portfolio_engine import PortfolioEngine
 
 portfolio_engine = PortfolioEngine()
@@ -190,57 +189,37 @@ def apply_import(connection: sqlite3.Connection, csv_url: str | None = None) -> 
     if not holdings:
         raise ValueError("Nessuna posizione valida da importare. Controlla il foglio.")
 
-    now = now_utc()
     created_assets = 0
-    connection.execute("SAVEPOINT gs_import")
-    try:
-        connection.execute("DELETE FROM portfolio_positions")
-        for holding in holdings:
-            asset = get_asset_by_symbol(connection, holding["symbol"])
-            if asset is None:
-                created = create_asset(
-                    connection,
-                    AssetCreate(
-                        symbol=holding["symbol"],
-                        name=holding["name"],
-                        asset_type=holding["asset_type"],
-                        currency=holding["currency"],
-                    ),
-                )
-                asset_id = created.id
-                created_assets += 1
-            else:
-                asset_id = asset.id
-
-            invested = round(holding["quantity"] * holding["average_price"], 6)
-            connection.execute(
-                """
-                INSERT INTO portfolio_positions (
-                    asset_id, symbol, quantity, average_price, invested_amount,
-                    asset_type, currency, opened_at, updated_at, notes
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    asset_id,
-                    holding["symbol"],
-                    holding["quantity"],
-                    holding["average_price"],
-                    invested,
-                    holding["asset_type"],
-                    holding["currency"],
-                    now,
-                    now,
-                    "Importato da Google Sheets",
+    items: list[dict[str, Any]] = []
+    for holding in holdings:
+        asset = get_asset_by_symbol(connection, holding["symbol"])
+        if asset is None:
+            created = create_asset(
+                connection,
+                AssetCreate(
+                    symbol=holding["symbol"],
+                    name=holding["name"],
+                    asset_type=holding["asset_type"],
+                    currency=holding["currency"],
                 ),
             )
-    except Exception:
-        connection.execute("ROLLBACK TO SAVEPOINT gs_import")
-        connection.execute("RELEASE SAVEPOINT gs_import")
-        raise
-    connection.execute("RELEASE SAVEPOINT gs_import")
+            asset_id = created.id
+            created_assets += 1
+        else:
+            asset_id = asset.id
+        items.append(
+            {
+                "asset_id": asset_id,
+                "symbol": holding["symbol"],
+                "quantity": holding["quantity"],
+                "average_price": holding["average_price"],
+                "asset_type": holding["asset_type"],
+                "currency": holding["currency"],
+                "notes": "Importato da Google Sheets",
+            }
+        )
 
-    summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=True)
+    summary = portfolio_engine.replace_positions(connection, items)
     return {
         "imported": len(holdings),
         "created_assets": created_assets,

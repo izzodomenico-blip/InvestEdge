@@ -615,6 +615,20 @@ def test_allocation_max_weight_cap(client: TestClient) -> None:
         assert item["weight_percent"] <= 30.5
 
 
+def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT", "SPY"]),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    symbols = {position["symbol"] for position in data["positions"]}
+    assert symbols == {"AAPL", "MSFT", "SPY"}
+    assert all(position["quantity"] > 0 for position in data["positions"])
+    assert data["invested_value"] > 0
+
+
 def test_allocation_invalid_symbol(client: TestClient) -> None:
     response = client.post(
         "/portfolio/allocation/plan",

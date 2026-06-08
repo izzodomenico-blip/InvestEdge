@@ -174,6 +174,44 @@ def plan_allocation(payload: AllocationPlanIn) -> AllocationPlanOut:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@router.post("/portfolio/allocation/apply", response_model=PortfolioSummaryOut)
+def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
+    try:
+        with db_session() as connection:
+            plan = allocation_engine.plan(
+                connection,
+                symbols=payload.symbols,
+                method=payload.method,
+                total_capital=payload.total_capital,
+                target_volatility=payload.target_volatility,
+                max_weight=payload.max_weight,
+                lookback_days=payload.lookback_days,
+            )
+            items = []
+            for allocation in plan["allocations"]:
+                if allocation["suggested_quantity"] <= 0 or not allocation["price"]:
+                    continue
+                asset = get_asset_by_symbol(connection, allocation["symbol"])
+                if asset is None:
+                    continue
+                items.append(
+                    {
+                        "asset_id": asset.id,
+                        "symbol": asset.symbol,
+                        "quantity": allocation["suggested_quantity"],
+                        "average_price": allocation["price"],
+                        "asset_type": asset.asset_type,
+                        "currency": asset.currency,
+                        "notes": "Creato dal pianificatore di allocazione",
+                    }
+                )
+            if not items:
+                raise ValueError("Nessuna posizione da creare: aumenta il capitale o controlla i prezzi disponibili.")
+            return portfolio_engine.replace_positions(connection, items)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.post("/backtests/run", response_model=BacktestResultOut)
 def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
     try:

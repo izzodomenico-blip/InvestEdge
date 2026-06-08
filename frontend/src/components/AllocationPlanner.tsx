@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { Layers, Scale } from "lucide-react";
+import { BriefcaseBusiness, Layers, Scale } from "lucide-react";
 
 import { Panel } from "./Panel";
 import {
@@ -30,6 +31,7 @@ const methodHints: Record<AllocationMethod, string> = {
 const sliceColors = ["#22D3EE", "#A78BFA", "#34D399", "#F59E0B", "#FB7185", "#60A5FA", "#E0B062", "#2DD4BF"];
 
 export function AllocationPlanner() {
+  const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [method, setMethod] = useState<AllocationMethod>("RISK_PARITY");
@@ -38,6 +40,8 @@ export function AllocationPlanner() {
   const [maxWeight, setMaxWeight] = useState("");
   const [plan, setPlan] = useState<AllocationPlan | null>(null);
   const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,19 +73,37 @@ export function AllocationPlanner() {
       return;
     }
     setLoading(true);
+    setApplied(null);
     try {
-      const payload: AllocationPlanInput = {
-        symbols: selected,
-        method,
-        total_capital: Number(totalCapital),
-        target_volatility: method === "VOL_TARGET" ? Number(targetVol) / 100 : null,
-        max_weight: maxWeight.trim() === "" ? null : Number(maxWeight) / 100,
-      };
-      setPlan(await apiPost<AllocationPlan>("/portfolio/allocation/plan", payload));
+      setPlan(await apiPost<AllocationPlan>("/portfolio/allocation/plan", buildPayload()));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il calcolo del piano.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function buildPayload(): AllocationPlanInput {
+    return {
+      symbols: selected,
+      method,
+      total_capital: Number(totalCapital),
+      target_volatility: method === "VOL_TARGET" ? Number(targetVol) / 100 : null,
+      max_weight: maxWeight.trim() === "" ? null : Number(maxWeight) / 100,
+    };
+  }
+
+  async function createPortfolio() {
+    setApplying(true);
+    setError(null);
+    setApplied(null);
+    try {
+      await apiPost("/portfolio/allocation/apply", buildPayload());
+      setApplied("Portafoglio creato con questo piano ✓");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Creazione portafoglio non riuscita.");
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -267,6 +289,32 @@ export function AllocationPlanner() {
                   ))}
                 </ul>
               )}
+
+              <div className="flex flex-col gap-3 rounded-xl border border-cyan-300/20 bg-cyan-400/[0.06] p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-300">
+                  Ti convince questo piano? Crealo come tuo portafoglio: l'app lo seguirà e ti dirà cosa fare giorno per giorno.
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {applied && <span className="text-xs font-semibold text-emerald-300">{applied}</span>}
+                  {applied ? (
+                    <button
+                      onClick={() => navigate("/portfolio")}
+                      className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/30 bg-cyan-400/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+                    >
+                      Vai al Portafoglio →
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void createPortfolio()}
+                      disabled={applying}
+                      className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-400/20 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/30 disabled:opacity-60"
+                    >
+                      <BriefcaseBusiness className={`h-4 w-4 ${applying ? "animate-pulse" : ""}`} aria-hidden="true" />
+                      {applying ? "Creazione..." : "Crea il mio portafoglio"}
+                    </button>
+                  )}
+                </div>
+              </div>
             </>
           ) : (
             <div className="flex h-full min-h-48 items-center justify-center rounded-lg border border-dashed border-slate-800 bg-slate-900/30 p-6 text-center text-sm text-slate-400">

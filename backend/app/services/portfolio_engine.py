@@ -87,6 +87,51 @@ class PortfolioEngine:
         self.refresh_portfolio(connection, create_snapshot=True)
         return self.get_summary(connection)
 
+    def replace_positions(
+        self,
+        connection: sqlite3.Connection,
+        items: list[dict[str, Any]],
+    ) -> PortfolioSummaryOut:
+        """Sostituisce tutte le posizioni con quelle fornite e ricalcola il portafoglio.
+
+        Ogni item richiede: asset_id, symbol, quantity, average_price.
+        Opzionali: asset_type, currency, notes. Operazione atomica (SAVEPOINT)."""
+        now = _now()
+        connection.execute("SAVEPOINT replace_positions")
+        try:
+            connection.execute("DELETE FROM portfolio_positions")
+            for item in items:
+                quantity = float(item["quantity"])
+                average_price = float(item["average_price"])
+                invested = _round(quantity * average_price)
+                connection.execute(
+                    """
+                    INSERT INTO portfolio_positions (
+                        asset_id, symbol, quantity, average_price, invested_amount,
+                        asset_type, currency, opened_at, updated_at, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["asset_id"],
+                        item["symbol"],
+                        quantity,
+                        average_price,
+                        invested,
+                        item.get("asset_type"),
+                        item.get("currency", "EUR"),
+                        now,
+                        now,
+                        item.get("notes"),
+                    ),
+                )
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT replace_positions")
+            connection.execute("RELEASE SAVEPOINT replace_positions")
+            raise
+        connection.execute("RELEASE SAVEPOINT replace_positions")
+        return self.refresh_portfolio(connection, create_snapshot=True)
+
     def _asset(self, connection: sqlite3.Connection, symbol: str) -> sqlite3.Row:
         row = connection.execute(
             """
