@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, TrendingDown, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
@@ -15,6 +15,16 @@ const assetTypeLabels: Record<string, string> = {
   bond: "Bond",
   bond_etf: "Bond ETF",
 };
+
+type Trend = "up" | "flat" | "down";
+type FilterKey = "all" | Trend;
+
+// Mappa il segnale tecnico in 3 gruppi leggibili.
+function trendOf(signal: string | null | undefined): Trend {
+  if (signal === "STRONG_BUY" || signal === "BUY") return "up";
+  if (signal === "SELL" || signal === "REDUCE") return "down";
+  return "flat";
+}
 
 function recommendationTone(value: string | null | undefined) {
   if (value?.includes("BLOCK") || value === "SELL") {
@@ -34,6 +44,7 @@ export function WatchlistPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<FilterKey>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,30 +69,45 @@ export function WatchlistPage() {
     void loadAssets();
   }, []);
 
+  const counts = useMemo(() => {
+    const acc = { up: 0, flat: 0, down: 0 };
+    for (const asset of assets) acc[trendOf(asset.signal)] += 1;
+    return acc;
+  }, [assets]);
+
   const filteredAssets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return assets;
-    }
-    return assets.filter((asset) =>
-      [asset.symbol, asset.name, asset.asset_type, asset.sector, asset.country]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(normalized)),
-    );
-  }, [assets, query]);
+    return assets
+      .filter((asset) => (filter === "all" ? true : trendOf(asset.signal) === filter))
+      .filter((asset) =>
+        !normalized
+          ? true
+          : [asset.symbol, asset.name, asset.asset_type, asset.sector, asset.country]
+              .filter(Boolean)
+              .some((value) => String(value).toLowerCase().includes(normalized)),
+      )
+      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  }, [assets, query, filter]);
 
   const recommendationBySymbol = useMemo(
     () => new Map(recommendations.map((item) => [item.symbol, item])),
     [recommendations],
   );
 
+  const filters: { key: FilterKey; label: string; count: number; active: string }[] = [
+    { key: "all", label: "Tutti", count: assets.length, active: "border-cyan-300/40 bg-cyan-400/15 text-cyan-100" },
+    { key: "up", label: "📈 Al rialzo", count: counts.up, active: "border-emerald-300/40 bg-emerald-400/15 text-emerald-100" },
+    { key: "flat", label: "Neutri", count: counts.flat, active: "border-slate-500/40 bg-slate-500/15 text-slate-100" },
+    { key: "down", label: "📉 Al ribasso", count: counts.down, active: "border-rose-300/40 bg-rose-400/15 text-rose-100" },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Multi-asset / universe"
+        eyebrow="Selezione titoli / screener"
         index="02"
         title="Watchlist"
-        subtitle="Ogni asset del database con prezzo, segnale, score e raccomandazione contestualizzata sul portafoglio."
+        subtitle="Filtra per capire su cosa il sistema vede forza (al rialzo) e su cosa vede debolezza (al ribasso). Ordinati per punteggio."
         actions={
           <PageHeaderAction icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => navigate("/universe")}>
             Aggiungi asset
@@ -89,15 +115,57 @@ export function WatchlistPage() {
         }
       />
 
+      {/* Legenda: cosa significano i colori */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="flex items-start gap-3 rounded-2xl border border-emerald-300/20 bg-emerald-400/[0.06] p-4">
+          <TrendingUp className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-100">Al rialzo (BUY)</p>
+            <p className="mt-0.5 text-xs text-slate-400">Forza tecnica: candidati all'acquisto. Score alto (≥70).</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 rounded-2xl border border-slate-600/30 bg-slate-500/[0.06] p-4">
+          <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-slate-400" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-slate-200">Neutri (HOLD)</p>
+            <p className="mt-0.5 text-xs text-slate-400">Nessun segnale netto: meglio attendere. Score medio.</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-300/20 bg-rose-400/[0.06] p-4">
+          <TrendingDown className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-rose-100">Al ribasso (SELL/REDUCE)</p>
+            <p className="mt-0.5 text-xs text-slate-400">Debolezza: da evitare o vendere se in portafoglio. Score basso (&lt;40).</p>
+          </div>
+        </div>
+      </div>
+
       <Panel>
-        <div className="mb-5 flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
-          <Search className="h-4 w-4 text-slate-500" aria-hidden="true" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
-            placeholder="Cerca ticker, ETF, crypto, bond ETF"
-          />
+        {/* Barra filtri + ricerca */}
+        <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {filters.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${
+                  filter === f.key ? f.active : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {f.label}
+                <span className="num rounded-md bg-slate-950/60 px-1.5 text-[11px]">{f.count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 lg:w-72">
+            <Search className="h-4 w-4 text-slate-500" aria-hidden="true" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+              placeholder="Cerca ticker, ETF, crypto"
+            />
+          </div>
         </div>
 
         {loading && <div className="h-48 animate-pulse rounded-lg border border-slate-800 bg-slate-900/60" />}
@@ -107,74 +175,80 @@ export function WatchlistPage() {
         {!loading && !error && assets.length === 0 && (
           <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
             <h2 className="font-semibold text-amber-100">Database non inizializzato</h2>
-            <p className="mt-2 text-sm text-slate-300">Esegui `backend\.venv\Scripts\python.exe scripts\seed_database.py --reset` e ricarica la pagina.</p>
+            <p className="mt-2 text-sm text-slate-300">Esegui il seed e ricarica la pagina.</p>
           </div>
         )}
 
         {!loading && !error && assets.length > 0 && (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {filteredAssets.map((asset) => {
-              const recommendation = recommendationBySymbol.get(asset.symbol);
-              const change = asset.daily_change_pct ?? 0;
-              return (
-                <button
-                  key={asset.symbol}
-                  onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
-                  className="group flex flex-col gap-3 rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 text-left shadow-panel transition-all duration-200 hover:-translate-y-[2px] hover:border-cyan-300/25"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-mono text-base font-semibold text-white">{asset.symbol}</p>
-                      <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
-                    </div>
-                    {asset.signal ? <SignalBadge signal={asset.signal} size="sm" /> : null}
-                  </div>
+          <>
+            {filteredAssets.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-400">Nessun asset in questo gruppo.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {filteredAssets.map((asset) => {
+                  const recommendation = recommendationBySymbol.get(asset.symbol);
+                  const change = asset.daily_change_pct ?? 0;
+                  return (
+                    <button
+                      key={asset.symbol}
+                      onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
+                      className="group flex flex-col gap-3 rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 text-left shadow-panel transition-all duration-200 hover:-translate-y-[2px] hover:border-cyan-300/25"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-mono text-base font-semibold text-white">{asset.symbol}</p>
+                          <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
+                        </div>
+                        {asset.signal ? <SignalBadge signal={asset.signal} size="sm" /> : null}
+                      </div>
 
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <p className="eyebrow-muted">Prezzo</p>
-                      <p className="num mt-1 text-lg font-semibold text-white">
-                        {asset.last_price == null ? "N/D" : formatCurrency(asset.last_price, asset.currency)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="eyebrow-muted">Giorno</p>
-                      <p className={`num mt-1 text-sm font-semibold ${change >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                        {asset.daily_change_pct == null ? "N/D" : formatPercent(change)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="eyebrow-muted">Score</p>
-                      <p className="num mt-1 text-sm font-semibold text-cyan-200">
-                        {asset.score == null ? "N/D" : `${asset.score.toFixed(0)}`}
-                      </p>
-                    </div>
-                  </div>
+                      <div className="flex items-end justify-between">
+                        <div>
+                          <p className="eyebrow-muted">Prezzo</p>
+                          <p className="num mt-1 text-lg font-semibold text-white">
+                            {asset.last_price == null ? "N/D" : formatCurrency(asset.last_price, asset.currency)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="eyebrow-muted">Giorno</p>
+                          <p className={`num mt-1 text-sm font-semibold ${change >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                            {asset.daily_change_pct == null ? "N/D" : formatPercent(change)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="eyebrow-muted">Score</p>
+                          <p className="num mt-1 text-sm font-semibold text-cyan-200">
+                            {asset.score == null ? "N/D" : `${asset.score.toFixed(0)}`}
+                          </p>
+                        </div>
+                      </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(recommendation?.final_recommendation)}`}>
-                      {recommendation?.final_recommendation ?? "HOLD"}
-                    </span>
-                    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
-                      {assetTypeLabels[asset.asset_type] ?? asset.asset_type}
-                    </span>
-                    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] capitalize text-slate-400">
-                      {asset.risk_level.replace("_", " ")}
-                    </span>
-                    {recommendation && recommendation.portfolio_weight > 0 && (
-                      <span className="rounded-md border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-200">
-                        in ptf {recommendation.portfolio_weight.toFixed(0)}%
-                      </span>
-                    )}
-                  </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(recommendation?.final_recommendation)}`}>
+                          {recommendation?.final_recommendation ?? "HOLD"}
+                        </span>
+                        <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                          {assetTypeLabels[asset.asset_type] ?? asset.asset_type}
+                        </span>
+                        <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] capitalize text-slate-400">
+                          {asset.risk_level.replace("_", " ")}
+                        </span>
+                        {recommendation && recommendation.portfolio_weight > 0 && (
+                          <span className="rounded-md border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-200">
+                            in ptf {recommendation.portfolio_weight.toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
 
-                  {recommendation?.reason && (
-                    <p className="line-clamp-2 text-xs text-slate-500">{recommendation.reason}</p>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+                      {recommendation?.reason && (
+                        <p className="line-clamp-2 text-xs text-slate-500">{recommendation.reason}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </Panel>
     </div>

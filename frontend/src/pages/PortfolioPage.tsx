@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, TrendingUp } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -63,6 +63,10 @@ export function PortfolioPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showReset, setShowReset] = useState(false);
+  const [resetCash, setResetCash] = useState("10000");
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   async function loadPortfolio() {
     setLoading(true);
@@ -99,6 +103,26 @@ export function PortfolioPage() {
       setError(err instanceof Error ? err.message : "Errore durante l'aggiornamento del portafoglio.");
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function resetPortfolio() {
+    const cash = Number(resetCash);
+    if (!(cash > 0)) {
+      setResetMsg("Inserisci un capitale maggiore di zero.");
+      return;
+    }
+    setResetting(true);
+    setResetMsg(null);
+    try {
+      await apiPost("/portfolio/init", { initial_cash: cash });
+      setShowReset(false);
+      setResetMsg("Portafoglio azzerato: posizioni e operazioni cancellate, liquidità reimpostata.");
+      await loadPortfolio();
+    } catch (err) {
+      setResetMsg(err instanceof Error ? err.message : "Azzeramento non riuscito.");
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -176,16 +200,62 @@ export function PortfolioPage() {
           </>
         }
         actions={
-          <PageHeaderAction
-            variant="primary"
-            onClick={() => void refreshPortfolio()}
-            disabled={refreshing}
-            icon={<RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />}
-          >
-            Aggiorna prezzi
-          </PageHeaderAction>
+          <>
+            <PageHeaderAction
+              onClick={() => setShowReset((v) => !v)}
+              icon={<RotateCcw className="h-4 w-4" aria-hidden="true" />}
+            >
+              Ricomincia
+            </PageHeaderAction>
+            <PageHeaderAction
+              variant="primary"
+              onClick={() => void refreshPortfolio()}
+              disabled={refreshing}
+              icon={<RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />}
+            >
+              Aggiorna prezzi
+            </PageHeaderAction>
+          </>
         }
       />
+
+      {resetMsg && (
+        <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">{resetMsg}</div>
+      )}
+
+      {showReset && (
+        <Panel eyebrow="Reset" title="Ricomincia il portafoglio da capo">
+          <p className="text-sm text-slate-400">
+            Cancella <span className="text-rose-200">tutte le posizioni e le operazioni</span> simulate e reimposta la liquidità.
+            Utile per iniziare una nuova simulazione pulita. Nessun ordine reale viene toccato.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Capitale virtuale di partenza (€)</span>
+              <input
+                type="number"
+                value={resetCash}
+                onChange={(e) => setResetCash(e.target.value)}
+                className="block w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60 sm:w-56"
+              />
+            </label>
+            <button
+              onClick={() => void resetPortfolio()}
+              disabled={resetting}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:opacity-60"
+            >
+              <RotateCcw className={`h-4 w-4 ${resetting ? "animate-spin" : ""}`} aria-hidden="true" />
+              {resetting ? "Azzero..." : "Azzera e riparti"}
+            </button>
+            <button
+              onClick={() => setShowReset(false)}
+              className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800"
+            >
+              Annulla
+            </button>
+          </div>
+        </Panel>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} delta="Cash + posizioni" tone="cyan" icon={BadgeDollarSign} />
