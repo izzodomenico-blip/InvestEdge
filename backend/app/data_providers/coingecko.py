@@ -25,7 +25,9 @@ class CoinGeckoProvider(BaseMarketDataProvider):
         self.daily_limit = self.settings.coingecko_daily_limit
 
     def api_key_configured(self) -> bool:
-        return bool(self.settings.coingecko_api_key)
+        # L'API pubblica CoinGecko funziona anche senza key (free, ~365 giorni).
+        # Con una demo key si ottengono limiti piu alti, ma non e' obbligatoria.
+        return True
 
     def supports_asset_type(self, asset_type: str) -> bool:
         return asset_type.lower() == "crypto"
@@ -34,7 +36,9 @@ class CoinGeckoProvider(BaseMarketDataProvider):
         coin_id = SYMBOL_TO_COIN_ID.get(symbol.upper())
         if not coin_id:
             raise ProviderError("Crypto non mappata su CoinGecko.")
-        query = urlencode({"vs_currency": "usd", "days": "max", "interval": "daily"})
+        # days>90 senza "interval" -> granularita giornaliera automatica (free).
+        # "days=max" e "interval=daily" sono feature a pagamento.
+        query = urlencode({"vs_currency": "usd", "days": "365"})
         return f"{self.base_url}/{coin_id}/market_chart?{query}"
 
     def get_daily_prices(self, symbol: str, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
@@ -43,7 +47,11 @@ class CoinGeckoProvider(BaseMarketDataProvider):
         if cached is not None:
             return self.normalize_prices(cached, symbol), True
 
-        headers = {"x-cg-demo-api-key": self.settings.coingecko_api_key or ""}
+        headers = (
+            {"x-cg-demo-api-key": self.settings.coingecko_api_key}
+            if self.settings.coingecko_api_key
+            else None
+        )
         raw_response = self.fetch_json(request_url, headers=headers)
         self.save_to_cache(self.endpoint, symbol, request_url, raw_response)
         return self.normalize_prices(raw_response, symbol), False
