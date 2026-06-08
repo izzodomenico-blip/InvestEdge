@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   Gauge,
   Newspaper,
+  Receipt,
   Repeat2,
   Search,
   Siren,
@@ -54,6 +55,7 @@ const sections: NavSection[] = [
     items: [
       { to: "/ml", label: "Machine Learning", icon: Brain },
       { to: "/scenarios", label: "Scenari", icon: Siren },
+      { to: "/tax", label: "Centro fiscale", icon: Receipt },
       { to: "/news", label: "News", icon: Newspaper },
       { to: "/backtest", label: "Backtest", icon: BarChart3 },
       { to: "/data", label: "Dati", icon: Database },

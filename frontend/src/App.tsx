@@ -11,6 +11,7 @@ import { NewsPage } from "./pages/NewsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { ScenarioPage } from "./pages/ScenarioPage";
 import { SimulatorPage } from "./pages/SimulatorPage";
+import { TaxCenterPage } from "./pages/TaxCenterPage";
 import { TodayPage } from "./pages/TodayPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/analysis" element={<AnalysisPage />} />
         <Route path="/ml" element={<MachineLearningPage />} />
         <Route path="/scenarios" element={<ScenarioPage />} />
+        <Route path="/tax" element={<TaxCenterPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/data" element={<DataCenterPage />} />

@@ -54,6 +54,7 @@ from backend.app.models import (
     SignalOut,
     SimulatedOrderIn,
     SimulatedOrderOut,
+    TaxReportOut,
     TechnicalAnalysisOut,
     WalkForwardIn,
     WalkForwardOut,
@@ -77,6 +78,7 @@ from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
+from backend.app.services.tax_service import compute_tax_report
 from backend.app.services.technical_analysis_service import get_technical_analysis
 from backend.scripts.seed_database import seed_database
 
@@ -224,6 +226,12 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
             return portfolio_engine.replace_positions(connection, items)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/tax/report", response_model=TaxReportOut)
+def tax_report(year: int | None = Query(default=None, ge=1990, le=2100)) -> TaxReportOut:
+    with db_session() as connection:
+        return TaxReportOut(**compute_tax_report(connection, tax_year=year))
 
 
 @router.post("/scenarios/run", response_model=ScenarioRunOut)

@@ -13,6 +13,7 @@ from backend.app.services.common import (
 )
 from backend.app.services.google_sheets_import_service import parse_holdings, parse_number
 from backend.app.services.risk_engine import RiskEngine
+from backend.app.services.tax_service import compute_tax_report
 
 # ----------------------------- common.signal_from_score -----------------------------
 
@@ -320,3 +321,62 @@ def test_import_parse_holdings_missing_columns() -> None:
     result = parse_holdings("foo,bar\n1,2\n")
     assert result["rows_valid"] == 0
     assert any("mancanti" in e.lower() for e in result["errors"])
+
+
+# ----------------------------- Tax center (FIFO) -----------------------------
+
+import sqlite3 as _sqlite3  # noqa: E402
+
+from backend.app.database import SCHEMA  # noqa: E402
+
+
+def _tax_db() -> _sqlite3.Connection:
+    conn = _sqlite3.connect(":memory:")
+    conn.row_factory = _sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT INTO assets (id, symbol, name, asset_type, risk_level) VALUES (1, 'AAPL', 'Apple', 'stock', 'medium')")
+    conn.execute("INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (1, '2026-05-01', 200, 1)")
+    return conn
+
+
+def _order(conn: _sqlite3.Connection, side: str, qty: float, price: float, date: str, fees: float = 0.0) -> None:
+    conn.execute(
+        "INSERT INTO simulated_orders (asset_id, symbol, order_type, side, quantity, price, fees, order_date) "
+        "VALUES (1, 'AAPL', ?, ?, ?, ?, ?, ?)",
+        (side, side, qty, price, fees, date),
+    )
+
+
+def test_tax_fifo_gain() -> None:
+    conn = _tax_db()
+    _order(conn, "BUY", 10, 100, "2025-03-01")
+    _order(conn, "BUY", 10, 120, "2025-06-01")
+    _order(conn, "SELL", 15, 180, "2026-02-01")
+    report = compute_tax_report(conn)
+    event = report["events"][0]
+    assert event["cost_basis"] == 1600.0  # 10*100 + 5*120
+    assert event["proceeds"] == 2700.0
+    assert event["gain"] == 1100.0
+    year = next(y for y in report["years"] if y["tax_year"] == 2026)
+    assert year["tax_due"] == 286.0  # 26% di 1100
+    assert report["open_lots"][0]["quantity"] == 5.0
+    conn.close()
+
+
+def test_tax_loss_carryforward() -> None:
+    conn = _tax_db()
+    # 2025: vendita in perdita
+    _order(conn, "BUY", 10, 200, "2025-01-01")
+    _order(conn, "SELL", 10, 150, "2025-06-01")  # perdita -500
+    # 2026: vendita in utile, compensata dalla perdita riportata
+    _order(conn, "BUY", 10, 100, "2026-01-01")
+    _order(conn, "SELL", 10, 160, "2026-06-01")  # utile +600
+    report = compute_tax_report(conn)
+    y2025 = next(y for y in report["years"] if y["tax_year"] == 2025)
+    y2026 = next(y for y in report["years"] if y["tax_year"] == 2026)
+    assert y2025["tax_due"] == 0.0
+    assert y2025["carryforward_remaining"] == 500.0
+    # 2026: 600 utile - 500 riportato = 100 tassabile -> 26% = 26
+    assert y2026["carryforward_used"] == 500.0
+    assert y2026["tax_due"] == 26.0
+    conn.close()

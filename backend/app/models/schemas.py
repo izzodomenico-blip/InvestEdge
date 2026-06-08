@@ -380,6 +380,53 @@ class RebalanceOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class TaxRealizedEventOut(BaseModel):
+    symbol: str
+    asset_type: str | None = None
+    category: str
+    sell_date: str
+    tax_year: int
+    quantity: float
+    proceeds: float
+    cost_basis: float
+    gain: float
+    rate: float
+    holding_days: int
+
+
+class TaxYearSummaryOut(BaseModel):
+    tax_year: int
+    total_gains: float
+    total_losses: float
+    net_realized: float
+    carryforward_used: float
+    carryforward_remaining: float
+    tax_due: float
+
+
+class TaxOpenLotOut(BaseModel):
+    symbol: str
+    asset_type: str | None = None
+    quantity: float
+    cost_basis: float
+    current_value: float | None = None
+    unrealized_gain: float | None = None
+
+
+class TaxReportOut(BaseModel):
+    base_currency: str
+    standard_rate: float
+    bond_rate: float
+    lot_method: str
+    total_tax_due: float
+    total_realized_net: float
+    loss_carryforward: float
+    years: list[TaxYearSummaryOut]
+    events: list[TaxRealizedEventOut]
+    open_lots: list[TaxOpenLotOut]
+    disclaimer: str
+
+
 class ImportApplyOut(BaseModel):
     imported: int
     created_assets: int

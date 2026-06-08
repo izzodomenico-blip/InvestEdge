@@ -223,6 +223,38 @@ def test_ml_predict_without_model_fails(client: TestClient) -> None:
     assert "modello" in response.json()["detail"].lower()
 
 
+def test_tax_report_after_buy_sell(client: TestClient) -> None:
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0},
+    )
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 100, "fees": 0})
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 5, "price": 140, "fees": 0})
+
+    response = client.get("/tax/report")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["lot_method"] == "FIFO"
+    assert data["standard_rate"] == 26.0
+    event = next(e for e in data["events"] if e["symbol"] == "AAPL")
+    assert event["gain"] == 200.0  # 5 * (140 - 100)
+    assert data["total_tax_due"] >= 52.0 - 1e-6  # 26% di 200 = 52
+
+
+def test_tax_report_empty(client: TestClient) -> None:
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0},
+    )
+    response = client.get("/tax/report")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["events"] == []
+    assert data["total_tax_due"] == 0.0
+
+
 def test_dashboard_after_seed(client: TestClient) -> None:
     response = client.get("/dashboard")
 

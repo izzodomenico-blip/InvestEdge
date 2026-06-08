@@ -625,6 +625,53 @@ export type RebalanceResult = {
   notes: string[];
 };
 
+export type TaxRealizedEvent = {
+  symbol: string;
+  asset_type: string | null;
+  category: string;
+  sell_date: string;
+  tax_year: number;
+  quantity: number;
+  proceeds: number;
+  cost_basis: number;
+  gain: number;
+  rate: number;
+  holding_days: number;
+};
+
+export type TaxYearSummary = {
+  tax_year: number;
+  total_gains: number;
+  total_losses: number;
+  net_realized: number;
+  carryforward_used: number;
+  carryforward_remaining: number;
+  tax_due: number;
+};
+
+export type TaxOpenLot = {
+  symbol: string;
+  asset_type: string | null;
+  quantity: number;
+  cost_basis: number;
+  current_value: number | null;
+  unrealized_gain: number | null;
+};
+
+export type TaxReport = {
+  base_currency: string;
+  standard_rate: number;
+  bond_rate: number;
+  lot_method: string;
+  total_tax_due: number;
+  total_realized_net: number;
+  loss_carryforward: number;
+  years: TaxYearSummary[];
+  events: TaxRealizedEvent[];
+  open_lots: TaxOpenLot[];
+  disclaimer: string;
+};
+
 export type AllocationMethod = "EQUAL_WEIGHT" | "RISK_PARITY" | "SCORE_WEIGHTED" | "VOL_TARGET";
 
 export type AllocationPlanInput = {
