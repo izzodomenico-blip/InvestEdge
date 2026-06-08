@@ -11,6 +11,7 @@ import httpx
 from backend.app.config import get_settings
 from backend.app.data_providers import MissingApiKey, ProviderError, RateLimitExceeded, RealDataDisabled
 from backend.app.data_providers.alpha_vantage_news import AlphaVantageNewsProvider
+from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
 from backend.app.data_providers.mock_news_provider import NewsProviderMock
 from backend.app.data_providers.news_base import BaseNewsProvider
 from backend.app.services.common import (
@@ -77,16 +78,28 @@ class NewsEngine:
             (symbol,),
         ).fetchone()
 
-    def _real_provider(self, connection: sqlite3.Connection) -> AlphaVantageNewsProvider:
-        return AlphaVantageNewsProvider(get_settings(), connection)
+    def _real_provider(self, connection: sqlite3.Connection) -> BaseNewsProvider | None:
+        # Preferenza: Finnhub (quota dedicata, non intacca Alpha Vantage), poi Alpha Vantage.
+        settings = get_settings()
+        if settings.finnhub_api_key:
+            return FinnhubNewsProvider(settings, connection)
+        if settings.alpha_vantage_api_key:
+            return AlphaVantageNewsProvider(settings, connection)
+        return None
 
     def _mock_provider(self, connection: sqlite3.Connection) -> NewsProviderMock:
         return NewsProviderMock(get_settings(), connection)
 
+    def _has_real_news_key(self) -> bool:
+        settings = get_settings()
+        return bool(settings.finnhub_api_key or settings.alpha_vantage_api_key)
+
     def _provider_for_refresh(self, connection: sqlite3.Connection) -> BaseNewsProvider:
         settings = get_settings()
-        if settings.enable_real_news and settings.alpha_vantage_api_key:
-            return self._real_provider(connection)
+        if settings.enable_real_news:
+            provider = self._real_provider(connection)
+            if provider is not None:
+                return provider
         return self._mock_provider(connection)
 
     def refresh_news_for_symbol(
@@ -104,7 +117,7 @@ class NewsEngine:
         used_fallback = provider.provider_name == "mock_news"
         message = "News demo/locali aggiornate."
 
-        if settings.enable_real_news and not settings.alpha_vantage_api_key:
+        if settings.enable_real_news and not self._has_real_news_key():
             message = "Provider news non configurato, uso news demo/locali."
         elif not settings.enable_real_news:
             message = "News reali disattivate. Stai usando news demo/locali."
@@ -324,7 +337,7 @@ class NewsEngine:
 
     def get_status(self, connection: sqlite3.Connection) -> dict[str, Any]:
         settings = get_settings()
-        real_provider = self._real_provider(connection)
+        real_provider = self._real_provider(connection) or AlphaVantageNewsProvider(settings, connection)
         mock_provider = self._mock_provider(connection)
         usage = self._usage_for_provider(connection, real_provider.provider_name)
         latest = connection.execute(

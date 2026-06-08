@@ -918,6 +918,34 @@ def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:
         assert "symbol=AAPL" in provider._request_url("AAPL")
 
 
+def test_finnhub_news_provider_normalizes(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
+    from backend.app.database import db_session
+
+    sample = {
+        "articles": [
+            {
+                "headline": "Company beats earnings and raises guidance",
+                "summary": "Strong profit growth and upgrade",
+                "url": "https://example.com/a",
+                "source": "Reuters",
+                "datetime": 1_700_000_000,
+            },
+            {"headline": "", "summary": "no title -> skipped"},
+        ]
+    }
+    with db_session() as connection:
+        provider = FinnhubNewsProvider(get_settings(), connection)
+        items = provider.normalize_news(sample, "AAPL")
+
+    assert len(items) == 1
+    assert items[0]["provider"] == "finnhub_news"
+    assert items[0]["title"].startswith("Company beats")
+    assert items[0]["published_at"] is not None
+    assert -1.0 <= items[0]["sentiment_score"] <= 1.0
+
+
 def test_provider_registry(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.provider_registry import ProviderRegistry

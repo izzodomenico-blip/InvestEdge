@@ -43,6 +43,7 @@ class Settings:
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
     enable_real_news: bool = False
+    finnhub_api_key: str | None = None
     news_cache_ttl_hours: int = 6
     news_daily_limit: int = 20
     news_sentiment_weight: float = 5.0
@@ -86,6 +87,7 @@ class Settings:
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),
             enable_real_news=os.getenv("ENABLE_REAL_NEWS", "false").lower() == "true",
+            finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
             news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
             news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
             news_sentiment_weight=float(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),
