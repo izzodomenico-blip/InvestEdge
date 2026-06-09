@@ -90,11 +90,15 @@ function ActionCard({
   action,
   price,
   currency,
+  assetType,
+  riskLevel,
   onTraded,
 }: {
   action: ActionItem;
   price: number | null;
   currency: string;
+  assetType?: string;
+  riskLevel?: string;
   onTraded: () => void;
 }) {
   const style = styles[action.type] ?? styles.WATCH;
@@ -122,7 +126,7 @@ function ActionCard({
               {priorityLabel[action.priority] ?? action.priority}
             </span>
             {action.type === "BUY" && action.symbol && (
-              <TradeButton symbol={action.symbol} price={price} currency={currency} side="BUY" onDone={onTraded} />
+              <TradeButton symbol={action.symbol} price={price} currency={currency} assetType={assetType} riskLevel={riskLevel} side="BUY" onDone={onTraded} />
             )}
             {style.cta && action.type !== "BUY" && action.symbol && (
               <Link
@@ -268,6 +272,8 @@ export function TodayPage() {
               action={action}
               price={asset?.last_price ?? null}
               currency={asset?.currency ?? "EUR"}
+              assetType={asset?.asset_type}
+              riskLevel={asset?.risk_level}
               onTraded={() => void load()}
             />
           );

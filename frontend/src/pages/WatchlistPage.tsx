@@ -282,7 +282,7 @@ export function WatchlistPage() {
                       )}
 
                       <div className="mt-1 flex items-center gap-2 border-t border-slate-800/60 pt-3">
-                        <TradeButton symbol={asset.symbol} price={asset.last_price} currency={asset.currency} />
+                        <TradeButton symbol={asset.symbol} price={asset.last_price} currency={asset.currency} assetType={asset.asset_type} riskLevel={asset.risk_level} />
                         <span className="text-[11px] text-slate-600">aggiungi al portafoglio simulato</span>
                       </div>
                     </div>

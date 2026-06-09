@@ -322,7 +322,7 @@ export function PortfolioPage() {
                   {recommendation?.reason && <p className="mt-1 text-xs text-slate-500">{recommendation.reason}</p>}
 
                   <div className="mt-3 flex items-center gap-2 border-t border-slate-800/60 pt-3">
-                    <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
+                    <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
                     <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SELL" maxQuantity={position.quantity} onDone={() => void loadPortfolio()} />
                   </div>
                 </article>
