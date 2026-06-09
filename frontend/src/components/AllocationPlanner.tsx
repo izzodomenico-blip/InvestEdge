@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { BriefcaseBusiness, Layers, Scale, Shuffle } from "lucide-react";
 
@@ -33,6 +33,8 @@ const sliceColors = ["#22D3EE", "#A78BFA", "#34D399", "#F59E0B", "#FB7185", "#60
 
 export function AllocationPlanner() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [method, setMethod] = useState<AllocationMethod>("RISK_PARITY");
@@ -52,11 +54,22 @@ export function AllocationPlanner() {
       try {
         const data = await apiGet<Asset[]>("/assets");
         setAssets(data);
-        setSelected(data.slice(0, 5).map((asset) => asset.symbol));
+        const fromUrl = (searchParams.get("symbols") ?? "")
+          .split(",")
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean);
+        const preset = data.filter((a) => fromUrl.includes(a.symbol.toUpperCase())).map((a) => a.symbol);
+        if (preset.length > 0) {
+          setSelected(preset);
+          setTimeout(() => rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+        } else {
+          setSelected(data.slice(0, 5).map((asset) => asset.symbol));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Errore caricamento asset.");
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggle(symbol: string) {
@@ -145,6 +158,7 @@ export function AllocationPlanner() {
   }, [plan]);
 
   return (
+    <div ref={rootRef}>
     <Panel
       eyebrow="Gestione capitale"
       title="Pianificatore allocazione"
@@ -381,5 +395,6 @@ export function AllocationPlanner() {
         </div>
       </div>
     </Panel>
+    </div>
   );
 }

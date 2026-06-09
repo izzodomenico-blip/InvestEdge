@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search, TrendingDown, TrendingUp } from "lucide-react";
+import { Check, Plus, Search, TrendingDown, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
@@ -45,8 +45,23 @@ export function WatchlistPage() {
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  function toggleSel(symbol: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
+  }
+
+  function createPlan() {
+    if (selected.size === 0) return;
+    navigate(`/portfolio?symbols=${[...selected].join(",")}`);
+  }
 
   useEffect(() => {
     async function loadAssets() {
@@ -189,15 +204,36 @@ export function WatchlistPage() {
                   const recommendation = recommendationBySymbol.get(asset.symbol);
                   const change = asset.daily_change_pct ?? 0;
                   return (
-                    <button
+                    <div
                       key={asset.symbol}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => navigate(`/analysis?symbol=${asset.symbol}`)}
-                      className="group flex flex-col gap-3 rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 text-left shadow-panel transition-all duration-200 hover:-translate-y-[2px] hover:border-cyan-300/25"
+                      className={`group flex cursor-pointer flex-col gap-3 rounded-2xl border bg-slate-950/55 p-4 text-left shadow-panel transition-all duration-200 hover:-translate-y-[2px] hover:border-cyan-300/25 ${
+                        selected.has(asset.symbol) ? "border-cyan-300/50 ring-1 ring-cyan-300/30" : "border-slate-800/60"
+                      }`}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-mono text-base font-semibold text-white">{asset.symbol}</p>
-                          <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
+                        <div className="flex min-w-0 items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSel(asset.symbol);
+                            }}
+                            aria-label={`Seleziona ${asset.symbol}`}
+                            className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition ${
+                              selected.has(asset.symbol)
+                                ? "border-cyan-300 bg-cyan-400/20 text-cyan-200"
+                                : "border-slate-600 text-transparent hover:border-cyan-300/50"
+                            }`}
+                          >
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          <div className="min-w-0">
+                            <p className="font-mono text-base font-semibold text-white">{asset.symbol}</p>
+                            <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
+                          </div>
                         </div>
                         {asset.signal ? <SignalBadge signal={asset.signal} size="sm" /> : null}
                       </div>
@@ -243,7 +279,7 @@ export function WatchlistPage() {
                       {recommendation?.reason && (
                         <p className="line-clamp-2 text-xs text-slate-500">{recommendation.reason}</p>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -251,6 +287,25 @@ export function WatchlistPage() {
           </>
         )}
       </Panel>
+
+      {selected.size > 0 && (
+        <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4">
+          <div className="flex items-center gap-3 rounded-full border border-cyan-300/30 bg-slate-900/95 px-5 py-3 shadow-xl backdrop-blur">
+            <span className="text-sm text-slate-200">
+              <b className="text-cyan-200">{selected.size}</b> selezionati
+            </span>
+            <button onClick={() => setSelected(new Set())} className="text-xs text-slate-400 transition hover:text-slate-200">
+              Deseleziona
+            </button>
+            <button
+              onClick={createPlan}
+              className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/40 bg-cyan-400/20 px-4 py-1.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/30"
+            >
+              Crea piano con questi →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
