@@ -413,6 +413,14 @@ class TaxOpenLotOut(BaseModel):
     unrealized_gain: float | None = None
 
 
+class BackupOut(BaseModel):
+    file: str | None = None
+    size_bytes: int | None = None
+    created_at: str | None = None
+    created: bool = True
+    reason: str | None = None
+
+
 class ReportSummaryOut(BaseModel):
     positions_count: int
     orders_count: int

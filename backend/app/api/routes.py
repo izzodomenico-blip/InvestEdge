@@ -21,6 +21,7 @@ from backend.app.models import (
     BacktestResultOut,
     BacktestRunIn,
     BacktestSummaryOut,
+    BackupOut,
     DashboardOut,
     DataRefreshAllOut,
     DataRefreshResultOut,
@@ -72,6 +73,7 @@ from backend.app.services.alert_service import (
 from backend.app.services.allocation_engine import AllocationEngine
 from backend.app.services.assets_service import create_asset, delete_asset, get_asset_by_symbol, list_assets
 from backend.app.services.backtest_engine import BacktestEngine
+from backend.app.services.backup_service import create_backup, list_backups
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
@@ -246,6 +248,16 @@ def _csv_response(content: str, filename: str) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/backups", response_model=list[BackupOut])
+def get_backups() -> list[BackupOut]:
+    return [BackupOut(**item) for item in list_backups()]
+
+
+@router.post("/backups/create", response_model=BackupOut)
+def post_backup() -> BackupOut:
+    return BackupOut(**create_backup(reason="manual"))
 
 
 @router.get("/reports/summary", response_model=ReportSummaryOut)

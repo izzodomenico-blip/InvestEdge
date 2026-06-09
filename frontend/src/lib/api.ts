@@ -856,6 +856,14 @@ export function apiUrl(path: string): string {
   return `${API_URL}${path}`;
 }
 
+export type Backup = {
+  file: string | null;
+  size_bytes: number | null;
+  created_at: string | null;
+  created?: boolean;
+  reason?: string | null;
+};
+
 export type ReportSummary = {
   positions_count: number;
   orders_count: number;

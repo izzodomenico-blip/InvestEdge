@@ -144,6 +144,10 @@ L'endpoint `POST /import/google-sheets/apply` (e `/preview`) importa le posizion
 
 L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
 
+## Backup / Archivio
+
+Copia di sicurezza del database SQLite con l'API nativa `Connection.backup` (consistente anche a DB in uso). Backup **automatico a ogni avvio** in `data/backups/` (gitignored), rotazione delle ultime 10 copie. Endpoint: `POST /backups/create`, `GET /backups`. Bottone "Backup ora" ed elenco copie nel Data Center.
+
 ## Reports / Export
 
 Esportazione in CSV (apribile con Excel/Google Sheets) di portafoglio, operazioni e report fiscale. Endpoint: `GET /reports/summary` (panoramica), `GET /reports/portfolio.csv`, `GET /reports/orders.csv`, `GET /reports/tax.csv` (download con `Content-Disposition`). Pagina frontend "Reports".

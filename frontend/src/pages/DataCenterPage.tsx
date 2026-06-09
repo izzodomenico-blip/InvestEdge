@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Database, KeyRound, RefreshCw, Server, ShieldCheck } from "lucide-react";
+import { Database, DatabaseBackup, HardDriveDownload, KeyRound, RefreshCw, Server, ShieldCheck } from "lucide-react";
 
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
@@ -8,10 +8,17 @@ import {
   apiGet,
   apiPost,
   type Asset,
+  type Backup,
   type DataRefreshAllResult,
   type DataRefreshResult,
   type DataStatus,
 } from "../lib/api";
+
+function formatSize(bytes: number | null): string {
+  if (!bytes) return "—";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function modeTone(mode: string) {
   if (mode === "REAL") {
@@ -41,6 +48,31 @@ export function DataCenterPage() {
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [backups, setBackups] = useState<Backup[]>([]);
+  const [backingUp, setBackingUp] = useState(false);
+
+  async function loadBackups() {
+    try {
+      setBackups(await apiGet<Backup[]>("/backups"));
+    } catch {
+      // best-effort
+    }
+  }
+
+  async function createBackupNow() {
+    setBackingUp(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await apiPost<Backup>("/backups/create");
+      setMessage(result.created ? `Backup creato: ${result.file}` : "Backup non creato (database vuoto).");
+      await loadBackups();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Backup non riuscito.");
+    } finally {
+      setBackingUp(false);
+    }
+  }
 
   async function loadDataCenter() {
     setLoading(true);
@@ -94,6 +126,7 @@ export function DataCenterPage() {
 
   useEffect(() => {
     void loadDataCenter();
+    void loadBackups();
   }, []);
 
   const apiUsage = useMemo(() => status?.api_usage ?? [], [status]);
@@ -162,6 +195,49 @@ export function DataCenterPage() {
           {message}
         </div>
       )}
+
+      <Panel
+        eyebrow="Archivio sicuro"
+        title="Backup del database"
+        action={
+          <PageHeaderAction
+            onClick={() => void createBackupNow()}
+            disabled={backingUp}
+            icon={<HardDriveDownload className={`h-4 w-4 ${backingUp ? "animate-pulse" : ""}`} aria-hidden="true" />}
+          >
+            {backingUp ? "Backup..." : "Backup ora"}
+          </PageHeaderAction>
+        }
+      >
+        <p className="text-sm text-slate-400">
+          Una copia di sicurezza del tuo portafoglio e di tutti i dati viene salvata <b>automaticamente a ogni avvio</b> dell'app
+          in <code className="text-slate-300">data/backups/</code>. Vengono conservate le ultime 10 copie. Puoi crearne una anche ora.
+        </p>
+
+        <div className="mt-4 space-y-2">
+          {backups.length === 0 ? (
+            <p className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 text-sm text-slate-500">
+              Nessun backup ancora. Riavvia l'app o premi "Backup ora".
+            </p>
+          ) : (
+            backups.map((backup) => (
+              <div
+                key={backup.file ?? Math.random()}
+                className="flex items-center justify-between rounded-lg border border-slate-800/70 bg-slate-950/55 px-3 py-2.5"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <DatabaseBackup className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
+                  <span className="truncate font-mono text-xs text-slate-200">{backup.file}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs text-slate-500">
+                  <span>{backup.created_at?.replace("T", " ") ?? "—"}</span>
+                  <span className="num">{formatSize(backup.size_bytes)}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
 
       {status && !status.enable_real_data && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">

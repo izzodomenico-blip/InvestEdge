@@ -17,6 +17,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
     monkeypatch.setenv("COINGECKO_API_KEY", "")
     monkeypatch.setenv("FRED_API_KEY", "")
+    monkeypatch.setenv("FINNHUB_API_KEY", "")
     monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
     monkeypatch.setenv("NEWS_DAILY_LIMIT", "20")
     monkeypatch.setenv("NEWS_CACHE_TTL_HOURS", "6")
@@ -277,6 +278,19 @@ def test_universe_remove_missing_asset(client: TestClient) -> None:
     response = client.delete("/assets/NOPE")
 
     assert response.status_code == 404
+
+
+def test_backup_create_and_list(client: TestClient) -> None:
+    created = client.post("/backups/create")
+    assert created.status_code == 200
+    data = created.json()
+    assert data["created"] is True
+    assert data["file"] and data["file"].endswith(".db")
+
+    listing = client.get("/backups")
+    assert listing.status_code == 200
+    files = [item["file"] for item in listing.json()]
+    assert data["file"] in files
 
 
 def test_reports_summary(client: TestClient) -> None:

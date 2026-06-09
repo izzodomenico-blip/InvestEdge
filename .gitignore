@@ -11,6 +11,7 @@ data/*.sqlite3
 data/*.log
 data/.investedge.lock
 data/ml_models/
+data/backups/
 
 frontend/node_modules/
 frontend/dist/
