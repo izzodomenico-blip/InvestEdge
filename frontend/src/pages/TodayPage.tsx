@@ -15,6 +15,7 @@ import { Send } from "lucide-react";
 
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { TradeButton } from "../components/TradeButton";
 import {
   apiGet,
   apiPost,
@@ -23,6 +24,7 @@ import {
   type ActionType,
   type AlertSendResult,
   type AlertStatus,
+  type Asset,
 } from "../lib/api";
 
 type Style = {
@@ -84,12 +86,19 @@ const priorityLabel: Record<string, string> = {
   LOW: "Priorità bassa",
 };
 
-function ActionCard({ action }: { action: ActionItem }) {
+function ActionCard({
+  action,
+  price,
+  currency,
+  onTraded,
+}: {
+  action: ActionItem;
+  price: number | null;
+  currency: string;
+  onTraded: () => void;
+}) {
   const style = styles[action.type] ?? styles.WATCH;
   const Icon = style.icon;
-  const trUrl = action.symbol
-    ? `https://traderepublic.com/`
-    : null;
   return (
     <article className={`relative overflow-hidden rounded-2xl border bg-slate-950/55 p-5 shadow-panel transition-all duration-300 hover:-translate-y-[2px] ${style.ring}`}>
       <div className="flex items-start gap-4">
@@ -112,15 +121,8 @@ function ActionCard({ action }: { action: ActionItem }) {
             <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-600">
               {priorityLabel[action.priority] ?? action.priority}
             </span>
-            {style.cta && action.type === "BUY" && trUrl && (
-              <a
-                href={trUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/20"
-              >
-                {style.cta}
-              </a>
+            {action.type === "BUY" && action.symbol && (
+              <TradeButton symbol={action.symbol} price={price} currency={currency} side="BUY" onDone={onTraded} />
             )}
             {style.cta && action.type !== "BUY" && action.symbol && (
               <Link
@@ -139,6 +141,7 @@ function ActionCard({ action }: { action: ActionItem }) {
 
 export function TodayPage() {
   const [board, setBoard] = useState<ActionBoard | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [alert, setAlert] = useState<AlertStatus | null>(null);
@@ -149,12 +152,14 @@ export function TodayPage() {
     setLoading(true);
     setError(null);
     try {
-      const [boardData, alertData] = await Promise.all([
+      const [boardData, alertData, assetData] = await Promise.all([
         apiGet<ActionBoard>("/action-board"),
         apiGet<AlertStatus>("/alerts/status").catch(() => null),
+        apiGet<Asset[]>("/assets").catch(() => []),
       ]);
       setBoard(boardData);
       setAlert(alertData);
+      setAssets(assetData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il caricamento.");
     } finally {
@@ -255,9 +260,18 @@ export function TodayPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {board?.actions.map((action, index) => (
-          <ActionCard key={`${action.type}-${action.symbol ?? index}`} action={action} />
-        ))}
+        {board?.actions.map((action, index) => {
+          const asset = action.symbol ? assets.find((a) => a.symbol === action.symbol) : undefined;
+          return (
+            <ActionCard
+              key={`${action.type}-${action.symbol ?? index}`}
+              action={action}
+              price={asset?.last_price ?? null}
+              currency={asset?.currency ?? "EUR"}
+              onTraded={() => void load()}
+            />
+          );
+        })}
       </div>
 
       <p className="text-center text-xs text-slate-600">

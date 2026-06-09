@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
+import { TradeButton } from "../components/TradeButton";
 import { apiGet, type Asset, type PortfolioRecommendation } from "../lib/api";
 import { formatCurrency, formatPercent } from "../lib/format";
 
@@ -279,6 +280,11 @@ export function WatchlistPage() {
                       {recommendation?.reason && (
                         <p className="line-clamp-2 text-xs text-slate-500">{recommendation.reason}</p>
                       )}
+
+                      <div className="mt-1 flex items-center gap-2 border-t border-slate-800/60 pt-3">
+                        <TradeButton symbol={asset.symbol} price={asset.last_price} currency={asset.currency} />
+                        <span className="text-[11px] text-slate-600">aggiungi al portafoglio simulato</span>
+                      </div>
                     </div>
                   );
                 })}
