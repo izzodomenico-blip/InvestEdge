@@ -190,6 +190,14 @@ export function PortfolioPage() {
 
   const openAsset = (symbol: string) => navigate(`/analysis?symbol=${encodeURIComponent(symbol)}`);
 
+  // Esposizione long/short separata: con gli short "Investito" (somma firmata) va
+  // negativo ed e' fuorviante. Mostriamo invece patrimonio + esposizioni distinte.
+  const longPositions = summary.positions.filter((p) => p.quantity > 0);
+  const shortPositions = summary.positions.filter((p) => p.quantity < 0);
+  const longExposure = longPositions.reduce((sum, p) => sum + p.current_value, 0);
+  const shortExposure = shortPositions.reduce((sum, p) => sum + Math.abs(p.current_value), 0);
+  const hasShorts = shortExposure > 1e-9;
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -255,18 +263,39 @@ export function PortfolioPage() {
         </Panel>
       )}
 
-      {/* Riga riassuntiva compatta: i numeri chiave sempre visibili in alto */}
+      {/* Riga riassuntiva compatta. Con posizioni short mostra esposizione long/short
+          separata invece di "Investito" (somma firmata, andrebbe in negativo). */}
       <Panel bare className="px-1">
-        <div className="grid grid-cols-2 divide-slate-800/60 sm:grid-cols-4 sm:divide-x">
-          <SummaryStat label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} hint="Cash + posizioni" />
+        <div className={`grid grid-cols-2 divide-slate-800/60 sm:divide-x ${hasShorts ? "sm:grid-cols-3 xl:grid-cols-5" : "sm:grid-cols-4"}`}>
+          <SummaryStat
+            label={hasShorts ? "Patrimonio" : "Valore totale"}
+            value={formatCurrency(summary.total_value, baseCurrency)}
+            hint={hasShorts ? "il tuo valore reale" : "Cash + posizioni"}
+          />
           <SummaryStat
             label="P/L totale"
             value={formatCurrency(summary.total_pnl, baseCurrency)}
             hint={formatPercent(summary.total_pnl_percent)}
             tone={summary.total_pnl >= 0 ? "pos" : "neg"}
           />
-          <SummaryStat label="Liquidità" value={formatCurrency(summary.cash, baseCurrency)} hint={`${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del totale`} />
-          <SummaryStat label="Investito" value={formatCurrency(summary.invested_value, baseCurrency)} hint={`${summary.positions.length} posizioni`} />
+          <SummaryStat
+            label="Liquidità"
+            value={formatCurrency(summary.cash, baseCurrency)}
+            hint={hasShorts ? "include i proventi degli short" : `${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del totale`}
+          />
+          <SummaryStat
+            label={hasShorts ? "Esposizione long" : "Investito"}
+            value={formatCurrency(longExposure, baseCurrency)}
+            hint={`${longPositions.length} ${longPositions.length === 1 ? "titolo" : "titoli"}`}
+          />
+          {hasShorts && (
+            <SummaryStat
+              label="Esposizione short"
+              value={formatCurrency(shortExposure, baseCurrency)}
+              hint={`${shortPositions.length} short · da ricoprire`}
+              tone="warn"
+            />
+          )}
         </div>
       </Panel>
 
@@ -485,9 +514,10 @@ function SummaryStat({
   label: string;
   value: string;
   hint?: string;
-  tone?: "pos" | "neg";
+  tone?: "pos" | "neg" | "warn";
 }) {
-  const hintClass = tone === "pos" ? "text-emerald-300" : tone === "neg" ? "text-rose-300" : "text-slate-500";
+  const hintClass =
+    tone === "pos" ? "text-emerald-300" : tone === "neg" ? "text-rose-300" : tone === "warn" ? "text-amber-300" : "text-slate-500";
   return (
     <div className="px-5 py-4">
       <p className="eyebrow-muted">{label}</p>
