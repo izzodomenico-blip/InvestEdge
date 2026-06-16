@@ -302,6 +302,7 @@ export function PortfolioPage() {
               {summary.positions.map((position) => {
                 const recommendation = recommendationBySymbol.get(position.symbol);
                 const reco = recommendation?.final_recommendation ?? position.recommendation ?? "HOLD";
+                const isShort = position.quantity < 0;
                 return (
                   <article
                     key={position.symbol}
@@ -322,14 +323,19 @@ export function PortfolioPage() {
                           <p className="truncate text-base font-semibold text-white">
                             {position.name ?? position.symbol}
                           </p>
+                          {isShort && (
+                            <span className="shrink-0 rounded-md border border-amber-300/40 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                              Short
+                            </span>
+                          )}
                           {position.technical_signal ? <SignalBadge signal={position.technical_signal} size="sm" /> : null}
                         </div>
                         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
                           <span className="font-mono text-slate-400">{position.symbol}</span>
                           {position.isin ? <span className="font-mono text-slate-600">· {position.isin}</span> : null}
                           <span>· {assetTypeLabels[position.asset_type] ?? position.asset_type}</span>
-                          <span>· {position.quantity.toLocaleString("it-IT", { maximumFractionDigits: 6 })} quote</span>
-                          <span>· peso {position.weight_percent.toFixed(0)}%</span>
+                          <span>· {Math.abs(position.quantity).toLocaleString("it-IT", { maximumFractionDigits: 6 })} quote{isShort ? " (short)" : ""}</span>
+                          <span>· peso {Math.abs(position.weight_percent).toFixed(0)}%</span>
                         </p>
                       </div>
                       <span className={`inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(reco)}`}>
@@ -359,8 +365,17 @@ export function PortfolioPage() {
 
                     <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-800/60 pt-3">
                       <div className="flex items-center gap-2">
-                        <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
-                        <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SELL" maxQuantity={position.quantity} onDone={() => void loadPortfolio()} />
+                        {isShort ? (
+                          <>
+                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Ricopri" onDone={() => void loadPortfolio()} />
+                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SHORT" label="Aumenta short" onDone={() => void loadPortfolio()} />
+                          </>
+                        ) : (
+                          <>
+                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
+                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SELL" maxQuantity={position.quantity} onDone={() => void loadPortfolio()} />
+                          </>
+                        )}
                       </div>
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300/70 transition group-hover:text-cyan-200">
                         Apri scheda

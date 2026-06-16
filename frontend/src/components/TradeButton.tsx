@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Lightbulb, ShoppingCart, TrendingDown, X } from "lucide-react";
+import { AlertTriangle, Lightbulb, ShoppingCart, TrendingDown, X } from "lucide-react";
 
 import { apiGet, apiPost, type OrderSimulationResponse, type PortfolioSummary, type SimulatedOrderInput } from "../lib/api";
 import { formatCurrency } from "../lib/format";
@@ -8,7 +8,7 @@ import { formatCurrency } from "../lib/format";
 type Props = {
   symbol: string;
   price: number | null | undefined;
-  side?: "BUY" | "SELL";
+  side?: "BUY" | "SELL" | "SHORT";
   maxQuantity?: number;
   currency?: string;
   assetType?: string;
@@ -43,6 +43,7 @@ export function TradeButton({
   label,
 }: Props) {
   const isBuy = side === "BUY";
+  const isShort = side === "SHORT";
   const px = price ?? 0;
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -105,15 +106,18 @@ export function TradeButton({
     }
     setBusy(true);
     try {
-      const payload: SimulatedOrderInput = { symbol, order_type: side, quantity };
+      const orderType: "BUY" | "SELL" = isShort ? "SELL" : (side as "BUY" | "SELL");
+      const payload: SimulatedOrderInput = { symbol, order_type: orderType, quantity, allow_short: isShort };
       await apiPost<OrderSimulationResponse>("/orders/simulate", payload);
       setMsg(
         isBuy
           ? `Comprato ✓ ${quantity.toFixed(4)} quote di ${symbol}. È nel tuo portafoglio.`
-          : `Venduto ✓ ${quantity.toFixed(4)} quote di ${symbol}.`,
+          : isShort
+            ? `Short aperto ✓ ${quantity.toFixed(4)} quote di ${symbol}. Guadagni se scende, perdi se sale.`
+            : `Venduto ✓ ${quantity.toFixed(4)} quote di ${symbol}.`,
       );
       onDone?.();
-      setTimeout(() => setOpen(false), 1100);
+      setTimeout(() => setOpen(false), 1200);
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Operazione non riuscita.");
     } finally {
@@ -123,14 +127,18 @@ export function TradeButton({
 
   const defaultClass = isBuy
     ? "inline-flex items-center gap-1.5 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/25"
-    : "inline-flex items-center gap-1.5 rounded-md border border-rose-300/30 bg-rose-400/15 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-400/25";
+    : isShort
+      ? "inline-flex items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-400/15 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/25"
+      : "inline-flex items-center gap-1.5 rounded-md border border-rose-300/30 bg-rose-400/15 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-400/25";
+
+  const title = isBuy ? "Compra" : isShort ? "Vendi allo scoperto" : "Vendi";
 
   const modal = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={close}>
       <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="font-display text-xl font-semibold text-white">
-            {isBuy ? "Compra" : "Vendi"} {symbol}
+            {title} {symbol}
           </h3>
           <button onClick={close} className="text-slate-400 transition hover:text-white" aria-label="Chiudi">
             <X className="h-5 w-5" aria-hidden="true" />
@@ -179,22 +187,38 @@ export function TradeButton({
             )}
           </>
         ) : (
-          <label className="mt-4 block space-y-1.5">
-            <span className="text-sm text-slate-300">
-              Quante quote vendere{maxQuantity ? ` (max ${maxQuantity.toLocaleString("it-IT")})` : ""}
-            </span>
-            <input
-              type="number"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white outline-none focus:border-rose-300/60"
-            />
-            {maxQuantity ? (
-              <button onClick={(e) => { e.stopPropagation(); setQty(String(maxQuantity)); }} className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">
-                Vendi tutto
-              </button>
-            ) : null}
-          </label>
+          <>
+            {isShort && (
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-300/40 bg-amber-400/10 p-3 text-sm text-amber-100">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                <div>
+                  <p className="font-semibold">Vendita allo scoperto (short)</p>
+                  <p className="mt-0.5 text-xs text-amber-200/90">
+                    Guadagni se il prezzo scende; ma se sale la perdita <b>non ha un tetto massimo</b>. La gestione del
+                    rischio è tua. Operazione simulata: nessun ordine reale.
+                  </p>
+                </div>
+              </div>
+            )}
+            <label className="mt-4 block space-y-1.5">
+              <span className="text-sm text-slate-300">
+                {isShort
+                  ? "Quante quote vendere allo scoperto"
+                  : `Quante quote vendere${maxQuantity ? ` (max ${maxQuantity.toLocaleString("it-IT")})` : ""}`}
+              </span>
+              <input
+                type="number"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white outline-none focus:border-rose-300/60"
+              />
+              {maxQuantity && !isShort ? (
+                <button onClick={(e) => { e.stopPropagation(); setQty(String(maxQuantity)); }} className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">
+                  Vendi tutto
+                </button>
+              ) : null}
+            </label>
+          </>
         )}
 
         {err && <p className="mt-3 rounded-lg border border-rose-300/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">{err}</p>}
@@ -210,10 +234,12 @@ export function TradeButton({
             className={
               isBuy
                 ? "rounded-lg border border-emerald-300/40 bg-emerald-400/20 px-5 py-2.5 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-400/30 disabled:opacity-60"
-                : "rounded-lg border border-rose-300/40 bg-rose-400/20 px-5 py-2.5 text-sm font-semibold text-rose-50 transition hover:bg-rose-400/30 disabled:opacity-60"
+                : isShort
+                  ? "rounded-lg border border-amber-300/40 bg-amber-400/20 px-5 py-2.5 text-sm font-semibold text-amber-50 transition hover:bg-amber-400/30 disabled:opacity-60"
+                  : "rounded-lg border border-rose-300/40 bg-rose-400/20 px-5 py-2.5 text-sm font-semibold text-rose-50 transition hover:bg-rose-400/30 disabled:opacity-60"
             }
           >
-            {busy ? "..." : isBuy ? "Conferma acquisto" : "Conferma vendita"}
+            {busy ? "..." : isBuy ? "Conferma acquisto" : isShort ? "Conferma short" : "Conferma vendita"}
           </button>
         </div>
       </div>
@@ -224,7 +250,7 @@ export function TradeButton({
     <>
       <button type="button" onClick={openModal} className={className ?? defaultClass}>
         {isBuy ? <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
-        {label ?? (isBuy ? "Compra" : "Vendi")}
+        {label ?? title}
       </button>
       {open && createPortal(modal, document.body)}
     </>

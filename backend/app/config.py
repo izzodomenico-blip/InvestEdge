@@ -46,6 +46,8 @@ class Settings:
     yahoo_history_range: str = "5y"
     enable_real_news: bool = False
     finnhub_api_key: str | None = None
+    enable_yahoo_news: bool = True
+    yahoo_news_daily_limit: int = 0
     news_cache_ttl_hours: int = 6
     news_daily_limit: int = 20
     news_sentiment_weight: float = 5.0
@@ -92,6 +94,8 @@ class Settings:
             yahoo_history_range=os.getenv("YAHOO_HISTORY_RANGE", "5y"),
             enable_real_news=os.getenv("ENABLE_REAL_NEWS", "false").lower() == "true",
             finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
+            enable_yahoo_news=os.getenv("ENABLE_YAHOO_NEWS", "true").lower() == "true",
+            yahoo_news_daily_limit=int(os.getenv("YAHOO_NEWS_DAILY_LIMIT", "0")),
             news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
             news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
             news_sentiment_weight=float(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),

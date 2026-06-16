@@ -584,6 +584,68 @@ def test_sell_all_with_rounded_quantity_closes_position(client: TestClient) -> N
     assert "AAPL" not in symbols
 
 
+def _init_flat(client: TestClient, cash: float = 10000) -> None:
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": cash, "max_single_asset_weight": 100, "max_asset_class_weight": 100, "default_fee_percent": 0},
+    )
+
+
+def test_short_requires_allow_short_flag(client: TestClient) -> None:
+    _init_flat(client)
+    # vendere allo scoperto senza il flag e' bloccato (niente short accidentale)
+    blocked = client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 5, "price": 100, "fees": 0})
+    assert blocked.status_code == 400
+    # con allow_short apre uno short (quantita' negativa) e incassa i proventi
+    opened = client.post(
+        "/orders/simulate",
+        json={"symbol": "AAPL", "order_type": "SELL", "quantity": 5, "price": 100, "fees": 0, "allow_short": True},
+    )
+    assert opened.status_code == 200
+    portfolio = client.get("/portfolio").json()
+    aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
+    assert aapl["quantity"] == -5  # short
+    assert portfolio["cash"] == 10500  # 10000 + 5*100 di proventi
+
+
+def test_short_profit_when_price_falls(client: TestClient) -> None:
+    _init_flat(client)
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 10, "price": 100, "fees": 0, "allow_short": True})
+    # ricopre piu' in basso -> profitto (100 - 90) * 10 = 100
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 90, "fees": 0})
+    summary = client.get("/portfolio").json()
+    assert summary["realized_pnl"] == 100.0
+    assert "AAPL" not in {p["symbol"] for p in summary["positions"]}  # chiuso
+    assert summary["cash"] == 10100  # 10000 + 100 di utile
+
+
+def test_short_loss_when_price_rises(client: TestClient) -> None:
+    _init_flat(client)
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 5, "price": 100, "fees": 0, "allow_short": True})
+    # il prezzo sale: ricoprire costa di piu' -> perdita (100 - 130) * 5 = -150
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 5, "price": 130, "fees": 0})
+    summary = client.get("/portfolio").json()
+    assert summary["realized_pnl"] == -150.0
+
+
+def test_short_position_triggers_risk_warning(client: TestClient) -> None:
+    _init_flat(client)
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 3, "price": 100, "fees": 0, "allow_short": True})
+    warnings = client.get("/portfolio").json()["risk_warnings"]
+    assert any(w["code"] == "SHORT_RISK" and w["symbol"] == "AAPL" for w in warnings)
+
+
+def test_flip_long_to_short_realizes_pnl(client: TestClient) -> None:
+    _init_flat(client)
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 100, "fees": 0})
+    # vende 15 (ne ha 10): chiude il long (+200) e apre uno short di 5 a 120
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 15, "price": 120, "fees": 0, "allow_short": True})
+    portfolio = client.get("/portfolio").json()
+    aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
+    assert aapl["quantity"] == -5  # ora short
+    assert portfolio["realized_pnl"] == 200.0  # 10 * (120 - 100)
+
+
 def test_portfolio_recommendations_endpoint(client: TestClient) -> None:
     response = client.get("/portfolio/recommendations")
 
@@ -1044,6 +1106,36 @@ def test_yahoo_normalize_prices(client: TestClient) -> None:
     assert {"date", "open", "high", "low", "close", "adjusted_close", "volume"} <= set(prices[0])
 
 
+def test_yahoo_news_provider_normalizes(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.yahoo_news import YahooNewsProvider
+    from backend.app.database import db_session
+
+    sample = {
+        "news": [
+            {
+                "title": "Apple beats earnings and raises guidance",
+                "publisher": "Reuters",
+                "link": "https://example.com/aapl",
+                "providerPublishTime": 1_700_000_000,
+            },
+            {"title": "", "link": "https://example.com/skip"},  # senza titolo -> scartata
+        ]
+    }
+    with db_session() as connection:
+        provider = YahooNewsProvider(get_settings(), connection)
+        items = provider.normalize_news(sample, "AAPL")
+
+    assert provider.api_key_configured() is True
+    assert provider.daily_limit == 0  # nessun limite giornaliero
+    assert len(items) == 1
+    assert items[0]["provider"] == "yahoo_news"
+    assert items[0]["title"].startswith("Apple beats")
+    assert items[0]["source"] == "Reuters"
+    assert items[0]["published_at"] is not None
+    assert -1.0 <= items[0]["sentiment_score"] <= 1.0
+
+
 def test_finnhub_news_provider_normalizes(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
@@ -1265,6 +1357,8 @@ def test_refresh_news_fallback_when_api_key_missing(client: TestClient, monkeypa
 
     monkeypatch.setenv("ENABLE_REAL_NEWS", "true")
     monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
+    # disabilita Yahoo (keyless) per testare il fallback a mock quando manca ogni key
+    monkeypatch.setenv("ENABLE_YAHOO_NEWS", "false")
     get_settings.cache_clear()
 
     response = client.post("/news/refresh/AAPL")
@@ -1276,6 +1370,7 @@ def test_refresh_news_fallback_when_api_key_missing(client: TestClient, monkeypa
     assert "Provider news non configurato" in data["message"]
 
     monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
+    monkeypatch.setenv("ENABLE_YAHOO_NEWS", "true")
     get_settings.cache_clear()
 
 
@@ -1315,7 +1410,7 @@ def test_news_status_endpoint(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["enable_real_news"] is False
-    assert {provider["provider"] for provider in data["provider_status"]} >= {"alpha_vantage_news", "mock_news"}
+    assert {provider["provider"] for provider in data["provider_status"]} >= {"yahoo_news", "mock_news"}
     assert data["daily_usage"]["calls_count"] == 0
 
 

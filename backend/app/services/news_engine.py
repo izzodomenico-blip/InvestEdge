@@ -14,6 +14,7 @@ from backend.app.data_providers.alpha_vantage_news import AlphaVantageNewsProvid
 from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
 from backend.app.data_providers.mock_news_provider import NewsProviderMock
 from backend.app.data_providers.news_base import BaseNewsProvider
+from backend.app.data_providers.yahoo_news import YahooNewsProvider
 from backend.app.services.common import (
     clamp as _clamp,
 )
@@ -79,8 +80,11 @@ class NewsEngine:
         ).fetchone()
 
     def _real_provider(self, connection: sqlite3.Connection) -> BaseNewsProvider | None:
-        # Preferenza: Finnhub (quota dedicata, non intacca Alpha Vantage), poi Alpha Vantage.
+        # Preferenza: Yahoo (nessuna API key, nessuna quota -> news sempre fresche),
+        # poi Finnhub (quota dedicata) e Alpha Vantage come fallback.
         settings = get_settings()
+        if settings.enable_yahoo_news:
+            return YahooNewsProvider(settings, connection)
         if settings.finnhub_api_key:
             return FinnhubNewsProvider(settings, connection)
         if settings.alpha_vantage_api_key:
@@ -92,7 +96,8 @@ class NewsEngine:
 
     def _has_real_news_key(self) -> bool:
         settings = get_settings()
-        return bool(settings.finnhub_api_key or settings.alpha_vantage_api_key)
+        # Yahoo non richiede chiave: se attivo, le news reali sono comunque disponibili.
+        return bool(settings.enable_yahoo_news or settings.finnhub_api_key or settings.alpha_vantage_api_key)
 
     def _provider_for_refresh(self, connection: sqlite3.Connection) -> BaseNewsProvider:
         settings = get_settings()

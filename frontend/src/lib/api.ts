@@ -317,6 +317,7 @@ export type SimulatedOrderInput = {
   fees?: number;
   note?: string;
   strategy_tag?: string;
+  allow_short?: boolean;
 };
 
 export type OrderSimulationResponse = {

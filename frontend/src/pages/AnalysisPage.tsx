@@ -6,6 +6,7 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
+import { TradeButton } from "../components/TradeButton";
 import {
   apiGet,
   type Asset,
@@ -243,6 +244,25 @@ export function AnalysisPage() {
               <p className="mt-2 text-2xl font-semibold text-white">{analysis.risk_level}</p>
               <p className="mt-3 text-sm text-slate-400">{selectedAsset.sector}</p>
             </article>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/60 bg-slate-950/40 px-4 py-3">
+            <span className="text-sm text-slate-400">Operazioni simulate:</span>
+            <TradeButton
+              symbol={selectedSymbol}
+              price={latestPoint?.close ?? selectedAsset.last_price ?? null}
+              currency={prices.currency}
+              assetType={selectedAsset.asset_type}
+              riskLevel={selectedAsset.risk_level}
+              side="BUY"
+            />
+            <TradeButton
+              symbol={selectedSymbol}
+              price={latestPoint?.close ?? selectedAsset.last_price ?? null}
+              currency={prices.currency}
+              side="SHORT"
+            />
+            <span className="text-xs text-slate-600">Nessun ordine reale viene inviato.</span>
           </div>
 
           <Panel title="Origine dati">

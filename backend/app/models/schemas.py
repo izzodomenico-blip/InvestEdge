@@ -571,6 +571,9 @@ class SimulatedOrderIn(BaseModel):
     fees: float | None = Field(default=None, ge=0)
     note: str | None = Field(default=None, max_length=500)
     strategy_tag: str | None = Field(default=None, max_length=80)
+    # Consente la vendita allo scoperto (short): un SELL puo' portare la quantita'
+    # sotto zero. Default False per evitare short accidentali col normale "Vendi".
+    allow_short: bool = False
 
 
 class SimulatedOrderOut(BaseModel):

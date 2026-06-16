@@ -14,6 +14,7 @@ from backend.app.data_providers.mock_provider import MockMarketDataProvider
 from backend.app.data_providers.news_base import BaseNewsProvider
 from backend.app.data_providers.provider_registry import ProviderRegistry
 from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
+from backend.app.data_providers.yahoo_news import YahooNewsProvider
 
 __all__ = [
     "AlphaVantageProvider",
@@ -30,4 +31,5 @@ __all__ = [
     "RateLimitExceeded",
     "RealDataDisabled",
     "YahooFinanceProvider",
+    "YahooNewsProvider",
 ]
