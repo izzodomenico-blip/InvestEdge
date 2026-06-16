@@ -92,6 +92,8 @@ function ActionCard({
   currency,
   assetType,
   riskLevel,
+  name,
+  isin,
   onTraded,
 }: {
   action: ActionItem;
@@ -99,6 +101,8 @@ function ActionCard({
   currency: string;
   assetType?: string;
   riskLevel?: string;
+  name?: string | null;
+  isin?: string | null;
   onTraded: () => void;
 }) {
   const style = styles[action.type] ?? styles.WATCH;
@@ -114,11 +118,20 @@ function ActionCard({
             <span className={`rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] ${style.badge}`}>
               {style.label}
             </span>
-            {action.symbol && <span className="font-mono text-sm font-semibold text-white">{action.symbol}</span>}
+            {action.symbol && (
+              <Link
+                to={`/analysis?symbol=${action.symbol}`}
+                className="font-mono text-sm font-semibold text-white underline-offset-2 transition hover:text-cyan-200 hover:underline"
+              >
+                {action.symbol}
+              </Link>
+            )}
+            {name && <span className="truncate text-xs text-slate-400">{name}</span>}
             {action.score != null && (
               <span className="num text-xs text-slate-500">score {action.score.toFixed(0)}/100</span>
             )}
           </div>
+          {isin && <p className="mt-1 font-mono text-[11px] text-slate-600">{isin}</p>}
           <h3 className="mt-2 font-display text-lg font-medium leading-snug text-white">{action.title}</h3>
           <p className="mt-1 text-sm leading-relaxed text-slate-400">{action.reason}</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -274,6 +287,8 @@ export function TodayPage() {
               currency={asset?.currency ?? "EUR"}
               assetType={asset?.asset_type}
               riskLevel={asset?.risk_level}
+              name={asset?.name}
+              isin={asset?.isin}
               onTraded={() => void load()}
             />
           );

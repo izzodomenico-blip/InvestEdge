@@ -538,6 +538,52 @@ def test_average_price_calculation(client: TestClient) -> None:
     assert position["average_price"] == 150
 
 
+def test_assets_include_isin(client: TestClient) -> None:
+    assets = {a["symbol"]: a for a in client.get("/assets").json()}
+    assert assets["AAPL"]["isin"] == "US0378331005"
+    assert assets["VWCE"]["isin"] == "IE00BK5BQT80"
+    assert assets["IB01"]["isin"] == "IE00BGSF1X88"
+    # crypto / indici generici non hanno ISIN
+    assert assets["BTC"]["isin"] is None
+
+
+def test_positions_include_name_and_isin(client: TestClient) -> None:
+    portfolio = client.get("/portfolio").json()
+    aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
+    assert aapl["name"] == "Apple Inc."
+    assert aapl["isin"] == "US0378331005"
+
+
+def test_sell_all_removes_position_and_keeps_realized_pnl(client: TestClient) -> None:
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0},
+    )
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 3, "price": 100, "fees": 0})
+    # vendita totale
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 3, "price": 110, "fees": 0})
+
+    portfolio = client.get("/portfolio").json()
+    symbols = {p["symbol"] for p in portfolio["positions"]}
+    assert "AAPL" not in symbols  # il titolo venduto del tutto non appare piu
+    assert portfolio["realized_pnl"] == 30.0  # 3 * (110 - 100), P/L realizzato conservato
+
+
+def test_sell_all_with_rounded_quantity_closes_position(client: TestClient) -> None:
+    # quantita' frazionaria: "Vendi tutto" usa il valore arrotondato e deve comunque chiudere
+    client.post(
+        "/portfolio/init",
+        json={"initial_cash": 10000, "max_single_asset_weight": 90, "max_asset_class_weight": 90, "default_fee_percent": 0},
+    )
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 1.123456789, "price": 100, "fees": 0})
+    # vende la quantita' arrotondata a 8 decimali (come fa il bottone "Vendi tutto")
+    client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 1.12345679, "price": 110, "fees": 0})
+
+    portfolio = client.get("/portfolio").json()
+    symbols = {p["symbol"] for p in portfolio["positions"]}
+    assert "AAPL" not in symbols
+
+
 def test_portfolio_recommendations_endpoint(client: TestClient) -> None:
     response = client.get("/portfolio/recommendations")
 
@@ -932,6 +978,72 @@ def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:
         assert "symbol=AAPL" in provider._request_url("AAPL")
 
 
+def test_yahoo_ticker_mapping(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.base import ProviderError
+    from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        provider = YahooFinanceProvider(get_settings(), connection)
+        # ETF europei -> ticker della borsa nativa nella valuta giusta
+        assert provider.yahoo_ticker("VWCE") == "VWCE.DE"
+        assert provider.yahoo_ticker("AGGH") == "AGGH.MI"
+        assert provider.yahoo_ticker("IB01") == "IB01.L"
+        # i simboli USA passano invariati
+        assert provider.yahoo_ticker("AAPL") == "AAPL"
+        # i simboli senza equivalente Yahoo restano sui dati locali
+        with pytest.raises(ProviderError):
+            provider.yahoo_ticker("BTP10Y")
+        # nessuna API key richiesta
+        assert provider.api_key_configured() is True
+        assert provider.full_history is True
+
+
+def test_yahoo_normalize_prices(client: TestClient) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
+    from backend.app.database import db_session
+
+    sample = {
+        "chart": {
+            "error": None,
+            "result": [
+                {
+                    "meta": {"currency": "EUR", "symbol": "VWCE.DE"},
+                    # 2024-01-02, 2024-01-03, 2024-01-04 (UTC)
+                    "timestamp": [1_704_153_600, 1_704_240_000, 1_704_326_400],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [100.0, 101.0, None],
+                                "high": [102.0, 103.0, None],
+                                "low": [99.0, 100.0, None],
+                                "close": [101.0, 102.5, None],
+                                "volume": [1000, 1200, None],
+                            }
+                        ],
+                        "adjclose": [{"adjclose": [101.0, 102.5, None]}],
+                    },
+                }
+            ],
+        }
+    }
+    with db_session() as connection:
+        provider = YahooFinanceProvider(get_settings(), connection)
+        prices = provider.normalize_prices(sample, "VWCE")
+
+    # la candela con close None viene scartata
+    assert len(prices) == 2
+    assert all(price["source"] == "real" and price["provider"] == "yahoo_finance" for price in prices)
+    assert prices[0]["close"] == 101.0
+    assert prices[1]["close"] == 102.5
+    # ordinato per data crescente
+    assert prices[0]["date"] < prices[1]["date"]
+    # campi completi
+    assert {"date", "open", "high", "low", "close", "adjusted_close", "volume"} <= set(prices[0])
+
+
 def test_finnhub_news_provider_normalizes(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
@@ -968,7 +1080,9 @@ def test_provider_registry(client: TestClient) -> None:
     with db_session() as connection:
         registry = ProviderRegistry(get_settings(), connection)
 
-        assert registry.provider_for_asset_type("stock").provider_name == "alpha_vantage"
+        assert registry.provider_for_asset_type("stock").provider_name == "yahoo_finance"
+        assert registry.provider_for_asset_type("etf").provider_name == "yahoo_finance"
+        assert registry.provider_for_asset_type("bond_etf").provider_name == "yahoo_finance"
         assert registry.provider_for_asset_type("crypto").provider_name == "coingecko"
         assert registry.provider_for_asset_type("macro").provider_name == "fred"
 
@@ -983,19 +1097,28 @@ def test_refresh_asset_with_real_data_disabled(client: TestClient) -> None:
     assert "Dati reali disattivati" in data["message"]
 
 
-def test_refresh_asset_fallback_when_api_key_missing(client: TestClient, monkeypatch) -> None:
+def test_refresh_asset_falls_back_on_provider_error(client: TestClient, monkeypatch) -> None:
     from backend.app.config import get_settings
+    from backend.app.data_providers.base import ProviderError
+    from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
 
     monkeypatch.setenv("ENABLE_REAL_DATA", "true")
-    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
     get_settings.cache_clear()
+
+    # Forza un errore del provider per restare deterministici e non dipendere
+    # dalla rete: Yahoo non richiede API key, quindi simuliamo l'indisponibilita'.
+    def _raise(self, symbol: str, force: bool = False):  # noqa: ANN001, ANN202
+        raise ProviderError("Yahoo non raggiungibile nei test.")
+
+    monkeypatch.setattr(YahooFinanceProvider, "get_daily_prices", _raise)
 
     response = client.post("/data/refresh/AAPL")
 
     assert response.status_code == 200
     data = response.json()
+    assert data["provider"] == "yahoo_finance"
     assert data["used_fallback"] is True
-    assert "API key non configurata" in data["message"]
+    assert data["rows_inserted"] == 0
 
     monkeypatch.setenv("ENABLE_REAL_DATA", "false")
     get_settings.cache_clear()
@@ -1008,7 +1131,7 @@ def test_data_status_endpoint(client: TestClient) -> None:
     data = response.json()
     assert data["enable_real_data"] is False
     assert data["data_mode"] == "SEED"
-    assert {provider["provider"] for provider in data["provider_status"]} >= {"alpha_vantage", "coingecko", "fred"}
+    assert {provider["provider"] for provider in data["provider_status"]} >= {"yahoo_finance", "coingecko", "fred"}
     assert data["cache_stats"]["entries"] >= 0
 
 

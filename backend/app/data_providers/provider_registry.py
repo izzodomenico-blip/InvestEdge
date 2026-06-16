@@ -5,18 +5,21 @@ from datetime import date
 from typing import Any
 
 from backend.app.config import Settings
-from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.data_providers.coingecko import CoinGeckoProvider
 from backend.app.data_providers.fred import FredProvider
+from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
 
 
 class ProviderRegistry:
     def __init__(self, settings: Settings, connection: sqlite3.Connection):
         self.settings = settings
         self.connection = connection
+        # Yahoo Finance e' la fonte prezzi per azioni/ETF/bond ETF: copre i ticker
+        # europei nella valuta nativa e fornisce lo storico completo. (Alpha Vantage
+        # free, sostituito, dava solo USA, proxy USD e 100 giorni.)
         self.providers: list[BaseMarketDataProvider] = [
-            AlphaVantageProvider(settings, connection),
+            YahooFinanceProvider(settings, connection),
             CoinGeckoProvider(settings, connection),
             FredProvider(settings, connection),
         ]

@@ -6,6 +6,31 @@ from contextlib import contextmanager
 
 from backend.app.config import get_settings
 
+# ISIN ufficiali dei titoli noti dell'universo InvestEdge. Servono a identificare
+# senza ambiguita' un titolo (es. distinguere VWCE da altri ETF simili).
+# Crypto e indici generici (BTP10Y) non hanno un ISIN univoco: restano senza.
+ISIN_BY_SYMBOL: dict[str, str] = {
+    "AAPL": "US0378331005",
+    "MSFT": "US5949181045",
+    "NVDA": "US67066G1040",
+    "AMZN": "US0231351067",
+    "GOOGL": "US02079K3059",
+    "META": "US30303M1027",
+    "TSLA": "US88160R1014",
+    "JPM": "US46625H1005",
+    "UNH": "US91324P1021",
+    "KO": "US1912161007",
+    "SPY": "US78462F1030",
+    "QQQ": "US46090E1038",
+    "VOO": "US9229083632",
+    "VWCE": "IE00BK5BQT80",
+    "AGGH": "IE00BDBRDM35",
+    "IB01": "IE00BGSF1X88",
+    "TLT": "US4642874576",
+    "IEF": "US4642874402",
+    "SHY": "US4642874329",
+}
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -329,6 +354,7 @@ MIGRATIONS = {
         ("sector", "ALTER TABLE assets ADD COLUMN sector TEXT"),
         ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
         ("risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'medium'"),
+        ("isin", "ALTER TABLE assets ADD COLUMN isin TEXT"),
     ],
     "signals": [
         ("symbol", "ALTER TABLE signals ADD COLUMN symbol TEXT"),
@@ -496,6 +522,24 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date)"
     )
+    # Backfill ISIN sui titoli noti (solo dove mancante): riempie i DB esistenti
+    # senza bisogno di un nuovo seed, preservando i dati reali gia' scaricati.
+    for symbol, isin in ISIN_BY_SYMBOL.items():
+        connection.execute(
+            "UPDATE assets SET isin = ? WHERE UPPER(symbol) = ? AND (isin IS NULL OR isin = '')",
+            (isin, symbol),
+        )
+
+    # Pulizia residui: posizioni quasi-azzerate da vendite precedenti (es. 3e-7 quote)
+    # vengono portate a 0 cosi' spariscono dal portafoglio. Il P/L realizzato resta.
+    connection.execute(
+        """
+        UPDATE portfolio_positions
+        SET quantity = 0, current_value = 0, unrealized_pnl = 0, unrealized_pnl_percent = 0
+        WHERE quantity > 0 AND quantity < 1e-6
+        """
+    )
+
     connection.execute("UPDATE signals SET technical_score = score WHERE technical_score IS NULL")
     connection.execute("UPDATE signals SET final_score = score WHERE final_score IS NULL")
     connection.execute("UPDATE signals SET news_score = 0 WHERE news_score IS NULL")

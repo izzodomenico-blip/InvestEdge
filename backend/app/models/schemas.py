@@ -35,6 +35,7 @@ class AssetCreate(BaseModel):
     sector: str | None = Field(default=None, max_length=120)
     country: str | None = Field(default=None, max_length=80)
     risk_level: RiskLevel = "medium"
+    isin: str | None = Field(default=None, max_length=20)
 
 
 class AssetOut(AssetCreate):
@@ -97,6 +98,8 @@ class PortfolioPositionOut(BaseModel):
     id: int
     asset_id: int
     symbol: str
+    name: str | None = None
+    isin: str | None = None
     asset_type: str
     quantity: float
     average_price: float

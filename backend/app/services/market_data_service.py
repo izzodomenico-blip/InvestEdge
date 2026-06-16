@@ -93,6 +93,12 @@ class MarketDataService:
                 used_cache=used_cache,
             )
 
+        # I provider a storico completo (es. Yahoo) sostituiscono l'intera serie:
+        # cosi' lo storico seed/proxy precedente viene rimosso e non resta nessun
+        # punto "Frankenstein" misto reale+simulato.
+        if getattr(provider, "full_history", False):
+            connection.execute("DELETE FROM price_history WHERE asset_id = ?", (asset["id"],))
+
         inserted, updated = self.save_prices_to_db(connection, asset["symbol"], prices, provider.provider_name)
         self._recalculate_signal(connection, asset["id"])
         self._refresh_portfolio_if_needed(connection, asset["id"])

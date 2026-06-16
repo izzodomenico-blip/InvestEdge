@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { PageHeader } from "../components/PageHeader";
+import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
 import {
@@ -56,6 +57,7 @@ function formatIndicator(value: number | null | undefined, kind: "number" | "per
 }
 
 export function AnalysisPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [prices, setPrices] = useState<PriceHistory | null>(null);
@@ -164,25 +166,33 @@ export function AnalysisPage() {
         meta={
           <>
             <span>
-              Asset selezionato <span className="text-cyan-300/80">{selectedSymbol}</span>
+              Titolo <span className="text-cyan-300/80">{selectedAsset?.name ?? selectedSymbol}</span>
             </span>
             <span>
-              Universo <span className="text-cyan-300/80">{assets.length}</span>
+              Ticker <span className="text-cyan-300/80">{selectedSymbol}</span>
+            </span>
+            <span>
+              ISIN <span className="text-cyan-300/80">{selectedAsset?.isin ?? "—"}</span>
             </span>
           </>
         }
         actions={
-          <select
-            value={selectedSymbol}
-            onChange={(event) => setSearchParams({ symbol: event.target.value })}
-            className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-3 py-2.5 font-mono text-sm tracking-tight text-white outline-none transition-colors focus:border-cyan-300/60"
-          >
-            {assets.map((asset) => (
-              <option key={asset.symbol} value={asset.symbol}>
-                {asset.symbol} — {asset.name}
-              </option>
-            ))}
-          </select>
+          <>
+            <PageHeaderAction onClick={() => navigate(-1)} icon={<ArrowLeft className="h-4 w-4" aria-hidden="true" />}>
+              Indietro
+            </PageHeaderAction>
+            <select
+              value={selectedSymbol}
+              onChange={(event) => setSearchParams({ symbol: event.target.value })}
+              className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-3 py-2.5 text-sm tracking-tight text-white outline-none transition-colors focus:border-cyan-300/60"
+            >
+              {assets.map((asset) => (
+                <option key={asset.symbol} value={asset.symbol}>
+                  {asset.symbol} — {asset.name}
+                </option>
+              ))}
+            </select>
+          </>
         }
       />
 

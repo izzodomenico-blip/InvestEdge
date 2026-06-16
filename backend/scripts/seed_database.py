@@ -14,7 +14,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend.app.database import db_session, init_db
+from backend.app.database import ISIN_BY_SYMBOL, db_session, init_db
 from backend.app.models import PortfolioInitIn, SimulatedOrderIn
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
@@ -218,9 +218,9 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             connection.execute(
                 """
                 INSERT INTO assets (
-                    symbol, name, asset_type, currency, exchange, sector, country, risk_level, created_at, updated_at
+                    symbol, name, asset_type, currency, exchange, sector, country, risk_level, isin, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, asset_type) DO UPDATE SET
                     name = excluded.name,
                     currency = excluded.currency,
@@ -228,6 +228,7 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
                     sector = excluded.sector,
                     country = excluded.country,
                     risk_level = excluded.risk_level,
+                    isin = excluded.isin,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -239,6 +240,7 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
                     asset["sector"],
                     asset["country"],
                     asset["risk_level"],
+                    ISIN_BY_SYMBOL.get(asset["symbol"]),
                     SEED_CREATED_AT,
                     SEED_CREATED_AT,
                 ),

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BadgeDollarSign, Banknote, PieChart as PieChartIcon, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AlertTriangle, ChevronRight, RefreshCw, RotateCcw } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -15,10 +16,10 @@ import {
 } from "recharts";
 
 import { AllocationPlanner } from "../components/AllocationPlanner";
-import { MetricCard } from "../components/MetricCard";
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SignalBadge } from "../components/SignalBadge";
+import { Tabs } from "../components/Tabs";
 import { TradeButton } from "../components/TradeButton";
 import {
   apiGet,
@@ -40,6 +41,8 @@ const assetTypeLabels: Record<string, string> = {
   bond_etf: "ETF bond",
 };
 
+type TabId = "positions" | "allocation" | "trend" | "risk";
+
 function pnlClass(value: number) {
   return value >= 0 ? "text-emerald-300" : "text-rose-300";
 }
@@ -58,6 +61,7 @@ function recommendationTone(value: string | null) {
 }
 
 export function PortfolioPage() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
@@ -68,6 +72,7 @@ export function PortfolioPage() {
   const [resetCash, setResetCash] = useState("10000");
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState<TabId>("positions");
 
   async function loadPortfolio() {
     setLoading(true);
@@ -183,23 +188,15 @@ export function PortfolioPage() {
     );
   }
 
+  const openAsset = (symbol: string) => navigate(`/analysis?symbol=${encodeURIComponent(symbol)}`);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         eyebrow="Paper trading"
         index="03"
         title="Portafoglio"
         subtitle="Posizioni simulate, allocation, P/L e warning di rischio. Nessun ordine reale viene inviato."
-        meta={
-          <>
-            <span>
-              Posizioni <span className="text-cyan-300/80">{summary.positions.length}</span>
-            </span>
-            <span>
-              Warning <span className="text-cyan-300/80">{summary.risk_warnings.length}</span>
-            </span>
-          </>
-        }
         actions={
           <>
             <PageHeaderAction
@@ -258,115 +255,168 @@ export function PortfolioPage() {
         </Panel>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} delta="Cash + posizioni" tone="cyan" icon={BadgeDollarSign} />
-        <MetricCard label="Liquidita" value={formatCurrency(summary.cash, baseCurrency)} delta={`${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del portafoglio`} tone="green" icon={Banknote} />
-        <MetricCard label="Capitale investito" value={formatCurrency(summary.invested_value, baseCurrency)} delta={`${summary.positions.length} posizioni aperte`} tone="amber" icon={PieChartIcon} />
-        <MetricCard label="P/L totale" value={formatCurrency(summary.total_pnl, baseCurrency)} delta={formatPercent(summary.total_pnl_percent)} tone={summary.total_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <MetricCard label="P/L realizzato" value={formatCurrency(summary.realized_pnl, baseCurrency)} delta="Da vendite simulate" tone={summary.realized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
-        <MetricCard label="P/L non realizzato" value={formatCurrency(summary.unrealized_pnl, baseCurrency)} delta="Su posizioni aperte" tone={summary.unrealized_pnl >= 0 ? "green" : "rose"} icon={TrendingUp} />
-        <MetricCard label="Warning rischio" value={`${summary.risk_warnings.length}`} delta="Concentrazione e liquidita" tone={summary.risk_warnings.length ? "rose" : "green"} icon={AlertTriangle} />
-      </div>
-
-      <AllocationPlanner />
-
-      <Panel title="Posizioni">
-        {summary.positions.length === 0 ? (
-          <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
-            <h2 className="font-semibold text-amber-100">Portafoglio non inizializzato</h2>
-            <p className="mt-2 text-sm text-slate-300">Esegui il seed oppure inizializza un portafoglio dal backend con `/portfolio/init`.</p>
-          </div>
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {summary.positions.map((position) => {
-              const recommendation = recommendationBySymbol.get(position.symbol);
-              const reco = recommendation?.final_recommendation ?? position.recommendation ?? "HOLD";
-              return (
-                <article key={position.symbol} className="rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 shadow-panel">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-mono text-base font-semibold text-white">{position.symbol}</p>
-                        {position.technical_signal ? <SignalBadge signal={position.technical_signal} size="sm" /> : null}
-                      </div>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {assetTypeLabels[position.asset_type] ?? position.asset_type} · {position.quantity.toLocaleString("it-IT")} quote · peso {position.weight_percent.toFixed(0)}%
-                      </p>
-                    </div>
-                    <span className={`inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(reco)}`}>
-                      {reco}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
-                      <p className="eyebrow-muted">Valore</p>
-                      <p className="num mt-1 text-sm font-semibold text-white">{formatCurrency(position.current_value, position.currency)}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
-                      <p className="eyebrow-muted">P/L</p>
-                      <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl)}`}>{formatCurrency(position.unrealized_pnl, position.currency)}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
-                      <p className="eyebrow-muted">P/L %</p>
-                      <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl_percent)}`}>{formatPercent(position.unrealized_pnl_percent)}</p>
-                    </div>
-                  </div>
-
-                  <p className="mt-3 text-xs text-slate-500">
-                    Medio {formatCurrency(position.average_price, position.currency)} → attuale {formatCurrency(position.current_price, position.currency)}
-                  </p>
-                  {recommendation?.reason && <p className="mt-1 text-xs text-slate-500">{recommendation.reason}</p>}
-
-                  <div className="mt-3 flex items-center gap-2 border-t border-slate-800/60 pt-3">
-                    <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
-                    <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SELL" maxQuantity={position.quantity} onDone={() => void loadPortfolio()} />
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
+      {/* Riga riassuntiva compatta: i numeri chiave sempre visibili in alto */}
+      <Panel bare className="px-1">
+        <div className="grid grid-cols-2 divide-slate-800/60 sm:grid-cols-4 sm:divide-x">
+          <SummaryStat label="Valore totale" value={formatCurrency(summary.total_value, baseCurrency)} hint="Cash + posizioni" />
+          <SummaryStat
+            label="P/L totale"
+            value={formatCurrency(summary.total_pnl, baseCurrency)}
+            hint={formatPercent(summary.total_pnl_percent)}
+            tone={summary.total_pnl >= 0 ? "pos" : "neg"}
+          />
+          <SummaryStat label="Liquidità" value={formatCurrency(summary.cash, baseCurrency)} hint={`${formatPercent((summary.cash / Math.max(summary.total_value, 1)) * 100)} del totale`} />
+          <SummaryStat label="Investito" value={formatCurrency(summary.invested_value, baseCurrency)} hint={`${summary.positions.length} posizioni`} />
+        </div>
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Panel title="Allocation asset class">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={allocationByType} layout="vertical" margin={{ left: 18, right: 12, top: 8, bottom: 8 }}>
-                <XAxis type="number" stroke="#64748B" axisLine={false} tickLine={false} unit="%" />
-                <YAxis dataKey="name" type="category" stroke="#94A3B8" axisLine={false} tickLine={false} width={82} />
-                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [`${Number(value).toFixed(2)}%`, "Peso"]} />
-                <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-                  {allocationByType.map((item) => (
-                    <Cell key={item.name} fill={item.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
+      <Tabs
+        active={tab}
+        onChange={(id) => setTab(id as TabId)}
+        tabs={[
+          { id: "positions", label: "Posizioni", badge: summary.positions.length },
+          { id: "allocation", label: "Allocazione" },
+          { id: "trend", label: "Andamento" },
+          {
+            id: "risk",
+            label: "Rischio",
+            badge: summary.risk_warnings.length || undefined,
+          },
+        ]}
+      />
 
-        <Panel title="Allocation valuta">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={allocationByCurrency} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={3}>
-                  {allocationByCurrency.map((item) => (
-                    <Cell key={item.name} fill={item.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [`${Number(value).toFixed(2)}%`, "Peso"]} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
+      {tab === "positions" && (
+        <Panel
+          title="Posizioni"
+          eyebrow="Clicca una posizione per aprirne la scheda completa"
+        >
+          {summary.positions.length === 0 ? (
+            <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-5">
+              <h2 className="font-semibold text-amber-100">Nessuna posizione aperta</h2>
+              <p className="mt-2 text-sm text-slate-300">
+                Compra un titolo dalla Watchlist o dall'Analisi, oppure usa il pianificatore di allocazione.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {summary.positions.map((position) => {
+                const recommendation = recommendationBySymbol.get(position.symbol);
+                const reco = recommendation?.final_recommendation ?? position.recommendation ?? "HOLD";
+                return (
+                  <article
+                    key={position.symbol}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openAsset(position.symbol)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openAsset(position.symbol);
+                      }
+                    }}
+                    className="group cursor-pointer rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 shadow-panel transition hover:border-cyan-300/40 hover:bg-slate-900/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-base font-semibold text-white">
+                            {position.name ?? position.symbol}
+                          </p>
+                          {position.technical_signal ? <SignalBadge signal={position.technical_signal} size="sm" /> : null}
+                        </div>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                          <span className="font-mono text-slate-400">{position.symbol}</span>
+                          {position.isin ? <span className="font-mono text-slate-600">· {position.isin}</span> : null}
+                          <span>· {assetTypeLabels[position.asset_type] ?? position.asset_type}</span>
+                          <span>· {position.quantity.toLocaleString("it-IT", { maximumFractionDigits: 6 })} quote</span>
+                          <span>· peso {position.weight_percent.toFixed(0)}%</span>
+                        </p>
+                      </div>
+                      <span className={`inline-flex shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${recommendationTone(reco)}`}>
+                        {reco}
+                      </span>
+                    </div>
 
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                        <p className="eyebrow-muted">Valore</p>
+                        <p className="num mt-1 text-sm font-semibold text-white">{formatCurrency(position.current_value, position.currency)}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                        <p className="eyebrow-muted">P/L</p>
+                        <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl)}`}>{formatCurrency(position.unrealized_pnl, position.currency)}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 p-2.5">
+                        <p className="eyebrow-muted">P/L %</p>
+                        <p className={`num mt-1 text-sm font-semibold ${pnlClass(position.unrealized_pnl_percent)}`}>{formatPercent(position.unrealized_pnl_percent)}</p>
+                      </div>
+                    </div>
+
+                    <p className="mt-3 text-xs text-slate-500">
+                      Medio {formatCurrency(position.average_price, position.currency)} → attuale {formatCurrency(position.current_price, position.currency)}
+                    </p>
+                    {recommendation?.reason && <p className="mt-1 text-xs text-slate-500">{recommendation.reason}</p>}
+
+                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-800/60 pt-3">
+                      <div className="flex items-center gap-2">
+                        <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Compra ancora" onDone={() => void loadPortfolio()} />
+                        <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SELL" maxQuantity={position.quantity} onDone={() => void loadPortfolio()} />
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300/70 transition group-hover:text-cyan-200">
+                        Apri scheda
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      </span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {tab === "allocation" && (
+        <div className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-2">
+            <Panel title="Allocation asset class">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={allocationByType} layout="vertical" margin={{ left: 18, right: 12, top: 8, bottom: 8 }}>
+                    <XAxis type="number" stroke="#64748B" axisLine={false} tickLine={false} unit="%" />
+                    <YAxis dataKey="name" type="category" stroke="#94A3B8" axisLine={false} tickLine={false} width={82} />
+                    <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [`${Number(value).toFixed(2)}%`, "Peso"]} />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                      {allocationByType.map((item) => (
+                        <Cell key={item.name} fill={item.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+
+            <Panel title="Allocation valuta">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={allocationByCurrency} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={3}>
+                      {allocationByCurrency.map((item) => (
+                        <Cell key={item.name} fill={item.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [`${Number(value).toFixed(2)}%`, "Peso"]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          </div>
+          <AllocationPlanner />
+        </div>
+      )}
+
+      {tab === "trend" && (
         <Panel title="Andamento portafoglio">
-          <div className="h-72">
+          <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={snapshots} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
                 <XAxis dataKey="snapshot_date" hide />
@@ -377,22 +427,57 @@ export function PortfolioPage() {
             </ResponsiveContainer>
           </div>
         </Panel>
-      </div>
+      )}
 
-      <Panel title="Risk warnings">
-        {summary.risk_warnings.length === 0 ? (
-          <p className="text-sm text-emerald-300">Nessun warning attivo sui limiti configurati.</p>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {summary.risk_warnings.map((warning) => (
-              <div key={`${warning.code}-${warning.symbol ?? "portfolio"}`} className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-4">
-                <p className="text-sm font-semibold text-amber-100">{warning.code}</p>
-                <p className="mt-2 text-sm text-slate-300">{warning.message}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
+      {tab === "risk" && (
+        <Panel title="Warning di rischio">
+          {summary.risk_warnings.length === 0 ? (
+            <p className="flex items-center gap-2 text-sm text-emerald-300">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              Nessun warning attivo sui limiti configurati.
+            </p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {summary.risk_warnings.map((warning) => (
+                <div key={`${warning.code}-${warning.symbol ?? "portfolio"}`} className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-4">
+                  <p className="text-sm font-semibold text-amber-100">{warning.code}</p>
+                  <p className="mt-2 text-sm text-slate-300">{warning.message}</p>
+                  {warning.symbol && (
+                    <button
+                      onClick={() => openAsset(warning.symbol as string)}
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-cyan-300 hover:text-cyan-200"
+                    >
+                      Apri {warning.symbol}
+                      <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "pos" | "neg";
+}) {
+  const hintClass = tone === "pos" ? "text-emerald-300" : tone === "neg" ? "text-rose-300" : "text-slate-500";
+  return (
+    <div className="px-5 py-4">
+      <p className="eyebrow-muted">{label}</p>
+      <p className="num mt-1 text-xl font-semibold text-white">{value}</p>
+      {hint && <p className={`mt-0.5 text-xs ${hintClass}`}>{hint}</p>}
     </div>
   );
 }

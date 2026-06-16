@@ -19,6 +19,7 @@ export type Asset = {
   id: number;
   symbol: string;
   name: string;
+  isin: string | null;
   asset_type: string;
   exchange: string | null;
   currency: string;
@@ -221,6 +222,8 @@ export type PortfolioPosition = {
   id: number;
   asset_id: number;
   symbol: string;
+  name: string | null;
+  isin: string | null;
   asset_type: string;
   quantity: number;
   average_price: number;

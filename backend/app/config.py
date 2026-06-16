@@ -42,6 +42,8 @@ class Settings:
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
+    yahoo_daily_limit: int = 0
+    yahoo_history_range: str = "5y"
     enable_real_news: bool = False
     finnhub_api_key: str | None = None
     news_cache_ttl_hours: int = 6
@@ -86,6 +88,8 @@ class Settings:
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),
+            yahoo_daily_limit=int(os.getenv("YAHOO_DAILY_LIMIT", "0")),
+            yahoo_history_range=os.getenv("YAHOO_HISTORY_RANGE", "5y"),
             enable_real_news=os.getenv("ENABLE_REAL_NEWS", "false").lower() == "true",
             finnhub_api_key=os.getenv("FINNHUB_API_KEY") or None,
             news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),

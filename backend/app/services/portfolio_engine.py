@@ -310,13 +310,19 @@ class PortfolioEngine:
         now: str,
     ) -> None:
         position = self._position_row(connection, asset["id"])
-        if position is None or float(position["quantity"]) < float(quantity):
+        # Tolleranza di arrotondamento: la quantita' mostrata in app e' arrotondata,
+        # quindi "Vendi tutto" puo' chiedere un filo piu' di quanto in DB.
+        if position is None or float(position["quantity"]) + 1e-6 < float(quantity):
             raise ValueError("Quantita insufficiente per completare il SELL simulato.")
 
         old_quantity = float(position["quantity"])
         average_price = float(position["average_price"])
-        sell_quantity = float(quantity)
+        sell_quantity = min(float(quantity), old_quantity)  # non vendere piu di quanto si possiede
         new_quantity = old_quantity - sell_quantity
+        # Vendita totale: azzera il residuo in virgola mobile cosi' la posizione
+        # sparisce dal portafoglio (il filtro quantity > 0 la nasconde).
+        if new_quantity <= 1e-6:
+            new_quantity = 0.0
         realized_delta = ((price - average_price) * sell_quantity) - fees
         remaining_invested = max(0.0, float(position["invested_amount"]) - (average_price * sell_quantity))
 
@@ -458,8 +464,11 @@ class PortfolioEngine:
             """
             SELECT
                 pp.*,
+                a.name AS asset_name,
+                a.isin AS asset_isin,
                 sig.signal AS technical_signal
             FROM portfolio_positions pp
+            LEFT JOIN assets a ON a.id = pp.asset_id
             LEFT JOIN signals sig ON sig.id = (
                 SELECT s.id FROM signals s
                 WHERE s.asset_id = pp.asset_id
@@ -476,8 +485,9 @@ class PortfolioEngine:
     def get_position(self, connection: sqlite3.Connection, asset_id: int) -> PortfolioPositionOut | None:
         row = connection.execute(
             """
-            SELECT pp.*, sig.signal AS technical_signal
+            SELECT pp.*, a.name AS asset_name, a.isin AS asset_isin, sig.signal AS technical_signal
             FROM portfolio_positions pp
+            LEFT JOIN assets a ON a.id = pp.asset_id
             LEFT JOIN signals sig ON sig.id = (
                 SELECT s.id FROM signals s
                 WHERE s.asset_id = pp.asset_id
@@ -495,12 +505,15 @@ class PortfolioEngine:
         return self._position_out(row, recommendations.get(row["symbol"]))
 
     def _position_out(self, row: sqlite3.Row, recommendation: str | None = None) -> PortfolioPositionOut:
+        keys = row.keys()
         return PortfolioPositionOut(
             id=row["id"],
             asset_id=row["asset_id"],
             symbol=row["symbol"],
+            name=row["asset_name"] if "asset_name" in keys else None,
+            isin=row["asset_isin"] if "asset_isin" in keys else None,
             asset_type=row["asset_type"],
-            quantity=_round(row["quantity"]),
+            quantity=round(float(row["quantity"]), 8),
             average_price=_round(row["average_price"]),
             invested_amount=_round(row["invested_amount"]),
             current_price=_round(row["current_price"]),
