@@ -8,7 +8,7 @@ import { formatCurrency } from "../lib/format";
 type Props = {
   symbol: string;
   price: number | null | undefined;
-  side?: "BUY" | "SELL" | "SHORT";
+  side?: "BUY" | "SELL" | "SHORT" | "COVER";
   maxQuantity?: number;
   currency?: string;
   assetType?: string;
@@ -44,6 +44,7 @@ export function TradeButton({
 }: Props) {
   const isBuy = side === "BUY";
   const isShort = side === "SHORT";
+  const isCover = side === "COVER"; // riacquisto per chiudere uno short (BUY a quantità)
   const px = price ?? 0;
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -109,6 +110,7 @@ export function TradeButton({
         setPortfolioBase(null);
       }
     }
+    // isCover / isSell: il campo quantità è già precompilato con maxQuantity (sopra).
   }
 
   function close(e: React.MouseEvent) {
@@ -131,7 +133,7 @@ export function TradeButton({
     }
     setBusy(true);
     try {
-      const orderType: "BUY" | "SELL" = isShort ? "SELL" : (side as "BUY" | "SELL");
+      const orderType: "BUY" | "SELL" = isShort ? "SELL" : isBuy || isCover ? "BUY" : "SELL";
       const payload: SimulatedOrderInput = { symbol, order_type: orderType, quantity, allow_short: isShort };
       await apiPost<OrderSimulationResponse>("/orders/simulate", payload);
       setMsg(
@@ -139,7 +141,9 @@ export function TradeButton({
           ? `Comprato ✓ ${quantity.toFixed(4)} quote di ${symbol}. È nel tuo portafoglio.`
           : isShort
             ? `Short aperto ✓ ${quantity.toFixed(4)} quote di ${symbol}. Guadagni se scende, perdi se sale.`
-            : `Venduto ✓ ${quantity.toFixed(4)} quote di ${symbol}.`,
+            : isCover
+              ? `Ricoperto ✓ ${quantity.toFixed(4)} quote di ${symbol}. Short ridotto/chiuso.`
+              : `Venduto ✓ ${quantity.toFixed(4)} quote di ${symbol}.`,
       );
       onDone?.();
       setTimeout(() => setOpen(false), 1200);
@@ -150,13 +154,14 @@ export function TradeButton({
     }
   }
 
-  const defaultClass = isBuy
+  const buyLike = isBuy || isCover; // pulsante verde, è un acquisto
+  const defaultClass = buyLike
     ? "inline-flex items-center gap-1.5 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/25"
     : isShort
       ? "inline-flex items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-400/15 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/25"
       : "inline-flex items-center gap-1.5 rounded-md border border-rose-300/30 bg-rose-400/15 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-400/25";
 
-  const title = isBuy ? "Compra" : isShort ? "Vendi allo scoperto" : "Vendi";
+  const title = isBuy ? "Compra" : isShort ? "Vendi allo scoperto" : isCover ? "Ricopri lo short" : "Vendi";
 
   const modal = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={close}>
@@ -225,6 +230,17 @@ export function TradeButton({
                 </div>
               </div>
             )}
+            {isCover && (
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-300/25 bg-emerald-400/[0.07] p-3 text-sm text-slate-200">
+                <ShoppingCart className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" aria-hidden="true" />
+                <div>
+                  <p>Ricompri le quote per <b className="text-emerald-200">chiudere lo short</b>.</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    "Ricopri tutto" chiude la posizione per intero{maxQuantity ? ` (${maxQuantity.toLocaleString("it-IT")} quote)` : ""}.
+                  </p>
+                </div>
+              </div>
+            )}
             {isShort && suggestedQty != null && suggestedQty > 0 && (
               <div className="mt-3 flex items-start gap-3 rounded-xl border border-cyan-300/25 bg-cyan-400/[0.07] p-3">
                 <Lightbulb className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" aria-hidden="true" />
@@ -242,24 +258,24 @@ export function TradeButton({
               <span className="text-sm text-slate-300">
                 {isShort
                   ? "Quante quote vendere allo scoperto"
-                  : `Quante quote vendere${maxQuantity ? ` (max ${maxQuantity.toLocaleString("it-IT")})` : ""}`}
+                  : isCover
+                    ? `Quante quote ricoprire${maxQuantity ? ` (max ${maxQuantity.toLocaleString("it-IT")})` : ""}`
+                    : `Quante quote vendere${maxQuantity ? ` (max ${maxQuantity.toLocaleString("it-IT")})` : ""}`}
               </span>
               <input
                 type="number"
                 value={qty}
                 onChange={(e) => setQty(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white outline-none focus:border-rose-300/60"
+                className={`w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-base text-white outline-none ${buyLike ? "focus:border-emerald-300/60" : "focus:border-rose-300/60"}`}
               />
-              {maxQuantity && !isShort ? (
-                <button onClick={(e) => { e.stopPropagation(); setQty(String(maxQuantity)); }} className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">
-                  Vendi tutto
+              {maxQuantity && (isCover || (!isShort && !isCover)) ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setQty(String(maxQuantity)); }}
+                  className="text-xs font-semibold text-cyan-300 hover:text-cyan-200"
+                >
+                  {isCover ? "Ricopri tutto" : "Vendi tutto"}
                 </button>
               ) : null}
-              {isShort && suggestedQty != null && suggestedQty > 0 && Number(qty) !== suggestedQty && (
-                <button onClick={(e) => { e.stopPropagation(); setQty(String(suggestedQty)); }} className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">
-                  Usa la quantità consigliata
-                </button>
-              )}
             </label>
             {isShort && portfolioBase != null && px > 0 && Number(qty) * px > portfolioBase && (
               <p className="mt-2 rounded-lg border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
@@ -280,14 +296,14 @@ export function TradeButton({
             onClick={confirm}
             disabled={busy}
             className={
-              isBuy
+              buyLike
                 ? "rounded-lg border border-emerald-300/40 bg-emerald-400/20 px-5 py-2.5 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-400/30 disabled:opacity-60"
                 : isShort
                   ? "rounded-lg border border-amber-300/40 bg-amber-400/20 px-5 py-2.5 text-sm font-semibold text-amber-50 transition hover:bg-amber-400/30 disabled:opacity-60"
                   : "rounded-lg border border-rose-300/40 bg-rose-400/20 px-5 py-2.5 text-sm font-semibold text-rose-50 transition hover:bg-rose-400/30 disabled:opacity-60"
             }
           >
-            {busy ? "..." : isBuy ? "Conferma acquisto" : isShort ? "Conferma short" : "Conferma vendita"}
+            {busy ? "..." : isBuy ? "Conferma acquisto" : isShort ? "Conferma short" : isCover ? "Conferma riacquisto" : "Conferma vendita"}
           </button>
         </div>
       </div>
@@ -297,7 +313,7 @@ export function TradeButton({
   return (
     <>
       <button type="button" onClick={openModal} className={className ?? defaultClass}>
-        {isBuy ? <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
+        {buyLike ? <ShoppingCart className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
         {label ?? title}
       </button>
       {open && createPortal(modal, document.body)}

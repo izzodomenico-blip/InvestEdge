@@ -396,7 +396,7 @@ export function PortfolioPage() {
                       <div className="flex items-center gap-2">
                         {isShort ? (
                           <>
-                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} assetType={position.asset_type} side="BUY" label="Ricopri" onDone={() => void loadPortfolio()} />
+                            <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="COVER" maxQuantity={Math.abs(position.quantity)} label="Ricopri" onDone={() => void loadPortfolio()} />
                             <TradeButton symbol={position.symbol} price={position.current_price} currency={position.currency} side="SHORT" label="Aumenta short" onDone={() => void loadPortfolio()} />
                           </>
                         ) : (
