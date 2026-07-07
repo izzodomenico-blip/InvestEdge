@@ -10,6 +10,23 @@ if str(ROOT_DIR) not in sys.path:
 from backend.app.config import get_settings
 from backend.app.database import db_session
 from backend.app.services.alert_service import AlertNotConfigured, send_today_alert
+from backend.app.services.market_data_service import MarketDataService
+
+
+def _refresh_prices() -> None:
+    """Aggiorna i prezzi reali prima dell'alert, cosi' segnali e P&L sono
+    sull'ultima chiusura disponibile e non su dati fermi al refresh precedente."""
+    settings = get_settings()
+    if not settings.enable_real_data:
+        print("ENABLE_REAL_DATA=false: nessun refresh, alert sui dati esistenti.")
+        return
+    try:
+        with db_session() as connection:
+            result = MarketDataService().refresh_all_watchlist(connection, limit=None, force=False)
+        summary = result["summary"]
+        print(f"Prezzi aggiornati: {summary['updated']} ok, {summary['fallback']} in fallback.")
+    except Exception as exc:  # noqa: BLE001 - se il refresh fallisce, invio comunque sull'ultimo dato
+        print(f"Refresh prezzi fallito (invio sull'ultimo dato): {exc}")
 
 
 def main() -> None:
@@ -17,6 +34,7 @@ def main() -> None:
     if not settings.enable_alerts:
         print("Alert disabilitati (ENABLE_ALERTS=false). Niente da inviare.")
         return
+    _refresh_prices()
     try:
         with db_session() as connection:
             result = send_today_alert(connection)
