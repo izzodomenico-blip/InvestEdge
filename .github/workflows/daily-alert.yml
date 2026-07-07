@@ -1,15 +1,22 @@
 name: Daily Alert
 
-# Esegue ogni mattina l'analisi su dati reali e invia il riepilogo "Cosa fare oggi"
-# su Telegram, senza bisogno che il PC dell'utente sia acceso.
+# ALERT CLOUD DISABILITATO (2026-07-07, scelta utente).
+# Motivo: il run cloud gira SENZA il portafoglio reale (cloud_daily.py, reset=False,
+# DB effimero). Risultato: consigliava di comprare titoli gia posseduti (KO, AAPL) e
+# non avvisava MAI di vendere le posizioni, perche il ramo SELL/REDUCE scatta solo sui
+# titoli posseduti. L'alert affidabile e quello LOCALE (attivita pianificata Windows
+# 08:30 -> send_daily_alert.py, che conosce il portafoglio e avvisa dei SELL).
 #
-# Orario: GitHub usa UTC. 06:30 UTC = circa 08:30 in Italia (ora legale) / 07:30 (ora solare).
-# Modifica la riga 'cron' per cambiare orario. Puoi anche lanciarlo a mano da
-# Actions -> Daily Alert -> Run workflow.
+# Per RIATTIVARE il cloud: decommenta il blocco 'schedule' qui sotto — idealmente solo
+# dopo aver reso cloud_daily.py consapevole del portafoglio, altrimenti tornano i consigli
+# fuorvianti. Il lancio manuale (workflow_dispatch) resta disponibile ma invia lo stesso
+# messaggio cieco sul portafoglio: usalo solo per un test.
+#
+# Orario originale: 06:30 UTC = circa 08:30 in Italia (ora legale) / 07:30 (ora solare).
 
 on:
-  schedule:
-    - cron: "30 6 * * *"
+  # schedule:
+  #   - cron: "30 6 * * *"
   workflow_dispatch:
 
 jobs:
