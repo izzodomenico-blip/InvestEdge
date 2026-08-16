@@ -327,23 +327,76 @@ def test_import_parse_holdings_missing_columns() -> None:
 
 import sqlite3 as _sqlite3  # noqa: E402
 
-from backend.app.database import SCHEMA  # noqa: E402
+from backend.app.database import BASE_SCHEMA, SCHEMA, migrate_db  # noqa: E402
 
 
 def _tax_db() -> _sqlite3.Connection:
     conn = _sqlite3.connect(":memory:")
     conn.row_factory = _sqlite3.Row
     conn.executescript(SCHEMA)
-    conn.execute("INSERT INTO assets (id, symbol, name, asset_type, risk_level) VALUES (1, 'AAPL', 'Apple', 'stock', 'medium')")
+    conn.execute(
+        "INSERT INTO assets (id, symbol, name, asset_type, currency, risk_level) "
+        "VALUES (1, 'AAPL', 'Apple', 'stock', 'EUR', 'medium')"
+    )
     conn.execute("INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (1, '2026-05-01', 200, 1)")
     return conn
 
 
-def _order(conn: _sqlite3.Connection, side: str, qty: float, price: float, date: str, fees: float = 0.0) -> None:
+def _tax_asset(
+    conn: _sqlite3.Connection,
+    *,
+    asset_id: int,
+    symbol: str,
+    asset_type: str,
+    tax_category: str,
+    currency: str = "EUR",
+) -> None:
     conn.execute(
-        "INSERT INTO simulated_orders (asset_id, symbol, order_type, side, quantity, price, fees, order_date) "
-        "VALUES (1, 'AAPL', ?, ?, ?, ?, ?, ?)",
-        (side, side, qty, price, fees, date),
+        "INSERT INTO assets (id, symbol, name, asset_type, currency, risk_level, tax_category) "
+        "VALUES (?, ?, ?, ?, ?, 'medium', ?)",
+        (asset_id, symbol, symbol, asset_type, currency, tax_category),
+    )
+
+
+def _order(
+    conn: _sqlite3.Connection,
+    side: str,
+    qty: float,
+    price: float,
+    date: str,
+    fees: float = 0.0,
+    *,
+    asset_id: int = 1,
+    symbol: str = "AAPL",
+    currency: str = "EUR",
+    fx_rate: float = 1.0,
+    fees_base: float | None = None,
+) -> None:
+    resolved_fees_base = fees * fx_rate if fees_base is None else fees_base
+    gross = qty * price
+    net = gross + fees if side == "BUY" else gross - fees
+    conn.execute(
+        "INSERT INTO simulated_orders ("
+        "asset_id, symbol, order_type, side, quantity, price, fees, fees_base, currency, "
+        "fx_rate_to_base, gross_amount, gross_amount_base, net_amount, net_amount_base, order_date"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            asset_id,
+            symbol,
+            side,
+            side,
+            qty,
+            price,
+            fees,
+            resolved_fees_base,
+            currency,
+            fx_rate,
+            gross,
+            gross * fx_rate,
+            net,
+            net * fx_rate,
+            date,
+        ),
     )
 
 
@@ -360,6 +413,7 @@ def test_tax_fifo_gain() -> None:
     year = next(y for y in report["years"] if y["tax_year"] == 2026)
     assert year["tax_due"] == 286.0  # 26% di 1100
     assert report["open_lots"][0]["quantity"] == 5.0
+    assert report["lot_method"] == "SIMPLIFIED_FIFO"
     conn.close()
 
 
@@ -379,4 +433,225 @@ def test_tax_loss_carryforward() -> None:
     # 2026: 600 utile - 500 riportato = 100 tassabile -> 26% = 26
     assert y2026["carryforward_used"] == 500.0
     assert y2026["tax_due"] == 26.0
+    conn.close()
+
+
+def test_tax_short_cover_profit_uses_frozen_fx_and_emits_event() -> None:
+    conn = _tax_db()
+    _order(
+        conn,
+        "SELL",
+        10,
+        100,
+        "2025-01-01",
+        fees=10,
+        currency="USD",
+        fx_rate=0.8,
+        fees_base=8,
+    )
+    _order(
+        conn,
+        "BUY",
+        10,
+        80,
+        "2025-02-01",
+        fees=20,
+        currency="USD",
+        fx_rate=0.9,
+        fees_base=18,
+    )
+
+    report = compute_tax_report(conn)
+
+    event = report["events"][0]
+    assert event["open_side"] == "SELL"
+    assert event["close_side"] == "BUY"
+    assert event["realization_date"] == "2025-02-01"
+    assert event["sell_date"] is None
+    assert event["currency"] == "USD"
+    assert event["open_value_native"] == 990.0
+    assert event["close_value_native"] == 820.0
+    assert event["gain_native"] == 170.0
+    assert event["open_value_base"] == 792.0
+    assert event["close_value_base"] == 738.0
+    assert event["gain_base"] == 54.0
+    assert event["gain"] == 54.0
+    assert event["applied_rate"] == 26.0
+    assert report["total_tax_due"] == 14.04
+    assert report["open_lots"] == []
+    conn.close()
+
+
+def test_tax_short_cover_loss_creates_loss_bucket() -> None:
+    conn = _tax_db()
+    _order(conn, "SELL", 10, 100, "2025-01-01")
+    _order(conn, "BUY", 10, 120, "2025-02-01")
+
+    report = compute_tax_report(conn)
+
+    event = report["events"][0]
+    assert event["open_side"] == "SELL"
+    assert event["close_side"] == "BUY"
+    assert event["gain_base"] == -200.0
+    assert report["total_tax_due"] == 0.0
+    assert report["loss_carryforward_buckets"] == [
+        {
+            "tax_category": "standard",
+            "origin_year": 2025,
+            "expires_after_year": 2029,
+            "remaining": 200.0,
+        }
+    ]
+    conn.close()
+
+
+def test_tax_flips_allocate_fees_between_closed_and_open_lots() -> None:
+    conn = _tax_db()
+    _order(conn, "BUY", 10, 100, "2025-01-01", fees=10)
+    _order(conn, "SELL", 15, 120, "2025-02-01", fees=15)
+    _order(conn, "BUY", 10, 100, "2025-03-01", fees=10)
+
+    report = compute_tax_report(conn)
+
+    long_close = next(event for event in report["events"] if event["close_side"] == "SELL")
+    short_close = next(event for event in report["events"] if event["close_side"] == "BUY")
+    assert long_close["quantity"] == 10.0
+    assert long_close["open_value_native"] == 1010.0
+    assert long_close["close_value_native"] == 1190.0
+    assert long_close["gain_native"] == 180.0
+    assert short_close["quantity"] == 5.0
+    assert short_close["open_value_native"] == 595.0
+    assert short_close["close_value_native"] == 505.0
+    assert short_close["gain_native"] == 90.0
+    assert len(report["open_lots"]) == 1
+    open_lot = report["open_lots"][0]
+    assert open_lot["quantity"] == 5.0
+    assert open_lot["open_value_native"] == 505.0
+    assert open_lot["open_value_base"] == 505.0
+    assert open_lot["open_side"] == "BUY"
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    ("origin_year", "carry_used", "carry_expired", "tax_due"),
+    [
+        (2020, 0.0, 500.0, 156.0),
+        (2021, 500.0, 0.0, 26.0),
+    ],
+)
+def test_tax_loss_carryforward_expires_after_four_periods(
+    origin_year: int,
+    carry_used: float,
+    carry_expired: float,
+    tax_due: float,
+) -> None:
+    conn = _tax_db()
+    _order(conn, "BUY", 10, 200, f"{origin_year}-01-01")
+    _order(conn, "SELL", 10, 150, f"{origin_year}-06-01")
+    _order(conn, "BUY", 10, 100, "2025-01-01")
+    _order(conn, "SELL", 10, 160, "2025-06-01")
+
+    report = compute_tax_report(conn)
+
+    year = next(item for item in report["years"] if item["tax_year"] == 2025)
+    assert year["carryforward_used"] == carry_used
+    assert year["carryforward_expired"] == carry_expired
+    assert year["tax_due"] == tax_due
+    conn.close()
+
+
+def test_tax_rates_use_explicit_category_and_realization_year() -> None:
+    conn = _tax_db()
+    _tax_asset(
+        conn,
+        asset_id=2,
+        symbol="BOND_ETF",
+        asset_type="bond_etf",
+        tax_category="standard",
+    )
+    _tax_asset(conn, asset_id=3, symbol="BTC", asset_type="crypto", tax_category="crypto")
+    _order(conn, "BUY", 1, 100, "2026-01-01", asset_id=2, symbol="BOND_ETF")
+    _order(conn, "SELL", 1, 200, "2026-02-01", asset_id=2, symbol="BOND_ETF")
+    _order(conn, "BUY", 1, 100, "2025-01-01", asset_id=3, symbol="BTC")
+    _order(conn, "SELL", 1, 200, "2025-02-01", asset_id=3, symbol="BTC")
+    _order(conn, "BUY", 1, 100, "2026-03-01", asset_id=3, symbol="BTC")
+    _order(conn, "SELL", 1, 200, "2026-04-01", asset_id=3, symbol="BTC")
+
+    report = compute_tax_report(conn)
+
+    bond_etf = next(event for event in report["events"] if event["symbol"] == "BOND_ETF")
+    crypto_2025 = next(
+        event for event in report["events"] if event["symbol"] == "BTC" and event["tax_year"] == 2025
+    )
+    crypto_2026 = next(
+        event for event in report["events"] if event["symbol"] == "BTC" and event["tax_year"] == 2026
+    )
+    assert bond_etf["tax_category"] == "standard"
+    assert bond_etf["applied_rate"] == 26.0
+    assert crypto_2025["applied_rate"] == 26.0
+    assert crypto_2026["applied_rate"] == 33.0
+    conn.close()
+
+
+def test_tax_current_report_discards_expired_bucket_without_later_events() -> None:
+    conn = _tax_db()
+    _order(conn, "BUY", 10, 200, "2020-01-01")
+    _order(conn, "SELL", 10, 150, "2020-06-01")
+
+    report = compute_tax_report(conn)
+
+    historical_year = next(item for item in report["years"] if item["tax_year"] == 2020)
+    assert historical_year["carryforward_remaining"] == 500.0
+    assert report["loss_carryforward"] == 0.0
+    assert report["loss_carryforward_buckets"] == []
+    conn.close()
+
+
+def test_tax_same_year_losses_do_not_count_as_carryforward_used() -> None:
+    conn = _tax_db()
+    _order(conn, "BUY", 10, 200, "2025-01-01")
+    _order(conn, "SELL", 10, 150, "2025-03-01")
+    _order(conn, "BUY", 10, 100, "2025-05-01")
+    _order(conn, "SELL", 10, 160, "2025-07-01")
+
+    report = compute_tax_report(conn)
+
+    year = next(item for item in report["years"] if item["tax_year"] == 2025)
+    assert year["current_year_losses_used"] == 500.0
+    assert year["carryforward_used"] == 0.0
+    assert year["tax_due"] == 26.0
+    conn.close()
+
+
+def test_tax_category_migration_backfills_known_assets_idempotently() -> None:
+    legacy_tax_column = (
+        "    tax_category TEXT NOT NULL DEFAULT 'standard'\n"
+        "        CHECK(tax_category IN ('standard', 'government_bond', 'crypto', 'euro_emt')),\n"
+    )
+    legacy_schema = BASE_SCHEMA.replace(legacy_tax_column, "")
+    assert legacy_schema != BASE_SCHEMA
+    conn = _sqlite3.connect(":memory:")
+    conn.row_factory = _sqlite3.Row
+    conn.executescript(legacy_schema)
+    conn.executemany(
+        "INSERT INTO assets (symbol, name, asset_type, currency, risk_level) "
+        "VALUES (?, ?, ?, 'EUR', 'medium')",
+        [
+            ("BTC", "Bitcoin", "crypto"),
+            ("ETH", "Ethereum", "crypto"),
+            ("BTP10Y", "BTP", "bond"),
+            ("IB01", "Treasury ETF", "bond_etf"),
+        ],
+    )
+
+    migrate_db(conn)
+    migrate_db(conn)
+
+    rows = conn.execute("SELECT symbol, tax_category FROM assets ORDER BY symbol").fetchall()
+    assert {row["symbol"]: row["tax_category"] for row in rows} == {
+        "BTC": "crypto",
+        "BTP10Y": "government_bond",
+        "ETH": "crypto",
+        "IB01": "standard",
+    }
     conn.close()

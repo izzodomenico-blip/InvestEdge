@@ -44,7 +44,7 @@ export function ScenarioPage() {
   }
 
   const chartData = result
-    ? result.class_impacts.map((c) => ({ name: c.asset_class, loss: c.absolute_impact }))
+    ? result.class_impacts.map((c) => ({ name: c.asset_class, impact: c.absolute_impact }))
     : [];
 
   return (
@@ -94,27 +94,31 @@ export function ScenarioPage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Tile label="Valore attuale" value={formatCurrency(result.current_value, "EUR")} tone="text-white" />
             <Tile label="Valore sotto stress" value={formatCurrency(result.stressed_value, "EUR")} tone="text-amber-200" />
-            <Tile label="Perdita stimata" value={formatCurrency(result.absolute_loss, "EUR")} tone="text-rose-300" />
+            <Tile
+              label={result.impact_label}
+              value={formatCurrency(result.absolute_impact, "EUR")}
+              tone={result.outcome === "LOSS" ? "text-rose-300" : result.outcome === "GAIN" ? "text-emerald-300" : "text-slate-300"}
+            />
             <div className="rounded-2xl border border-slate-800/60 bg-slate-950/55 p-4 shadow-panel">
               <p className="eyebrow-muted">Rischio scenario</p>
               <span className={`mt-2 inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-sm font-semibold ${riskTone[result.risk_level] ?? riskTone.MEDIUM}`}>
                 <ShieldAlert className="h-4 w-4" aria-hidden="true" />
-                {result.risk_level} · {formatPercent(result.percentage_loss)}
+                {result.risk_level} · {formatPercent(result.percentage_impact)}
               </span>
             </div>
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-            <Panel eyebrow="Impatto per classe" title="Perdita per asset class">
+            <Panel eyebrow="Impatto per classe" title="Impatto per asset class">
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
                     <XAxis type="number" stroke="#64748B" axisLine={false} tickLine={false} />
                     <YAxis dataKey="name" type="category" stroke="#94A3B8" axisLine={false} tickLine={false} width={80} />
                     <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(v) => [formatCurrency(Number(v), "EUR"), "Impatto"]} />
-                    <Bar dataKey="loss" radius={[0, 6, 6, 0]}>
+                    <Bar dataKey="impact" radius={[0, 6, 6, 0]}>
                       {chartData.map((item) => (
-                        <Cell key={item.name} fill={item.loss < 0 ? "#FB7185" : "#34D399"} />
+                        <Cell key={item.name} fill={item.impact < 0 ? "#FB7185" : "#34D399"} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -140,12 +144,12 @@ export function ScenarioPage() {
                 <div key={impact.symbol} className="rounded-xl border border-slate-800/60 bg-slate-950/55 p-3">
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-sm font-semibold text-white">{impact.symbol}</span>
-                    <span className="num text-xs font-semibold text-rose-300">{formatPercent(impact.shock_percent)}</span>
+                    <span className={`num text-xs font-semibold ${impact.outcome === "LOSS" ? "text-rose-300" : impact.outcome === "GAIN" ? "text-emerald-300" : "text-slate-300"}`}>{formatPercent(impact.shock_percent)}</span>
                   </div>
                   <p className="num mt-1 text-sm text-slate-300">
                     {formatCurrency(impact.current_value, "EUR")} → {formatCurrency(impact.stressed_value, "EUR")}
                   </p>
-                  <p className="num mt-0.5 text-xs text-rose-300">{formatCurrency(impact.absolute_impact, "EUR")}</p>
+                  <p className={`num mt-0.5 text-xs ${impact.outcome === "LOSS" ? "text-rose-300" : impact.outcome === "GAIN" ? "text-emerald-300" : "text-slate-300"}`}>{formatCurrency(impact.absolute_impact, "EUR")}</p>
                 </div>
               ))}
             </div>
@@ -155,7 +159,7 @@ export function ScenarioPage() {
 
       {!result && !error && (
         <Panel title="Stress test del portafoglio">
-          <p className="text-sm text-slate-400">Scegli uno scenario qui sopra per vedere la perdita stimata, l'impatto per classe e i suggerimenti di mitigazione. Serve un portafoglio con posizioni.</p>
+          <p className="text-sm text-slate-400">Scegli uno scenario qui sopra per vedere l'impatto stimato, il dettaglio per classe e i suggerimenti di mitigazione. Serve un portafoglio con posizioni.</p>
         </Panel>
       )}
     </div>

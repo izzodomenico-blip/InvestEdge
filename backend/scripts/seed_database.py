@@ -42,13 +42,13 @@ ASSETS: list[dict[str, Any]] = [
     {"symbol": "VOO", "name": "Vanguard S&P 500 ETF", "asset_type": "etf", "currency": "USD", "exchange": "NYSE Arca", "sector": "Broad Market", "country": "USA", "risk_level": "medium", "start_price": 478.0, "drift": 0.08, "volatility": 0.16, "volume": 6_200_000},
     {"symbol": "VWCE", "name": "Vanguard FTSE All-World UCITS ETF", "asset_type": "etf", "currency": "EUR", "exchange": "XETRA", "sector": "Global Equity", "country": "Ireland", "risk_level": "medium", "start_price": 116.0, "drift": 0.07, "volatility": 0.15, "volume": 420_000},
     {"symbol": "AGGH", "name": "iShares Core Global Aggregate Bond UCITS ETF", "asset_type": "etf", "currency": "EUR", "exchange": "XETRA", "sector": "Global Bonds", "country": "Ireland", "risk_level": "low", "start_price": 5.0, "drift": 0.025, "volatility": 0.06, "volume": 1_400_000},
-    {"symbol": "BTC", "name": "Bitcoin", "asset_type": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 64000.0, "drift": 0.20, "volatility": 0.64, "volume": 34_000_000_000},
-    {"symbol": "ETH", "name": "Ethereum", "asset_type": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 3200.0, "drift": 0.18, "volatility": 0.70, "volume": 15_000_000_000},
-    {"symbol": "SOL", "name": "Solana", "asset_type": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 150.0, "drift": 0.25, "volatility": 0.86, "volume": 3_300_000_000},
-    {"symbol": "BNB", "name": "BNB", "asset_type": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "high", "start_price": 580.0, "drift": 0.12, "volatility": 0.58, "volume": 1_900_000_000},
-    {"symbol": "XRP", "name": "XRP", "asset_type": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 0.58, "drift": 0.10, "volatility": 0.78, "volume": 1_700_000_000},
+    {"symbol": "BTC", "name": "Bitcoin", "asset_type": "crypto", "tax_category": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 64000.0, "drift": 0.20, "volatility": 0.64, "volume": 34_000_000_000},
+    {"symbol": "ETH", "name": "Ethereum", "asset_type": "crypto", "tax_category": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 3200.0, "drift": 0.18, "volatility": 0.70, "volume": 15_000_000_000},
+    {"symbol": "SOL", "name": "Solana", "asset_type": "crypto", "tax_category": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 150.0, "drift": 0.25, "volatility": 0.86, "volume": 3_300_000_000},
+    {"symbol": "BNB", "name": "BNB", "asset_type": "crypto", "tax_category": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "high", "start_price": 580.0, "drift": 0.12, "volatility": 0.58, "volume": 1_900_000_000},
+    {"symbol": "XRP", "name": "XRP", "asset_type": "crypto", "tax_category": "crypto", "currency": "USD", "exchange": "Crypto", "sector": "Digital Assets", "country": "Global", "risk_level": "very_high", "start_price": 0.58, "drift": 0.10, "volatility": 0.78, "volume": 1_700_000_000},
     {"symbol": "IB01", "name": "iShares USD Treasury Bond 0-1yr UCITS ETF", "asset_type": "bond_etf", "currency": "USD", "exchange": "LSE", "sector": "Short Treasury", "country": "Ireland", "risk_level": "low", "start_price": 110.0, "drift": 0.035, "volatility": 0.025, "volume": 120_000},
-    {"symbol": "BTP10Y", "name": "Italian Government Bond 10Y", "asset_type": "bond", "currency": "EUR", "exchange": "MOT", "sector": "Government Bonds", "country": "Italy", "risk_level": "medium", "start_price": 96.5, "drift": 0.025, "volatility": 0.09, "volume": 85_000},
+    {"symbol": "BTP10Y", "name": "Italian Government Bond 10Y", "asset_type": "bond", "tax_category": "government_bond", "currency": "EUR", "exchange": "MOT", "sector": "Government Bonds", "country": "Italy", "risk_level": "medium", "start_price": 96.5, "drift": 0.025, "volatility": 0.09, "volume": 85_000},
     {"symbol": "TLT", "name": "iShares 20+ Year Treasury Bond ETF", "asset_type": "bond_etf", "currency": "USD", "exchange": "NASDAQ", "sector": "Long Treasury", "country": "USA", "risk_level": "medium", "start_price": 91.0, "drift": 0.025, "volatility": 0.16, "volume": 41_000_000},
     {"symbol": "IEF", "name": "iShares 7-10 Year Treasury Bond ETF", "asset_type": "bond_etf", "currency": "USD", "exchange": "NASDAQ", "sector": "Intermediate Treasury", "country": "USA", "risk_level": "low", "start_price": 94.0, "drift": 0.025, "volatility": 0.08, "volume": 7_800_000},
     {"symbol": "SHY", "name": "iShares 1-3 Year Treasury Bond ETF", "asset_type": "bond_etf", "currency": "USD", "exchange": "NASDAQ", "sector": "Short Treasury", "country": "USA", "risk_level": "low", "start_price": 81.0, "drift": 0.025, "volatility": 0.025, "volume": 5_900_000},
@@ -241,11 +241,13 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             connection.execute(
                 """
                 INSERT INTO assets (
-                    symbol, name, asset_type, currency, exchange, sector, country, risk_level, isin, created_at, updated_at
+                    symbol, name, asset_type, tax_category, currency, exchange, sector, country,
+                    risk_level, isin, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, asset_type) DO UPDATE SET
                     name = excluded.name,
+                    tax_category = excluded.tax_category,
                     currency = excluded.currency,
                     exchange = excluded.exchange,
                     sector = excluded.sector,
@@ -258,6 +260,7 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
                     asset["symbol"],
                     asset["name"],
                     asset["asset_type"],
+                    asset.get("tax_category", "standard"),
                     asset["currency"],
                     asset["exchange"],
                     asset["sector"],

@@ -31,6 +31,8 @@ ISIN_BY_SYMBOL: dict[str, str] = {
     "SHY": "US4642874329",
 }
 
+GOVERNMENT_BOND_TAX_SYMBOLS = {"BTP10Y"}
+
 BASE_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -39,6 +41,8 @@ CREATE TABLE IF NOT EXISTS assets (
     symbol TEXT NOT NULL,
     name TEXT NOT NULL,
     asset_type TEXT NOT NULL,
+    tax_category TEXT NOT NULL DEFAULT 'standard'
+        CHECK(tax_category IN ('standard', 'government_bond', 'crypto', 'euro_emt')),
     exchange TEXT,
     currency TEXT NOT NULL DEFAULT 'USD',
     sector TEXT,
@@ -388,6 +392,11 @@ MIGRATIONS = {
         ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
         ("risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'medium'"),
         ("isin", "ALTER TABLE assets ADD COLUMN isin TEXT"),
+        (
+            "tax_category",
+            "ALTER TABLE assets ADD COLUMN tax_category TEXT NOT NULL DEFAULT 'standard' "
+            "CHECK(tax_category IN ('standard', 'government_bond', 'crypto', 'euro_emt'))",
+        ),
     ],
     "signals": [
         ("symbol", "ALTER TABLE signals ADD COLUMN symbol TEXT"),
@@ -551,11 +560,13 @@ def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
 
 
 def migrate_db(connection: sqlite3.Connection) -> None:
+    asset_columns_before = _table_columns(connection, "assets")
     position_columns_before = _table_columns(connection, "portfolio_positions")
     order_columns_before = _table_columns(connection, "simulated_orders")
     position_base_columns_added = "fx_rate_to_base" not in position_columns_before
     order_currency_added = "currency" not in order_columns_before
     order_base_columns_added = "fx_rate_to_base" not in order_columns_before
+    tax_category_added = "tax_category" not in asset_columns_before
 
     for table_name, migrations in MIGRATIONS.items():
         columns = _table_columns(connection, table_name)
@@ -576,6 +587,16 @@ def migrate_db(connection: sqlite3.Connection) -> None:
             "UPDATE assets SET isin = ? WHERE UPPER(symbol) = ? AND (isin IS NULL OR isin = '')",
             (isin, symbol),
         )
+
+    if tax_category_added:
+        connection.execute(
+            "UPDATE assets SET tax_category = 'crypto' WHERE LOWER(asset_type) = 'crypto'"
+        )
+        for symbol in GOVERNMENT_BOND_TAX_SYMBOLS:
+            connection.execute(
+                "UPDATE assets SET tax_category = 'government_bond' WHERE UPPER(symbol) = ?",
+                (symbol,),
+            )
 
     if order_currency_added:
         connection.execute(

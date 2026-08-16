@@ -536,7 +536,7 @@ git push -u origin HEAD
 
 **Contract:** Uno short conserva valore firmato negli stress test; SELL può aprire un lotto short e BUY può chiuderlo realizzando P/L; le minusvalenze scadono dopo il quarto periodo successivo; le aliquote dipendono da categoria fiscale esplicita e anno.
 
-- [ ] **Step 1: Scrivere test short e scadenze**
+- [x] **Step 1: Scrivere test short e scadenze**
 
 Testare:
 
@@ -548,11 +548,11 @@ Testare:
 - `bond_etf` standard se non ha categoria governativa esplicita;
 - crypto 2025 al 26% e 2026 al 33%.
 
-- [ ] **Step 2: Correggere scenario firmato**
+- [x] **Step 2: Correggere scenario firmato**
 
 Sostituire `max(0.0, current_value + impact)` con il valore firmato `current_value + impact`. Per le percentuali di classe usare un denominatore assoluto quando il valore è negativo; non etichettare un guadagno short come “perdita”.
 
-- [ ] **Step 3: Aggiungere categoria fiscale esplicita**
+- [x] **Step 3: Aggiungere categoria fiscale esplicita**
 
 Aggiungere `assets.tax_category TEXT NOT NULL DEFAULT 'standard'`. Valori iniziali ammessi: `standard`, `government_bond`, `crypto`, `euro_emt`. Il seed marca BTP come `government_bond`, crypto come `crypto`; gli ETF obbligazionari restano `standard` finché manca una quota governativa verificata.
 
@@ -570,19 +570,19 @@ Fonti da citare nel codice/documentazione:
 - art. 1 comma 24 L. 207/2024 per cripto 33% dal 2026: <https://www.normattiva.it/atto/caricaDettaglioAtto?atto.codiceRedazionale=24G00229>;
 - art. 68 TUIR per riporto non oltre il quarto periodo: <https://www.normattiva.it/uri-res/N2Ls?urn%3Anir%3Apresidente.repubblica%3Adecreto%3A1986-12-22%3B917~art68-com6=>.
 
-- [ ] **Step 4: Implementare lotti firmati senza fingere consulenza fiscale**
+- [x] **Step 4: Implementare lotti firmati senza fingere consulenza fiscale**
 
 Conservare il metodo esistente come `SIMPLIFIED_FIFO` nel report. SELL chiude prima lotti long e apre un lotto short per l'eccedenza; BUY chiude prima short e apre long per l'eccedenza. Ogni evento conserva `open_side`, `close_side`, `realization_date`, valori nativi/base e aliquota applicata, usando i cambi congelati negli ordini dal Task 5 e mai il cambio corrente. Mantenere alias di risposta compatibili solo dove non sono semanticamente falsi.
 
-- [ ] **Step 5: Implementare carryforward per annata**
+- [x] **Step 5: Implementare carryforward per annata**
 
 Non usare un singolo float eterno. Conservare bucket `(origin_year, remaining)` e, prima di ogni anno, scartare quelli con `current_year > origin_year + 4`. Il report deve rendere visibile origine e scadenza oppure includere una nota esplicativa.
 
-- [ ] **Step 6: Aggiornare UI/disclaimer**
+- [x] **Step 6: Aggiornare UI/disclaimer**
 
 La pagina fiscale deve mostrare “Stima fiscale semplificata, non dichiarazione”, metodo usato, fonti/anno e avvertimento per strumenti non classificati.
 
-- [ ] **Step 7: Verificare Task 7**
+- [x] **Step 7: Verificare Task 7**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_engines.py tests\test_api.py -k "tax or short or scenario"
@@ -590,7 +590,7 @@ backend\.venv\Scripts\python.exe -m ruff check backend tests
 npm run build
 ```
 
-- [ ] **Step 8: Commit e push**
+- [x] **Step 8: Commit e push**
 
 ```powershell
 git add backend/app/database.py backend/scripts/seed_database.py backend/app/services/scenario_service.py backend/app/services/tax_service.py backend/app/models/schemas.py frontend/src/lib/api.ts frontend/src/pages/TaxPage.tsx tests/test_engines.py tests/test_api.py

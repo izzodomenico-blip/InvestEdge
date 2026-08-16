@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import sqlite3
 
 import pandas as pd
@@ -498,11 +500,160 @@ def test_tax_report_after_buy_sell(client: TestClient) -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["lot_method"] == "FIFO"
+    assert data["lot_method"] == "SIMPLIFIED_FIFO"
     assert data["standard_rate"] == 26.0
     event = next(e for e in data["events"] if e["symbol"] == "AAPL")
-    assert event["gain"] == 200.0  # 5 * (140 - 100)
-    assert data["total_tax_due"] >= 52.0 - 1e-6  # 26% di 200 = 52
+    assert event["gain_native"] == 200.0  # 5 * (140 - 100) USD
+    assert event["gain_base"] == 184.0  # cambio congelato USD/EUR 0,92
+    assert event["gain"] == 184.0  # alias compatibile espresso nella valuta base EUR
+    assert data["total_tax_due"] >= 47.84 - 1e-6  # 26% di 184 EUR
+
+
+def test_tax_report_after_short_cover(client: TestClient) -> None:
+    _init_flat(client)
+    opened = client.post(
+        "/orders/simulate",
+        json={
+            "symbol": "AAPL",
+            "order_type": "SELL",
+            "quantity": 10,
+            "price": 100,
+            "fees": 0,
+            "allow_short": True,
+        },
+    )
+    covered = client.post(
+        "/orders/simulate",
+        json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 80, "fees": 0},
+    )
+    assert opened.status_code == 200
+    assert covered.status_code == 200
+
+    response = client.get("/tax/report")
+
+    assert response.status_code == 200
+    data = response.json()
+    event = next(item for item in data["events"] if item["symbol"] == "AAPL")
+    assert event["open_side"] == "SELL"
+    assert event["close_side"] == "BUY"
+    assert event["sell_date"] is None
+    assert event["realization_date"]
+    assert event["gain_native"] == 200.0
+    assert event["gain_base"] == 184.0
+    assert event["gain"] == 184.0
+    assert event["applied_rate"] == 26.0
+
+
+def test_seed_assigns_explicit_tax_categories_and_default_is_standard(client: TestClient) -> None:
+    created = client.post(
+        "/assets",
+        json={"symbol": "TAXDEFAULT", "name": "Tax default", "asset_type": "bond_etf", "currency": "EUR"},
+    )
+    assert created.status_code == 201
+
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        rows = connection.execute(
+            "SELECT symbol, tax_category FROM assets WHERE symbol IN ('BTP10Y', 'BTC', 'IB01', 'AGGH', 'TAXDEFAULT')"
+        ).fetchall()
+
+    categories = {row["symbol"]: row["tax_category"] for row in rows}
+    assert categories == {
+        "AGGH": "standard",
+        "BTC": "crypto",
+        "BTP10Y": "government_bond",
+        "IB01": "standard",
+        "TAXDEFAULT": "standard",
+    }
+
+
+def test_asset_tax_category_is_created_read_and_defaulted_safely(client: TestClient) -> None:
+    explicit = client.post(
+        "/assets",
+        json={
+            "symbol": "CRYPTO_EXPLICIT",
+            "name": "Crypto explicit",
+            "asset_type": "crypto",
+            "currency": "EUR",
+            "tax_category": "crypto",
+        },
+    )
+    inferred_crypto = client.post(
+        "/assets",
+        json={
+            "symbol": "CRYPTO_DEFAULT",
+            "name": "Crypto default",
+            "asset_type": "crypto",
+            "currency": "EUR",
+        },
+    )
+    unverified_bond_etf = client.post(
+        "/assets",
+        json={
+            "symbol": "BOND_DEFAULT",
+            "name": "Bond ETF default",
+            "asset_type": "bond_etf",
+            "currency": "EUR",
+        },
+    )
+    invalid = client.post(
+        "/assets",
+        json={
+            "symbol": "INVALID_TAX",
+            "name": "Invalid tax",
+            "asset_type": "stock",
+            "currency": "EUR",
+            "tax_category": "unsupported",
+        },
+    )
+
+    assert explicit.status_code == 201
+    assert inferred_crypto.status_code == 201
+    assert unverified_bond_etf.status_code == 201
+    assert invalid.status_code == 422
+    assert explicit.json()["tax_category"] == "crypto"
+    assert inferred_crypto.json()["tax_category"] == "crypto"
+    assert unverified_bond_etf.json()["tax_category"] == "standard"
+    assets = {item["symbol"]: item for item in client.get("/assets").json()}
+    assert assets["CRYPTO_EXPLICIT"]["tax_category"] == "crypto"
+    assert assets["CRYPTO_DEFAULT"]["tax_category"] == "crypto"
+    assert assets["BOND_DEFAULT"]["tax_category"] == "standard"
+
+
+def test_tax_csv_short_uses_realization_sides_and_native_base_values(client: TestClient) -> None:
+    _init_flat(client)
+    client.post(
+        "/orders/simulate",
+        json={
+            "symbol": "AAPL",
+            "order_type": "SELL",
+            "quantity": 10,
+            "price": 100,
+            "fees": 0,
+            "allow_short": True,
+        },
+    )
+    client.post(
+        "/orders/simulate",
+        json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 80, "fees": 0},
+    )
+
+    response = client.get("/reports/tax.csv")
+
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    event = next(row for row in rows if row["symbol"] == "AAPL")
+    assert event["sell_date"] == ""
+    assert event["realization_date"]
+    assert event["open_side"] == "SELL"
+    assert event["close_side"] == "BUY"
+    assert float(event["open_value_native"]) == 1000.0
+    assert float(event["close_value_native"]) == 800.0
+    assert float(event["gain_native"]) == 200.0
+    assert float(event["open_value_base"]) == 920.0
+    assert float(event["close_value_base"]) == 736.0
+    assert float(event["gain_base"]) == 184.0
 
 
 def test_tax_report_empty(client: TestClient) -> None:
@@ -1463,6 +1614,73 @@ def test_scenario_custom_shocks(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert all(abs(impact["shock_percent"] + 10) < 0.001 for impact in data["asset_impacts"])
+
+
+def test_scenario_preserves_signed_short_liability_and_labels_gain_neutrally(client: TestClient) -> None:
+    _init_flat(client)
+
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        cursor = connection.execute(
+            "INSERT INTO assets (symbol, name, asset_type, currency, risk_level) "
+            "VALUES ('SHORT_EUR', 'Short EUR', 'stock', 'EUR', 'medium')"
+        )
+        connection.execute(
+            "INSERT INTO price_history (asset_id, date, close, source, is_real_data) "
+            "VALUES (?, '2099-01-01', 100, 'test', 1)",
+            (cursor.lastrowid,),
+        )
+
+    opened = client.post(
+        "/orders/simulate",
+        json={
+            "symbol": "SHORT_EUR",
+            "order_type": "SELL",
+            "quantity": 10,
+            "price": 100,
+            "fees": 0,
+            "allow_short": True,
+        },
+    )
+    assert opened.status_code == 200
+
+    adverse = client.post(
+        "/scenarios/run",
+        json={"scenario_type": "CUSTOM", "symbol_shocks": {"SHORT_EUR": 20}},
+    )
+
+    assert adverse.status_code == 200
+    adverse_data = adverse.json()
+    asset = adverse_data["asset_impacts"][0]
+    asset_class = adverse_data["class_impacts"][0]
+    assert asset["current_value"] == -1000.0
+    assert asset["stressed_value"] == -1200.0
+    assert asset["absolute_impact"] == -200.0
+    assert asset["outcome"] == "LOSS"
+    assert asset_class["shock_percent"] == -20.0
+    assert adverse_data["absolute_impact"] == -200.0
+    assert adverse_data["absolute_loss"] == -200.0
+    assert adverse_data["outcome"] == "LOSS"
+    assert adverse_data["impact_label"] == "Perdita stimata"
+
+    favorable = client.post(
+        "/scenarios/run",
+        json={"scenario_type": "CUSTOM", "symbol_shocks": {"SHORT_EUR": -20}},
+    )
+
+    assert favorable.status_code == 200
+    favorable_data = favorable.json()
+    asset = favorable_data["asset_impacts"][0]
+    assert asset["stressed_value"] == -800.0
+    assert asset["absolute_impact"] == 200.0
+    assert asset["outcome"] == "GAIN"
+    assert favorable_data["absolute_impact"] == 200.0
+    assert favorable_data["absolute_loss"] == 0.0
+    assert favorable_data["percentage_loss"] == 0.0
+    assert favorable_data["outcome"] == "GAIN"
+    assert favorable_data["impact_label"] == "Guadagno stimato"
+    assert all("perdita" not in tip.lower() for tip in favorable_data["mitigation"])
 
 
 def test_scenario_empty_portfolio_fails(client: TestClient) -> None:

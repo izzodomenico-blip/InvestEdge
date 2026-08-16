@@ -21,6 +21,7 @@ export type Asset = {
   name: string;
   isin: string | null;
   asset_type: string;
+  tax_category: TaxCategory;
   exchange: string | null;
   currency: string;
   sector: string | null;
@@ -600,6 +601,7 @@ export type ScenarioAssetImpact = {
   stressed_value: number;
   absolute_impact: number;
   loss_contribution_percent: number;
+  outcome: "LOSS" | "GAIN" | "UNCHANGED";
 };
 
 export type ScenarioClassImpact = {
@@ -608,6 +610,7 @@ export type ScenarioClassImpact = {
   stressed_value: number;
   absolute_impact: number;
   shock_percent: number;
+  outcome: "LOSS" | "GAIN" | "UNCHANGED";
 };
 
 export type ScenarioResult = {
@@ -617,6 +620,10 @@ export type ScenarioResult = {
   current_value: number;
   stressed_value: number;
   cash: number;
+  absolute_impact: number;
+  percentage_impact: number;
+  outcome: "LOSS" | "GAIN" | "UNCHANGED";
+  impact_label: string;
   absolute_loss: number;
   percentage_loss: number;
   risk_level: string;
@@ -645,18 +652,41 @@ export type RebalanceResult = {
   notes: string[];
 };
 
+export type TaxCategory = "standard" | "government_bond" | "crypto" | "euro_emt";
+
 export type TaxRealizedEvent = {
   symbol: string;
   asset_type: string | null;
+  tax_category: TaxCategory;
   category: string;
-  sell_date: string;
+  open_side: "BUY" | "SELL";
+  close_side: "BUY" | "SELL";
+  open_date: string;
+  realization_date: string;
+  sell_date: string | null;
   tax_year: number;
   quantity: number;
+  currency: string;
+  base_currency: "EUR";
+  open_value_native: number;
+  close_value_native: number;
+  gain_native: number;
+  open_value_base: number;
+  close_value_base: number;
+  gain_base: number;
   proceeds: number;
   cost_basis: number;
   gain: number;
+  applied_rate: number;
   rate: number;
   holding_days: number;
+};
+
+export type TaxLossBucket = {
+  tax_category: TaxCategory;
+  origin_year: number;
+  expires_after_year: number;
+  remaining: number;
 };
 
 export type TaxYearSummary = {
@@ -664,18 +694,44 @@ export type TaxYearSummary = {
   total_gains: number;
   total_losses: number;
   net_realized: number;
+  current_year_losses_used: number;
   carryforward_used: number;
+  carryforward_expired: number;
   carryforward_remaining: number;
+  carryforward_buckets: TaxLossBucket[];
   tax_due: number;
 };
 
 export type TaxOpenLot = {
   symbol: string;
   asset_type: string | null;
+  tax_category: TaxCategory;
+  open_side: "BUY" | "SELL";
+  currency: string;
+  base_currency: "EUR";
   quantity: number;
-  cost_basis: number;
+  open_value_native: number;
+  open_value_base: number;
+  current_value_native: number | null;
+  current_value_base: number | null;
+  unrealized_gain_native: number | null;
+  unrealized_gain_base: number | null;
+  cost_basis: number | null;
   current_value: number | null;
   unrealized_gain: number | null;
+};
+
+export type TaxRule = {
+  tax_category: TaxCategory;
+  from_year: number;
+  rate: number;
+  source_id: string;
+};
+
+export type TaxSource = {
+  id: string;
+  title: string;
+  url: string;
 };
 
 export type TaxReport = {
@@ -686,6 +742,11 @@ export type TaxReport = {
   total_tax_due: number;
   total_realized_net: number;
   loss_carryforward: number;
+  loss_carryforward_buckets: TaxLossBucket[];
+  carryforward_note: string;
+  tax_rules: TaxRule[];
+  sources: TaxSource[];
+  classification_warnings: string[];
   years: TaxYearSummary[];
   events: TaxRealizedEvent[];
   open_lots: TaxOpenLot[];

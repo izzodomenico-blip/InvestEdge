@@ -38,6 +38,23 @@ def _risk_level(percentage_loss: float) -> str:
     return "LOW"
 
 
+def _outcome(impact: float) -> str:
+    if impact < -1e-9:
+        return "LOSS"
+    if impact > 1e-9:
+        return "GAIN"
+    return "UNCHANGED"
+
+
+def _impact_label(impact: float) -> str:
+    outcome = _outcome(impact)
+    if outcome == "LOSS":
+        return "Perdita stimata"
+    if outcome == "GAIN":
+        return "Guadagno stimato"
+    return "Impatto invariato"
+
+
 def run_scenario(
     connection: sqlite3.Connection,
     *,
@@ -45,7 +62,7 @@ def run_scenario(
     class_shocks: dict[str, float] | None = None,
     symbol_shocks: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Stress test: applica shock di prezzo al portafoglio attuale e stima la perdita.
+    """Stress test: applica shock di prezzo al portafoglio attuale e stima l'impatto.
 
     Operazione di sola lettura: non modifica il portafoglio."""
     summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
@@ -65,15 +82,15 @@ def run_scenario(
 
     asset_impacts: list[dict[str, Any]] = []
     class_map: dict[str, dict[str, float]] = {}
-    total_loss = 0.0
+    total_negative_impact = 0.0
 
     for position in summary.positions:
         asset_type = (position.asset_type or "stock").lower()
         current_value = float(position.current_value_base)
         shock_percent = symbol_overrides.get(position.symbol.upper(), shocks.get(asset_type, 0.0))
         impact = (shock_percent / 100.0) * current_value
-        stressed = max(0.0, current_value + impact)
-        total_loss += impact
+        stressed = current_value + impact
+        total_negative_impact += min(impact, 0.0)
 
         asset_impacts.append(
             {
@@ -84,6 +101,7 @@ def run_scenario(
                 "stressed_value": round(stressed, 2),
                 "absolute_impact": round(impact, 2),
                 "loss_contribution_percent": 0.0,
+                "outcome": _outcome(impact),
             }
         )
         bucket = class_map.setdefault(asset_type, {"current": 0.0, "stressed": 0.0})
@@ -91,12 +109,19 @@ def run_scenario(
         bucket["stressed"] += stressed
 
     stressed_value = sum(item["stressed_value"] for item in asset_impacts) + base_cash
-    absolute_loss = round(stressed_value - base_value, 2)
-    percentage_loss = round((absolute_loss / base_value) * 100.0, 2) if base_value > 0 else 0.0
+    absolute_impact = round(stressed_value - base_value, 2)
+    percentage_impact = (
+        round((absolute_impact / abs(base_value)) * 100.0, 2) if abs(base_value) > 1e-9 else 0.0
+    )
+    absolute_loss = min(absolute_impact, 0.0)
+    percentage_loss = min(percentage_impact, 0.0)
 
     for item in asset_impacts:
-        if total_loss < 0:
-            item["loss_contribution_percent"] = round((item["absolute_impact"] / total_loss) * 100.0, 1)
+        if item["absolute_impact"] < 0 and total_negative_impact < 0:
+            item["loss_contribution_percent"] = round(
+                (item["absolute_impact"] / total_negative_impact) * 100.0,
+                1,
+            )
 
     class_impacts = []
     for asset_class, values in sorted(class_map.items()):
@@ -107,7 +132,12 @@ def run_scenario(
                 "current_value": round(values["current"], 2),
                 "stressed_value": round(values["stressed"], 2),
                 "absolute_impact": round(impact, 2),
-                "shock_percent": round((impact / values["current"]) * 100.0, 2) if values["current"] > 0 else 0.0,
+                "shock_percent": (
+                    round((impact / abs(values["current"])) * 100.0, 2)
+                    if abs(values["current"]) > 1e-9
+                    else 0.0
+                ),
+                "outcome": _outcome(impact),
             }
         )
 
@@ -120,6 +150,10 @@ def run_scenario(
         "current_value": round(base_value, 2),
         "stressed_value": round(stressed_value, 2),
         "cash": round(base_cash, 2),
+        "absolute_impact": absolute_impact,
+        "percentage_impact": percentage_impact,
+        "outcome": _outcome(absolute_impact),
+        "impact_label": _impact_label(absolute_impact),
         "absolute_loss": absolute_loss,
         "percentage_loss": percentage_loss,
         "risk_level": risk_level,

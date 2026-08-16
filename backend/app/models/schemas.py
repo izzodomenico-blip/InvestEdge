@@ -8,6 +8,7 @@ AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
+TaxCategory = Literal["standard", "government_bond", "crypto", "euro_emt"]
 BacktestStrategy = Literal["SCORE_THRESHOLD", "BUY_AND_HOLD", "TOP_N_SCORE"]
 RebalanceFrequency = Literal["DAILY", "WEEKLY", "MONTHLY"]
 AllocationMethod = Literal["EQUAL_WEIGHT", "RISK_PARITY", "SCORE_WEIGHTED", "VOL_TARGET"]
@@ -30,6 +31,7 @@ class AssetCreate(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=24)
     name: str = Field(..., min_length=1, max_length=160)
     asset_type: AssetType
+    tax_category: TaxCategory | None = None
     exchange: str | None = Field(default=None, max_length=80)
     currency: str = Field(default="USD", min_length=3, max_length=8)
     sector: str | None = Field(default=None, max_length=120)
@@ -40,6 +42,7 @@ class AssetCreate(BaseModel):
 
 class AssetOut(AssetCreate):
     id: int
+    tax_category: TaxCategory
     last_price: float | None = None
     daily_change_pct: float | None = None
     last_source: str | None = None
@@ -361,6 +364,7 @@ class ScenarioAssetImpactOut(BaseModel):
     stressed_value: float
     absolute_impact: float
     loss_contribution_percent: float
+    outcome: Literal["LOSS", "GAIN", "UNCHANGED"]
 
 
 class ScenarioClassImpactOut(BaseModel):
@@ -369,6 +373,7 @@ class ScenarioClassImpactOut(BaseModel):
     stressed_value: float
     absolute_impact: float
     shock_percent: float
+    outcome: Literal["LOSS", "GAIN", "UNCHANGED"]
 
 
 class ScenarioRunOut(BaseModel):
@@ -377,6 +382,10 @@ class ScenarioRunOut(BaseModel):
     current_value: float
     stressed_value: float
     cash: float
+    absolute_impact: float
+    percentage_impact: float
+    outcome: Literal["LOSS", "GAIN", "UNCHANGED"]
+    impact_label: str
     absolute_loss: float
     percentage_loss: float
     risk_level: str
@@ -409,15 +418,36 @@ class RebalanceOut(BaseModel):
 class TaxRealizedEventOut(BaseModel):
     symbol: str
     asset_type: str | None = None
+    tax_category: TaxCategory
     category: str
-    sell_date: str
+    open_side: OrderType
+    close_side: OrderType
+    open_date: str
+    realization_date: str
+    sell_date: str | None = None
     tax_year: int
     quantity: float
+    currency: str
+    base_currency: Literal["EUR"] = "EUR"
+    open_value_native: float
+    close_value_native: float
+    gain_native: float
+    open_value_base: float
+    close_value_base: float
+    gain_base: float
     proceeds: float
     cost_basis: float
     gain: float
+    applied_rate: float
     rate: float
     holding_days: int
+
+
+class TaxLossBucketOut(BaseModel):
+    tax_category: TaxCategory
+    origin_year: int
+    expires_after_year: int
+    remaining: float
 
 
 class TaxYearSummaryOut(BaseModel):
@@ -425,18 +455,44 @@ class TaxYearSummaryOut(BaseModel):
     total_gains: float
     total_losses: float
     net_realized: float
+    current_year_losses_used: float
     carryforward_used: float
+    carryforward_expired: float
     carryforward_remaining: float
+    carryforward_buckets: list[TaxLossBucketOut]
     tax_due: float
 
 
 class TaxOpenLotOut(BaseModel):
     symbol: str
     asset_type: str | None = None
+    tax_category: TaxCategory
+    open_side: OrderType
+    currency: str
+    base_currency: Literal["EUR"] = "EUR"
     quantity: float
-    cost_basis: float
+    open_value_native: float
+    open_value_base: float
+    current_value_native: float | None = None
+    current_value_base: float | None = None
+    unrealized_gain_native: float | None = None
+    unrealized_gain_base: float | None = None
+    cost_basis: float | None = None
     current_value: float | None = None
     unrealized_gain: float | None = None
+
+
+class TaxRuleOut(BaseModel):
+    tax_category: TaxCategory
+    from_year: int
+    rate: float
+    source_id: str
+
+
+class TaxSourceOut(BaseModel):
+    id: str
+    title: str
+    url: str
 
 
 class BackupOut(BaseModel):
@@ -457,13 +513,18 @@ class ReportSummaryOut(BaseModel):
 
 
 class TaxReportOut(BaseModel):
-    base_currency: str
+    base_currency: Literal["EUR"] = "EUR"
     standard_rate: float
     bond_rate: float
     lot_method: str
     total_tax_due: float
     total_realized_net: float
     loss_carryforward: float
+    loss_carryforward_buckets: list[TaxLossBucketOut]
+    carryforward_note: str
+    tax_rules: list[TaxRuleOut]
+    sources: list[TaxSourceOut]
+    classification_warnings: list[str]
     years: list[TaxYearSummaryOut]
     events: list[TaxRealizedEventOut]
     open_lots: list[TaxOpenLotOut]

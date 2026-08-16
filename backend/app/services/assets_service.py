@@ -62,6 +62,7 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         symbol=row["symbol"],
         name=row["name"],
         asset_type=row["asset_type"],
+        tax_category=row["tax_category"],
         exchange=row["exchange"],
         currency=row["currency"],
         sector=row["sector"],
@@ -108,6 +109,7 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         symbol=row["symbol"],
         name=row["name"],
         asset_type=row["asset_type"],
+        tax_category=row["tax_category"],
         exchange=row["exchange"],
         currency=row["currency"],
         sector=row["sector"],
@@ -142,6 +144,7 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
             a.symbol,
             a.name,
             a.asset_type,
+            a.tax_category,
             a.exchange,
             a.currency,
             a.sector,
@@ -202,7 +205,8 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
 def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
     row = connection.execute(
         """
-        SELECT id, symbol, name, asset_type, exchange, currency, sector, country, risk_level, isin, updated_at
+        SELECT id, symbol, name, asset_type, tax_category, exchange, currency, sector, country,
+            risk_level, isin, updated_at
         FROM assets
         WHERE UPPER(symbol) = UPPER(?)
         LIMIT 1
@@ -273,15 +277,19 @@ def delete_asset(
 
 
 def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetOut:
+    tax_category = payload.tax_category or ("crypto" if payload.asset_type == "crypto" else "standard")
     cursor = connection.execute(
         """
-        INSERT INTO assets (symbol, name, asset_type, exchange, currency, sector, country, risk_level, isin)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO assets (
+            symbol, name, asset_type, tax_category, exchange, currency, sector, country, risk_level, isin
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.symbol.upper(),
             payload.name,
             payload.asset_type,
+            tax_category,
             payload.exchange,
             payload.currency.upper(),
             payload.sector,
@@ -292,7 +300,8 @@ def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetO
     )
     row = connection.execute(
         """
-        SELECT id, symbol, name, asset_type, exchange, currency, sector, country, risk_level, isin, updated_at
+        SELECT id, symbol, name, asset_type, tax_category, exchange, currency, sector, country,
+            risk_level, isin, updated_at
         FROM assets
         WHERE id = ?
         """,
