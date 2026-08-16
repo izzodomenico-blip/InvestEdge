@@ -29,3 +29,6 @@ backend/.env
 .backend.err.log
 .frontend.log
 .frontend.err.log
+
+# Stato locale del companion visuale di brainstorming (include chiavi di sessione)
+.superpowers/
