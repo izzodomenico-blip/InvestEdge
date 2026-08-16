@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 from backend.app.config import get_settings
 from backend.app.models import MLTrainIn
 from backend.app.services.common import now_utc as _now
-from backend.app.services.ml_dataset_service import FEATURE_COLUMNS, MLDatasetService
+from backend.app.services.ml_dataset_service import FEATURE_COLUMNS, MLDatasetService, validate_split_no_lookahead
 
 
 @dataclass
@@ -56,8 +56,7 @@ class MLEngine:
             )
 
         train, test = self.dataset_service.split_train_test_time_based(dataset, config.test_size_time_percent)
-        if train.empty or test.empty:
-            raise ValueError("Split train/test insufficiente per addestrare il modello.")
+        validate_split_no_lookahead(train, test)
         if train["target"].nunique() < 2:
             raise ValueError("Target con una sola classe nel training set; servono esempi positivi e negativi.")
 
@@ -121,6 +120,7 @@ class MLEngine:
         f1_values: list[float] = []
         auc_values: list[float] = []
         for train, test in fold_data:
+            validate_split_no_lookahead(train, test)
             if train["target"].nunique() < 2 or test.empty:
                 continue
             model = self._build_model(model_type)

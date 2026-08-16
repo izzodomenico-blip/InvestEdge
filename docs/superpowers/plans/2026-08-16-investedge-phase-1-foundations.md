@@ -611,7 +611,7 @@ git push -u origin HEAD
 
 **Contract:** Nessun campione di train può avere `target_date` uguale o successiva alla prima feature date del test. La stessa purga vale per ogni fold walk-forward.
 
-- [ ] **Step 1: Scrivere dataset sintetico che espone il leakage**
+- [x] **Step 1: Scrivere dataset sintetico che espone il leakage**
 
 Con feature date giornaliere e orizzonte 5, verificare:
 
@@ -621,13 +621,13 @@ assert pd.to_datetime(train["target_date"]).max() < pd.to_datetime(test["date"])
 
 Scrivere lo stesso invariant per ogni fold.
 
-- [ ] **Step 2: Eseguire e osservare il fallimento**
+- [x] **Step 2: Eseguire e osservare il fallimento**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_ml_dataset.py -vv
 ```
 
-- [ ] **Step 3: Purgare i bordi temporali**
+- [x] **Step 3: Purgare i bordi temporali**
 
 Dopo aver calcolato `split_date`, usare:
 
@@ -638,18 +638,18 @@ test = dataset[dataset["date"] >= split_date].copy()
 
 Per i fold, definire `test_start` e applicare `train["target_date"] < test_start`. Normalizzare date prima del confronto e fallire su `NaT`.
 
-- [ ] **Step 4: Aggiungere validazione split esplicita nell'engine**
+- [x] **Step 4: Aggiungere validazione split esplicita nell'engine**
 
 `ml_engine.train_model` deve chiamare una funzione `validate_split_no_lookahead(train, test)` prima del fit e prima di ogni fit walk-forward. Un dataset insufficiente dopo purge restituisce errore chiaro.
 
-- [ ] **Step 5: Verificare Task 8**
+- [x] **Step 5: Verificare Task 8**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_ml_dataset.py tests\test_api.py -k "ml or lookahead"
 backend\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-- [ ] **Step 6: Commit e push**
+- [x] **Step 6: Commit e push**
 
 ```powershell
 git add backend/app/services/ml_dataset_service.py backend/app/services/ml_engine.py tests/test_ml_dataset.py tests/test_api.py

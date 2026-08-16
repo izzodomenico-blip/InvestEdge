@@ -40,6 +40,30 @@ FEATURE_COLUMNS = [
 ]
 
 
+def _normalized_temporal_dates(dataset: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    missing_columns = {"date", "target_date"}.difference(dataset.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"Dataset ML privo delle colonne temporali richieste: {missing}.")
+
+    feature_dates = pd.to_datetime(dataset["date"], errors="coerce", format="mixed", utc=True).dt.normalize()
+    target_dates = pd.to_datetime(dataset["target_date"], errors="coerce", format="mixed", utc=True).dt.normalize()
+    if bool(feature_dates.isna().any() or target_dates.isna().any()):
+        raise ValueError("Dataset ML con date o target_date non valide.")
+    return feature_dates, target_dates
+
+
+def validate_split_no_lookahead(train: pd.DataFrame, test: pd.DataFrame) -> bool:
+    if train.empty or test.empty:
+        raise ValueError("Split train/test insufficiente dopo la purga temporale.")
+
+    _, train_target_dates = _normalized_temporal_dates(train)
+    test_feature_dates, _ = _normalized_temporal_dates(test)
+    if train_target_dates.max() >= test_feature_dates.min():
+        raise ValueError("Look-ahead bias rilevato: i target del train non precedono l'inizio del test.")
+    return True
+
+
 @dataclass
 class MLDatasetService:
     technical_analysis: TechnicalAnalysisService = field(default_factory=TechnicalAnalysisService)
@@ -152,12 +176,13 @@ class MLDatasetService:
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         if dataset.empty:
             return dataset.copy(), dataset.copy()
-        sorted_dates = sorted(dataset["date"].dropna().unique())
+        feature_dates, target_dates = _normalized_temporal_dates(dataset)
+        sorted_dates = sorted(feature_dates.unique())
         split_index = max(1, int(len(sorted_dates) * (1 - (test_size_time_percent / 100))))
         split_index = min(split_index, len(sorted_dates) - 1)
         split_date = sorted_dates[split_index]
-        train = dataset[dataset["date"] < split_date].copy()
-        test = dataset[dataset["date"] >= split_date].copy()
+        train = dataset[(feature_dates < split_date) & (target_dates < split_date)].copy()
+        test = dataset[feature_dates >= split_date].copy()
         return train.reset_index(drop=True), test.reset_index(drop=True)
 
     def walk_forward_folds(
@@ -168,7 +193,8 @@ class MLDatasetService:
         """Genera fold walk-forward a finestra espansiva (train passato, test futuro)."""
         if dataset.empty:
             return []
-        dates = sorted(dataset["date"].dropna().unique())
+        feature_dates, target_dates = _normalized_temporal_dates(dataset)
+        dates = sorted(feature_dates.unique())
         if len(dates) < (folds + 1) * 2:
             return []
         result: list[tuple[pd.DataFrame, pd.DataFrame]] = []
@@ -178,8 +204,9 @@ class MLDatasetService:
             test_end = step * (fold + 1) if fold < folds else len(dates)
             train_dates = set(dates[:train_end])
             test_dates = set(dates[train_end:test_end])
-            train = dataset[dataset["date"].isin(train_dates)]
-            test = dataset[dataset["date"].isin(test_dates)]
+            test_start = dates[train_end]
+            train = dataset[feature_dates.isin(train_dates) & (target_dates < test_start)]
+            test = dataset[feature_dates.isin(test_dates)]
             if not train.empty and not test.empty:
                 result.append((train.reset_index(drop=True), test.reset_index(drop=True)))
         return result
@@ -187,8 +214,7 @@ class MLDatasetService:
     def validate_no_lookahead(self, dataset: pd.DataFrame) -> bool:
         if dataset.empty or "target_date" not in dataset.columns:
             return True
-        feature_dates = pd.to_datetime(dataset["date"], errors="coerce")
-        target_dates = pd.to_datetime(dataset["target_date"], errors="coerce")
+        feature_dates, target_dates = _normalized_temporal_dates(dataset)
         if bool((target_dates <= feature_dates).any()):
             raise ValueError("Look-ahead bias rilevato: target_date non successiva alla feature date.")
         return True

@@ -452,6 +452,41 @@ def test_ml_dataset_has_no_lookahead(client: TestClient) -> None:
     assert service.validate_no_lookahead(dataset) is True
 
 
+def test_ml_train_reports_insufficient_split_after_temporal_purge(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.api.routes import ml_engine
+    from backend.app.services.ml_dataset_service import FEATURE_COLUMNS
+
+    feature_dates = pd.date_range("2026-01-01", periods=20, freq="D")
+    dataset = pd.DataFrame(
+        {
+            "symbol": "TEST",
+            "date": feature_dates.strftime("%Y-%m-%d"),
+            "target_date": (feature_dates + pd.to_timedelta(30, unit="D")).strftime("%Y-%m-%d"),
+            "target": [index % 2 for index in range(20)],
+        }
+    )
+    for index, column in enumerate(FEATURE_COLUMNS, start=1):
+        dataset[column] = float(index)
+    monkeypatch.setattr(ml_engine.dataset_service, "build_ml_dataset", lambda **_kwargs: dataset.copy())
+
+    response = client.post(
+        "/ml/train",
+        json={
+            "model_name": "Purged split",
+            "symbols": ["TEST"],
+            "horizon_days": 5,
+            "min_samples": 20,
+            "cv_folds": 2,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "dopo la purga temporale" in response.json()["detail"].lower()
+
+
 def test_ml_train_and_predict(client: TestClient) -> None:
     train_payload = {
         "model_name": "Test GB",
