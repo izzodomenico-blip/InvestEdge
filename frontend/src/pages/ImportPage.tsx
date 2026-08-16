@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Download, FileSpreadsheet, TriangleAlert } from "lucide-react";
 
@@ -21,35 +21,58 @@ export function ImportPage() {
   const [applied, setApplied] = useState<ImportApplyResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showApplyConfirmation, setShowApplyConfirmation] = useState(false);
+  const [previewInput, setPreviewInput] = useState<{ csv_url: string | null } | null>(null);
+  const operationInFlight = useRef(false);
+  const discardedRows = preview ? Math.max(0, preview.rows_total - preview.rows_valid) : 0;
 
   useEffect(() => {
     void apiGet<ImportStatus>("/import/google-sheets/status").then(setStatus).catch(() => null);
   }, []);
 
   async function runPreview() {
+    if (operationInFlight.current) {
+      return;
+    }
+    operationInFlight.current = true;
+    const input = { csv_url: csvUrl || null };
     setBusy(true);
     setError(null);
     setApplied(null);
+    setShowApplyConfirmation(false);
+    setPreviewInput(null);
     try {
-      setPreview(await apiPost<ImportPreview>("/import/google-sheets/preview", { csv_url: csvUrl || null }));
+      setPreview(await apiPost<ImportPreview>("/import/google-sheets/preview", input));
+      setPreviewInput(input);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Anteprima non riuscita.");
       setPreview(null);
     } finally {
+      operationInFlight.current = false;
       setBusy(false);
     }
   }
 
   async function runApply() {
+    if (!previewInput || operationInFlight.current) {
+      if (operationInFlight.current) {
+        return;
+      }
+      setError("Genera una nuova anteprima prima di sostituire le posizioni.");
+      return;
+    }
+    operationInFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      const result = await apiPost<ImportApplyResult>("/import/google-sheets/apply", { csv_url: csvUrl || null });
+      const result = await apiPost<ImportApplyResult>("/import/google-sheets/apply", previewInput);
       setApplied(result);
       setPreview(null);
+      setShowApplyConfirmation(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Importazione non riuscita.");
     } finally {
+      operationInFlight.current = false;
       setBusy(false);
     }
   }
@@ -84,7 +107,13 @@ export function ImportPage() {
         <div className="flex flex-col gap-3 sm:flex-row">
           <input
             value={csvUrl}
-            onChange={(event) => setCsvUrl(event.target.value)}
+            onChange={(event) => {
+              setCsvUrl(event.target.value);
+              setPreview(null);
+              setPreviewInput(null);
+              setShowApplyConfirmation(false);
+            }}
+            disabled={busy}
             placeholder={status?.csv_url_set ? "(uso il link salvato in .env)" : "https://docs.google.com/.../pub?output=csv"}
             className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-300/60"
           />
@@ -128,14 +157,14 @@ export function ImportPage() {
           title={`${preview.rows_valid} posizioni valide su ${preview.rows_total}`}
           action={
             preview.rows_valid > 0 ? (
-              <PageHeaderAction
-                variant="primary"
-                onClick={() => void runApply()}
+              <button
+                onClick={() => setShowApplyConfirmation(true)}
                 disabled={busy}
-                icon={<Download className="h-4 w-4" aria-hidden="true" />}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2 text-sm font-medium text-cyan-50 transition hover:border-cyan-300/60 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busy ? "Importo..." : "Importa nel portafoglio"}
-              </PageHeaderAction>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Sostituisci le posizioni con l'import
+              </button>
             ) : undefined
           }
         >
@@ -149,6 +178,34 @@ export function ImportPage() {
                   <li key={err}>· {err}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {showApplyConfirmation && (
+            <div className="mb-4 rounded-xl border border-rose-300/25 bg-rose-400/[0.08] p-4">
+              <p className="text-sm font-semibold text-rose-100">Conferma la sostituzione delle posizioni</p>
+              <p className="mt-1 text-sm text-slate-300">
+                Tutte le posizioni attuali verranno rimosse e sostituite con {preview.rows_valid}{" "}
+                {preview.rows_valid === 1 ? "riga valida" : "righe valide"} dell'import. {discardedRows}{" "}
+                {discardedRows === 1 ? "riga verrà scartata" : "righe verranno scartate"}.
+              </p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <button
+                  onClick={() => void runApply()}
+                  disabled={busy}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                  {busy ? "Sostituzione..." : "Conferma sostituzione posizioni"}
+                </button>
+                <button
+                  onClick={() => setShowApplyConfirmation(false)}
+                  disabled={busy}
+                  className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Annulla
+                </button>
+              </div>
             </div>
           )}
 

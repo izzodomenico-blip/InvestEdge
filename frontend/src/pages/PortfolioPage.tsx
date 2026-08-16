@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, ChevronRight, RefreshCw, RotateCcw } from "lucide-react";
 import {
@@ -73,6 +73,8 @@ export function PortfolioPage() {
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("positions");
+  const portfolioOperationInFlight = useRef(false);
+  const portfolioBusy = refreshing || resetting;
 
   async function loadPortfolio() {
     setLoading(true);
@@ -94,6 +96,10 @@ export function PortfolioPage() {
   }
 
   async function refreshPortfolio() {
+    if (portfolioOperationInFlight.current) {
+      return;
+    }
+    portfolioOperationInFlight.current = true;
     setRefreshing(true);
     setError(null);
     try {
@@ -108,26 +114,45 @@ export function PortfolioPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante l'aggiornamento del portafoglio.");
     } finally {
+      portfolioOperationInFlight.current = false;
       setRefreshing(false);
     }
   }
 
   async function resetPortfolio() {
+    if (portfolioOperationInFlight.current) {
+      return;
+    }
     const cash = Number(resetCash);
     if (!(cash > 0)) {
       setResetMsg("Inserisci un capitale maggiore di zero.");
       return;
     }
+    portfolioOperationInFlight.current = true;
     setResetting(true);
     setResetMsg(null);
     try {
-      await apiPost("/portfolio/init", { initial_cash: cash });
+      const portfolio = await apiPost<PortfolioSummary>("/portfolio/init", { initial_cash: cash });
+      setSummary(portfolio);
+      setSnapshots([]);
+      setRecommendations([]);
       setShowReset(false);
-      setResetMsg("Portafoglio azzerato: posizioni e operazioni cancellate, liquidità reimpostata.");
-      await loadPortfolio();
+      setResetMsg("Portafoglio azzerato: posizioni, ordini simulati e snapshot cancellati; liquidità reimpostata.");
+      try {
+        const [snapshotData, recommendationData] = await Promise.all([
+          apiGet<PortfolioSnapshot[]>("/portfolio/snapshots"),
+          apiGet<PortfolioRecommendation[]>("/portfolio/recommendations"),
+        ]);
+        setSnapshots(snapshotData);
+        setRecommendations(recommendationData);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : "refresh non riuscito";
+        setError(`Portafoglio azzerato, ma i dati secondari non sono stati aggiornati: ${detail}`);
+      }
     } catch (err) {
       setResetMsg(err instanceof Error ? err.message : "Azzeramento non riuscito.");
     } finally {
+      portfolioOperationInFlight.current = false;
       setResetting(false);
     }
   }
@@ -207,16 +232,18 @@ export function PortfolioPage() {
         subtitle="Posizioni simulate, allocation, P/L e warning di rischio. Nessun ordine reale viene inviato."
         actions={
           <>
-            <PageHeaderAction
+            <button
               onClick={() => setShowReset((v) => !v)}
-              icon={<RotateCcw className="h-4 w-4" aria-hidden="true" />}
+              disabled={portfolioBusy}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-800/80 bg-slate-950/60 px-4 py-2.5 text-sm font-medium tracking-tight text-slate-200 transition-all duration-200 hover:border-slate-700 hover:bg-slate-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
               Ricomincia
-            </PageHeaderAction>
+            </button>
             <PageHeaderAction
               variant="primary"
               onClick={() => void refreshPortfolio()}
-              disabled={refreshing}
+              disabled={portfolioBusy}
               icon={<RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />}
             >
               Aggiorna prezzi
@@ -232,8 +259,8 @@ export function PortfolioPage() {
       {showReset && (
         <Panel eyebrow="Reset" title="Ricomincia il portafoglio da capo">
           <p className="text-sm text-slate-400">
-            Cancella <span className="text-rose-200">tutte le posizioni e le operazioni</span> simulate e reimposta la liquidità.
-            Utile per iniziare una nuova simulazione pulita. Nessun ordine reale viene toccato.
+            Cancella definitivamente <span className="text-rose-200">tutte le posizioni, gli ordini simulati e gli snapshot storici</span>,
+            poi reimposta la liquidità al capitale virtuale indicato. Nessun ordine reale viene toccato.
           </p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="space-y-1">
@@ -242,20 +269,22 @@ export function PortfolioPage() {
                 type="number"
                 value={resetCash}
                 onChange={(e) => setResetCash(e.target.value)}
-                className="block w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60 sm:w-56"
+                disabled={portfolioBusy}
+                className="block min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60 sm:w-56"
               />
             </label>
             <button
               onClick={() => void resetPortfolio()}
-              disabled={resetting}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:opacity-60"
+              disabled={portfolioBusy}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:opacity-60"
             >
               <RotateCcw className={`h-4 w-4 ${resetting ? "animate-spin" : ""}`} aria-hidden="true" />
-              {resetting ? "Azzero..." : "Azzera e riparti"}
+              {resetting ? "Azzero..." : "Cancella posizioni, ordini e snapshot e riparti"}
             </button>
             <button
               onClick={() => setShowReset(false)}
-              className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800"
+              disabled={portfolioBusy}
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800"
             >
               Annulla
             </button>

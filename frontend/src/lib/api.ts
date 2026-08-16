@@ -954,6 +954,13 @@ export type ReportSummary = {
   estimated_tax_due: number;
 };
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   let response: Response;
   try {
@@ -963,7 +970,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   }
 
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
 
   return response.json() as Promise<T>;
@@ -982,7 +989,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   }
 
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
 
   return response.json() as Promise<T>;
@@ -999,7 +1006,7 @@ export async function apiDelete<T>(path: string): Promise<T> {
   }
 
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
 
   return response.json() as Promise<T>;

@@ -94,6 +94,17 @@ Il motore in `backend/app/services/portfolio_engine.py` gestisce:
 - pesi delle posizioni, allocation per asset class e valuta
 - snapshot dell'andamento del portafoglio
 
+## Conferme per le azioni distruttive
+
+L'interfaccia separa sempre la scelta dalla conferma quando un'azione rimuove o sostituisce dati importanti:
+
+- un asset senza dipendenze puo essere rimosso direttamente; se il backend risponde `409`, la UI elenca i dati collegati e richiede il ticker esatto prima del purge protetto da backup;
+- la cancellazione di un backtest richiede il nome e l'id esatti del run;
+- il reset del portafoglio dichiara che elimina posizioni, ordini simulati e snapshot storici prima di reimpostare la liquidita;
+- allocation e import mostrano un riepilogo della sostituzione e richiedono un secondo click esplicito.
+
+Queste conferme non sostituiscono i controlli backend, che restano l'ultima barriera di sicurezza.
+
 Il motore in `backend/app/services/risk_engine.py` valuta concentrazione e rischio:
 
 - singolo asset oltre soglia
@@ -142,7 +153,7 @@ Serve a smascherare l'overfitting: una strategia il cui rendimento sull'intero p
 
 L'endpoint `POST /import/google-sheets/apply` (e `/preview`) importa le posizioni reali da un Google Sheet **pubblicato in CSV** (File → Condividi → Pubblica sul web → CSV), senza OAuth nè librerie Google: legge l'URL CSV via HTTP. Intestazioni minime: `symbol`, `quantity`, `average_price` (accettati alias italiani: simbolo, quantità, prezzo_medio); opzionali `name`, `asset_type`, `currency`. Il parser gestisce formati europei e americani (`1.234,56`, `1,234.56`, `€ 383,47`).
 
-L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
+L'import **sostituisce** le posizioni del portafoglio simulato con quelle del foglio (operazione locale, non tocca il broker). Prima dell'apply la UI mostra il numero di righe valide e non valide e richiede una conferma esplicita. Configura `GOOGLE_SHEETS_CSV_URL` in `backend/.env` oppure incolla il link nella pagina **Importa posizioni**. È il modo per far conoscere all'app il tuo portafoglio reale (es. da Trade Republic tracciato su un foglio).
 
 ## Backup / Archivio
 
@@ -171,7 +182,7 @@ L'endpoint `POST /portfolio/allocation/plan` suggerisce pesi target e quantita p
 
 Opzioni: `max_weight` (cap per singolo asset con redistribuzione), `target_volatility`, `lookback_days`. La volatilita di portafoglio e una stima conservativa (media pesata delle volatilita, assume correlazione 1). Nel frontend il pianificatore e nella pagina Portafoglio con grafico a torta e tabella pesi/capitale/quantita.
 
-L'endpoint `POST /portfolio/allocation/apply` crea direttamente le posizioni dal piano; `POST /portfolio/allocation/rebalance` confronta il piano con il portafoglio attuale e restituisce i trade (BUY/SELL) necessari per allinearlo (ottimizzatore/ribilanciamento).
+L'endpoint `POST /portfolio/allocation/apply` sostituisce direttamente le posizioni con quelle del piano; prima di invocarlo la UI richiede una conferma che mostra capitale totale e liquidita risultante. `POST /portfolio/allocation/rebalance` confronta invece il piano con il portafoglio attuale e restituisce i trade (BUY/SELL) necessari per allinearlo (ottimizzatore/ribilanciamento).
 
 ## Dati reali con cache
 

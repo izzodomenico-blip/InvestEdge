@@ -723,11 +723,11 @@ git push -u origin HEAD
 
 **Contract:** Nessuna cancellazione o sostituzione importante parte da un singolo click ambiguo. Il testo indica ciò che sarà rimosso/sostituito. Il backend resta l'ultima barriera di sicurezza.
 
-- [ ] **Step 1: Mappare e riprodurre manualmente le azioni**
+- [x] **Step 1: Mappare e riprodurre manualmente le azioni**
 
 Con backend e frontend locali, registrare il comportamento corrente per: rimuovi asset, cancella backtest, reset portafoglio, apply allocation, apply import. Non modificare route non correlate.
 
-- [ ] **Step 2: Rendere disponibile status/detail dell'errore API**
+- [x] **Step 2: Rendere disponibile status/detail dell'errore API**
 
 Introdurre una classe compatibile:
 
@@ -739,7 +739,7 @@ export class ApiError extends Error {
 
 `apiGet/Post/Delete` devono sollevare `ApiError` per risposte HTTP non-ok, preservando il comportamento `Error.message` dei chiamanti esistenti.
 
-- [ ] **Step 3: Aggiungere conferme chirurgiche senza redesign**
+- [x] **Step 3: Aggiungere conferme chirurgiche senza redesign**
 
 - Universe: prima prova DELETE normale; su 409 mostra le conseguenze e richiede digitazione esatta del ticker prima di chiamare `?purge=true&confirm_symbol=...`.
 - Backtest: conferma con nome/id prima della cancellazione.
@@ -749,7 +749,7 @@ export class ApiError extends Error {
 
 Usare per questa fase i pattern esistenti e target touch >=44 px. Il dialog system accessibile completo appartiene alla Fase 5; non introdurre ora un nuovo design system.
 
-- [ ] **Step 4: Verificare build e smoke browser**
+- [x] **Step 4: Verificare build e smoke browser**
 
 ```powershell
 npm run build
@@ -758,7 +758,7 @@ npm audit --audit-level=high
 
 Smoke manuale desktop e viewport mobile: annulla conferma, conferma errata, conferma corretta, errore backend. Verificare che nessuna operazione parta con un solo click.
 
-- [ ] **Step 5: Commit e push**
+- [x] **Step 5: Commit e push**
 
 ```powershell
 git add frontend/src/lib/api.ts frontend/src/pages/UniversePage.tsx frontend/src/pages/BacktestPage.tsx frontend/src/pages/ImportPage.tsx frontend/src/components/AllocationPlanner.tsx frontend/src/pages/PortfolioPage.tsx README.md

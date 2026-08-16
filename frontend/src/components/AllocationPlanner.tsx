@@ -42,12 +42,15 @@ export function AllocationPlanner() {
   const [targetVol, setTargetVol] = useState("15");
   const [maxWeight, setMaxWeight] = useState("");
   const [plan, setPlan] = useState<AllocationPlan | null>(null);
+  const [plannedInput, setPlannedInput] = useState<AllocationPlanInput | null>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
+  const [showApplyConfirmation, setShowApplyConfirmation] = useState(false);
   const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
   const [rebalancing, setRebalancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const operationInFlight = useRef(false);
 
   useEffect(() => {
     void (async () => {
@@ -72,14 +75,26 @@ export function AllocationPlanner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function invalidatePlan() {
+    setPlan(null);
+    setPlannedInput(null);
+    setShowApplyConfirmation(false);
+    setApplied(null);
+  }
+
   function toggle(symbol: string) {
+    invalidatePlan();
     setSelected((current) =>
       current.includes(symbol) ? current.filter((item) => item !== symbol) : [...current, symbol],
     );
   }
 
   async function runPlan() {
+    if (operationInFlight.current) {
+      return;
+    }
     setError(null);
+    invalidatePlan();
     if (selected.length === 0) {
       setError("Seleziona almeno un asset.");
       return;
@@ -88,13 +103,16 @@ export function AllocationPlanner() {
       setError("Il capitale deve essere positivo.");
       return;
     }
+    operationInFlight.current = true;
     setLoading(true);
-    setApplied(null);
     try {
-      setPlan(await apiPost<AllocationPlan>("/portfolio/allocation/plan", buildPayload()));
+      const payload = buildPayload();
+      setPlan(await apiPost<AllocationPlan>("/portfolio/allocation/plan", payload));
+      setPlannedInput(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il calcolo del piano.");
     } finally {
+      operationInFlight.current = false;
       setLoading(false);
     }
   }
@@ -110,20 +128,34 @@ export function AllocationPlanner() {
   }
 
   async function createPortfolio() {
+    if (!plannedInput || operationInFlight.current) {
+      if (operationInFlight.current) {
+        return;
+      }
+      setError("Ricalcola il piano prima di sostituire il portafoglio.");
+      return;
+    }
+    operationInFlight.current = true;
     setApplying(true);
     setError(null);
     setApplied(null);
     try {
-      await apiPost("/portfolio/allocation/apply", buildPayload());
-      setApplied("Portafoglio creato con questo piano ✓");
+      await apiPost("/portfolio/allocation/apply", plannedInput);
+      setApplied("Portafoglio sostituito con questo piano ✓");
+      setShowApplyConfirmation(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creazione portafoglio non riuscita.");
     } finally {
+      operationInFlight.current = false;
       setApplying(false);
     }
   }
 
   async function runRebalance() {
+    if (operationInFlight.current) {
+      return;
+    }
+    operationInFlight.current = true;
     setRebalancing(true);
     setError(null);
     try {
@@ -132,6 +164,7 @@ export function AllocationPlanner() {
       setError(err instanceof Error ? err.message : "Ribilanciamento non riuscito.");
       setRebalance(null);
     } finally {
+      operationInFlight.current = false;
       setRebalancing(false);
     }
   }
@@ -175,7 +208,11 @@ export function AllocationPlanner() {
             <span className="text-sm text-slate-400">Metodo</span>
             <select
               value={method}
-              onChange={(event) => setMethod(event.target.value as AllocationMethod)}
+              onChange={(event) => {
+                invalidatePlan();
+                setMethod(event.target.value as AllocationMethod);
+              }}
+              disabled={loading || applying || rebalancing}
               className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-300/60"
             >
               {Object.entries(methodLabels).map(([value, label]) => (
@@ -193,7 +230,11 @@ export function AllocationPlanner() {
               <input
                 type="number"
                 value={totalCapital}
-                onChange={(event) => setTotalCapital(event.target.value)}
+                onChange={(event) => {
+                  invalidatePlan();
+                  setTotalCapital(event.target.value);
+                }}
+                disabled={loading || applying || rebalancing}
                 className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-300/60"
               />
             </label>
@@ -203,7 +244,11 @@ export function AllocationPlanner() {
                 type="number"
                 value={maxWeight}
                 placeholder="nessuno"
-                onChange={(event) => setMaxWeight(event.target.value)}
+                onChange={(event) => {
+                  invalidatePlan();
+                  setMaxWeight(event.target.value);
+                }}
+                disabled={loading || applying || rebalancing}
                 className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-300/60"
               />
             </label>
@@ -213,7 +258,11 @@ export function AllocationPlanner() {
                 <input
                   type="number"
                   value={targetVol}
-                  onChange={(event) => setTargetVol(event.target.value)}
+                  onChange={(event) => {
+                    invalidatePlan();
+                    setTargetVol(event.target.value);
+                  }}
+                  disabled={loading || applying || rebalancing}
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-violet-300/60"
                 />
               </label>
@@ -229,6 +278,7 @@ export function AllocationPlanner() {
                     type="checkbox"
                     checked={selected.includes(asset.symbol)}
                     onChange={() => toggle(asset.symbol)}
+                    disabled={loading || applying || rebalancing}
                     className="h-4 w-4 accent-violet-300"
                   />
                   <span className="font-semibold text-white">{asset.symbol}</span>
@@ -240,7 +290,7 @@ export function AllocationPlanner() {
 
           <button
             onClick={() => void runPlan()}
-            disabled={loading}
+            disabled={loading || applying || rebalancing}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60"
           >
             <Layers className={`h-4 w-4 ${loading ? "animate-pulse" : ""}`} aria-hidden="true" />
@@ -328,7 +378,7 @@ export function AllocationPlanner() {
                   {applied && <span className="text-xs font-semibold text-emerald-300">{applied}</span>}
                   <button
                     onClick={() => void runRebalance()}
-                    disabled={rebalancing}
+                    disabled={rebalancing || loading || applying}
                     className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 disabled:opacity-60"
                   >
                     <Shuffle className={`h-4 w-4 ${rebalancing ? "animate-pulse" : ""}`} aria-hidden="true" />
@@ -343,16 +393,43 @@ export function AllocationPlanner() {
                     </button>
                   ) : (
                     <button
-                      onClick={() => void createPortfolio()}
-                      disabled={applying}
-                      className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-400/20 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/30 disabled:opacity-60"
+                      onClick={() => setShowApplyConfirmation(true)}
+                      disabled={applying || loading || rebalancing}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-300/40 bg-cyan-400/20 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/30 disabled:opacity-60"
                     >
-                      <BriefcaseBusiness className={`h-4 w-4 ${applying ? "animate-pulse" : ""}`} aria-hidden="true" />
-                      {applying ? "Creazione..." : "Crea il mio portafoglio"}
+                      <BriefcaseBusiness className="h-4 w-4" aria-hidden="true" />
+                      Sostituisci il portafoglio con questo piano
                     </button>
                   )}
                 </div>
               </div>
+
+              {showApplyConfirmation && (
+                <div className="rounded-xl border border-rose-300/25 bg-rose-400/[0.08] p-4">
+                  <p className="text-sm font-semibold text-rose-100">Conferma la sostituzione del portafoglio</p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    Tutte le posizioni attuali verranno rimosse e sostituite da questo piano da {formatCurrency(plan.total_capital, "EUR")}.
+                    La liquidità risultante sarà {formatCurrency(plan.cash_buffer, "EUR")}.
+                  </p>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <button
+                      onClick={() => void createPortfolio()}
+                      disabled={applying}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <BriefcaseBusiness className={`h-4 w-4 ${applying ? "animate-pulse" : ""}`} aria-hidden="true" />
+                      {applying ? "Sostituzione..." : "Conferma sostituzione portafoglio"}
+                    </button>
+                    <button
+                      onClick={() => setShowApplyConfirmation(false)}
+                      disabled={applying}
+                      className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      Annulla
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {rebalance && (
                 <div className="rounded-xl border border-slate-800/60 bg-slate-950/55 p-4">

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search, Telescope, Trash2 } from "lucide-react";
 
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
-import { apiDelete, apiGet, apiPost, type Asset } from "../lib/api";
+import { ApiError, apiDelete, apiGet, apiPost, type Asset } from "../lib/api";
 
 const assetTypes = [
   { value: "stock", label: "Azione" },
@@ -22,6 +22,10 @@ export function UniversePage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [removingSymbol, setRemovingSymbol] = useState<string | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<string | null>(null);
+  const [confirmSymbol, setConfirmSymbol] = useState("");
+  const removalInFlight = useRef(false);
 
   const [symbol, setSymbol] = useState("");
   const [name, setName] = useState("");
@@ -71,14 +75,56 @@ export function UniversePage() {
   }
 
   async function removeAsset(target: string) {
+    if (removalInFlight.current || purgeTarget) {
+      return;
+    }
+    removalInFlight.current = true;
+    setRemovingSymbol(target);
     setError(null);
     setMessage(null);
     try {
-      await apiDelete(`/assets/${target}`);
+      await apiDelete(`/assets/${encodeURIComponent(target)}`);
+      setPurgeTarget(null);
+      setConfirmSymbol("");
       setMessage(`${target} rimosso.`);
       await load();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.message.includes("dipendenze presenti")) {
+        setPurgeTarget(target);
+        setConfirmSymbol("");
+      }
       setError(err instanceof Error ? err.message : "Rimozione non riuscita.");
+    } finally {
+      removalInFlight.current = false;
+      setRemovingSymbol(null);
+    }
+  }
+
+  async function purgeAsset() {
+    if (removalInFlight.current) {
+      return;
+    }
+    if (!purgeTarget || confirmSymbol !== purgeTarget) {
+      setError(`Digita esattamente ${purgeTarget ?? "il ticker"} per confermare.`);
+      return;
+    }
+    removalInFlight.current = true;
+    setRemovingSymbol(purgeTarget);
+    setError(null);
+    setMessage(null);
+    try {
+      await apiDelete(
+        `/assets/${encodeURIComponent(purgeTarget)}?purge=true&confirm_symbol=${encodeURIComponent(confirmSymbol)}`,
+      );
+      setMessage(`${purgeTarget} e tutte le dipendenze collegate sono stati rimossi dopo il backup.`);
+      setPurgeTarget(null);
+      setConfirmSymbol("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rimozione completa non riuscita.");
+    } finally {
+      removalInFlight.current = false;
+      setRemovingSymbol(null);
     }
   }
 
@@ -100,6 +146,45 @@ export function UniversePage() {
 
       {error && <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
       {message && <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">{message}</div>}
+
+      {purgeTarget && (
+        <Panel eyebrow="Rimozione protetta" title={`Rimuovi definitivamente ${purgeTarget}?`}>
+          <p className="text-sm text-slate-300">
+            Verranno rimossi l'asset e i dati collegati: storico prezzi, posizioni, ordini simulati, segnali e news.
+            Il backend creerà un backup prima della cancellazione e interromperà l'operazione se il backup fallisce.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Digita esattamente {purgeTarget} per confermare</span>
+              <input
+                value={confirmSymbol}
+                onChange={(event) => setConfirmSymbol(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                className="block min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-rose-300/60 sm:w-64"
+              />
+            </label>
+            <button
+              onClick={() => void purgeAsset()}
+              disabled={confirmSymbol !== purgeTarget || removingSymbol === purgeTarget}
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {removingSymbol === purgeTarget ? "Rimozione..." : `Rimuovi ${purgeTarget} e i dati collegati`}
+            </button>
+            <button
+              onClick={() => {
+                setPurgeTarget(null);
+                setConfirmSymbol("");
+                setError(null);
+              }}
+              disabled={removingSymbol === purgeTarget}
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              Annulla
+            </button>
+          </div>
+        </Panel>
+      )}
 
       <Panel eyebrow="Aggiungi" title="Nuovo asset da tracciare">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -152,7 +237,12 @@ export function UniversePage() {
                   </div>
                   <p className="mt-0.5 truncate text-xs text-slate-500">{asset.name}</p>
                 </div>
-                <button onClick={() => void removeAsset(asset.symbol)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-700 text-slate-400 transition hover:border-rose-300/40 hover:text-rose-200" aria-label={`Rimuovi ${asset.symbol}`}>
+                <button
+                  onClick={() => void removeAsset(asset.symbol)}
+                  disabled={removingSymbol !== null || purgeTarget !== null}
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-700 text-slate-400 transition hover:border-rose-300/40 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={`Rimuovi ${asset.symbol}`}
+                >
                   <Trash2 className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>

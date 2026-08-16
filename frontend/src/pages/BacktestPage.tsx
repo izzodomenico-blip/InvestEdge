@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GitCompareArrows, RotateCcw, ShieldCheck, Trash2, Trophy } from "lucide-react";
 import {
   Area,
@@ -117,6 +117,17 @@ export function BacktestPage() {
   const [folds, setFolds] = useState("4");
   const [walkResult, setWalkResult] = useState<WalkForwardResult | null>(null);
   const [walking, setWalking] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<BacktestSummary | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const backtestOperationInFlight = useRef(false);
+  const resultRequestId = useRef(0);
+
+  const normalizedDeleteName = deleteTarget?.name.trim().replace(/\s+/g, " ") ?? "";
+  const deleteConfirmationToken = deleteTarget?.id
+    ? normalizedDeleteName ? `${normalizedDeleteName} #${deleteTarget.id}` : `#${deleteTarget.id}`
+    : "";
 
   async function loadData() {
     setLoading(true);
@@ -187,6 +198,12 @@ export function BacktestPage() {
       setError(validation);
       return;
     }
+    if (backtestOperationInFlight.current) {
+      return;
+    }
+    backtestOperationInFlight.current = true;
+    resultRequestId.current += 1;
+    setHistoryBusy(true);
     setRunning(true);
     try {
       const payload: BacktestRunInput = {
@@ -212,23 +229,61 @@ export function BacktestPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante l'esecuzione del backtest.");
     } finally {
+      backtestOperationInFlight.current = false;
+      setHistoryBusy(false);
       setRunning(false);
     }
   }
 
-  async function deleteRun(id: number | null) {
-    if (!id) {
+  async function loadRunResult(id: number) {
+    if (backtestOperationInFlight.current) {
       return;
     }
+    backtestOperationInFlight.current = true;
+    setHistoryBusy(true);
+    const requestId = ++resultRequestId.current;
+    try {
+      const nextResult = await apiGet<BacktestResult>(`/backtests/${id}`);
+      if (requestId === resultRequestId.current) {
+        setResult(nextResult);
+      }
+    } catch (err) {
+      if (requestId === resultRequestId.current) {
+        setError(err instanceof Error ? err.message : "Errore caricamento backtest.");
+      }
+    } finally {
+      backtestOperationInFlight.current = false;
+      setHistoryBusy(false);
+    }
+  }
+
+  async function deleteRun(target: BacktestSummary) {
+    if (!target.id || backtestOperationInFlight.current) {
+      return;
+    }
+    backtestOperationInFlight.current = true;
+    resultRequestId.current += 1;
+    setHistoryBusy(true);
+    setDeleting(true);
     setError(null);
     try {
-      await apiDelete(`/backtests/${id}`);
-      setHistory(await apiGet<BacktestSummary[]>("/backtests"));
-      if (result?.backtest_id === id) {
-        setResult(null);
+      await apiDelete(`/backtests/${target.id}`);
+      setHistory((current) => current.filter((item) => item.id !== target.id));
+      setResult((current) => current?.backtest_id === target.id ? null : current);
+      setDeleteTarget((current) => current?.id === target.id ? null : current);
+      setDeleteConfirmation("");
+      try {
+        setHistory(await apiGet<BacktestSummary[]>("/backtests"));
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : "refresh non riuscito";
+        setError(`Backtest cancellato, ma l'elenco non è stato aggiornato: ${detail}`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante la cancellazione del backtest.");
+    } finally {
+      backtestOperationInFlight.current = false;
+      setHistoryBusy(false);
+      setDeleting(false);
     }
   }
 
@@ -252,6 +307,12 @@ export function BacktestPage() {
       setError("Seleziona almeno due strategie da confrontare.");
       return;
     }
+    if (backtestOperationInFlight.current) {
+      return;
+    }
+    backtestOperationInFlight.current = true;
+    resultRequestId.current += 1;
+    setHistoryBusy(true);
     setComparing(true);
     try {
       const payload: BacktestCompareInput = {
@@ -275,6 +336,8 @@ export function BacktestPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante il confronto delle strategie.");
     } finally {
+      backtestOperationInFlight.current = false;
+      setHistoryBusy(false);
       setComparing(false);
     }
   }
@@ -287,6 +350,12 @@ export function BacktestPage() {
       setError(validation);
       return;
     }
+    if (backtestOperationInFlight.current) {
+      return;
+    }
+    backtestOperationInFlight.current = true;
+    resultRequestId.current += 1;
+    setHistoryBusy(true);
     setWalking(true);
     try {
       const payload: WalkForwardInput = {
@@ -311,6 +380,8 @@ export function BacktestPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Errore durante la validazione walk-forward.");
     } finally {
+      backtestOperationInFlight.current = false;
+      setHistoryBusy(false);
       setWalking(false);
     }
   }
@@ -362,6 +433,7 @@ export function BacktestPage() {
             <button
               type="button"
               onClick={() => setMode("single")}
+              disabled={historyBusy}
               className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all ${
                 mode === "single"
                   ? "bg-cyan-400/15 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
@@ -374,6 +446,7 @@ export function BacktestPage() {
             <button
               type="button"
               onClick={() => setMode("compare")}
+              disabled={historyBusy}
               className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all ${
                 mode === "compare"
                   ? "bg-violet-400/15 text-violet-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
@@ -386,6 +459,7 @@ export function BacktestPage() {
             <button
               type="button"
               onClick={() => setMode("walkforward")}
+              disabled={historyBusy}
               className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all ${
                 mode === "walkforward"
                   ? "bg-emerald-400/15 text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
@@ -543,17 +617,17 @@ export function BacktestPage() {
             </div>
 
             {mode === "compare" ? (
-              <button disabled={comparing} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
+              <button disabled={comparing || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
                 <GitCompareArrows className={`h-4 w-4 ${comparing ? "animate-pulse" : ""}`} aria-hidden="true" />
                 {comparing ? "Confronto in corso..." : "Confronta strategie"}
               </button>
             ) : mode === "walkforward" ? (
-              <button disabled={walking} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-60">
+              <button disabled={walking || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-60">
                 <ShieldCheck className={`h-4 w-4 ${walking ? "animate-pulse" : ""}`} aria-hidden="true" />
                 {walking ? "Validazione in corso..." : "Valida robustezza"}
               </button>
             ) : (
-              <button disabled={running} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60">
+              <button disabled={running || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60">
                 <RotateCcw className={`h-4 w-4 ${running ? "animate-spin" : ""}`} aria-hidden="true" />
                 {running ? "Esecuzione..." : "Esegui backtest"}
               </button>
@@ -972,7 +1046,11 @@ export function BacktestPage() {
               {history.map((item) => (
                 <tr key={item.id} className="text-sm">
                   <td className="px-3 py-4 pl-0">
-                    <button onClick={() => item.id && apiGet<BacktestResult>(`/backtests/${item.id}`).then(setResult).catch((err) => setError(err instanceof Error ? err.message : "Errore caricamento backtest."))} className="font-semibold text-white hover:text-cyan-200">
+                    <button
+                      onClick={() => item.id && void loadRunResult(item.id)}
+                      disabled={historyBusy || deleteTarget !== null}
+                      className="font-semibold text-white hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
                       {item.name}
                     </button>
                     <p className="mt-1 text-xs text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString("it-IT") : "-"}</p>
@@ -983,7 +1061,19 @@ export function BacktestPage() {
                   <td className={item.alpha_vs_benchmark >= 0 ? "px-3 py-4 text-right font-semibold text-emerald-300" : "px-3 py-4 text-right font-semibold text-rose-300"}>{formatPercent(item.alpha_vs_benchmark)}</td>
                   <td className="px-3 py-4 text-right text-slate-300">{item.total_trades}</td>
                   <td className="px-3 py-4 pr-0">
-                    <button onClick={() => void deleteRun(item.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 text-slate-400 transition hover:border-rose-300/40 hover:text-rose-200" aria-label="Cancella backtest">
+                    <button
+                      onClick={() => {
+                        if (backtestOperationInFlight.current || deleteTarget) {
+                          return;
+                        }
+                        setDeleteTarget(item);
+                        setDeleteConfirmation("");
+                        setError(null);
+                      }}
+                      disabled={historyBusy || deleteTarget !== null}
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-700 text-slate-400 transition hover:border-rose-300/40 hover:text-rose-200"
+                      aria-label={`Cancella backtest ${item.name} #${item.id}`}
+                    >
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </td>
@@ -994,6 +1084,42 @@ export function BacktestPage() {
           {history.length === 0 && <p className="py-8 text-sm text-slate-400">Nessun backtest eseguito.</p>}
         </div>
       </Panel>
+
+      {deleteTarget && (
+        <Panel eyebrow="Conferma cancellazione" title={`Cancella ${deleteTarget.name} #${deleteTarget.id}?`}>
+          <p className="text-sm text-slate-300">
+            Verranno rimossi definitivamente il run di backtest, la relativa equity curve, i trade e le posizioni finali salvate.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Digita esattamente {deleteConfirmationToken}</span>
+              <input
+                value={deleteConfirmation}
+                onChange={(event) => setDeleteConfirmation(event.target.value)}
+                autoComplete="off"
+                className="block min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-rose-300/60 sm:w-80"
+              />
+            </label>
+            <button
+              onClick={() => void deleteRun(deleteTarget)}
+              disabled={deleteConfirmation !== deleteConfirmationToken || deleting}
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-rose-300/30 bg-rose-400/15 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deleting ? "Cancellazione..." : "Cancella definitivamente il backtest"}
+            </button>
+            <button
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirmation("");
+              }}
+              disabled={deleting}
+              className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              Annulla
+            </button>
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
