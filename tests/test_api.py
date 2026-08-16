@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 import pandas as pd
 import pytest
@@ -41,6 +42,46 @@ def client(tmp_path, monkeypatch):
         yield test_client
 
     get_settings.cache_clear()
+
+
+def _asset_dependency_state(symbol: str) -> tuple[int | None, dict[str, int], dict[str, int]]:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        asset = connection.execute(
+            "SELECT id FROM assets WHERE UPPER(symbol) = UPPER(?)",
+            (symbol,),
+        ).fetchone()
+        totals = dict(
+            connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM price_history) AS price_history,
+                    (SELECT COUNT(*) FROM portfolio_positions) AS portfolio_positions,
+                    (SELECT COUNT(*) FROM simulated_orders) AS simulated_orders,
+                    (SELECT COUNT(*) FROM signals) AS signals,
+                    (SELECT COUNT(*) FROM news_items) AS news_items
+                """
+            ).fetchone()
+        )
+        if asset is None:
+            return None, dict.fromkeys(totals, 0), totals
+
+        asset_id = int(asset["id"])
+        counts = dict(
+            connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM price_history WHERE asset_id = ?) AS price_history,
+                    (SELECT COUNT(*) FROM portfolio_positions WHERE asset_id = ?) AS portfolio_positions,
+                    (SELECT COUNT(*) FROM simulated_orders WHERE asset_id = ?) AS simulated_orders,
+                    (SELECT COUNT(*) FROM signals WHERE asset_id = ?) AS signals,
+                    (SELECT COUNT(*) FROM news_items WHERE asset_id = ?) AS news_items
+                """,
+                (asset_id, asset_id, asset_id, asset_id, asset_id),
+            ).fetchone()
+        )
+        return asset_id, counts, totals
 
 
 def test_health_endpoint(client: TestClient) -> None:
@@ -304,7 +345,7 @@ def test_tax_report_empty(client: TestClient) -> None:
     assert data["total_tax_due"] == 0.0
 
 
-def test_universe_add_and_remove_asset(client: TestClient) -> None:
+def test_remove_asset_without_dependencies(client: TestClient) -> None:
     create = client.post(
         "/assets",
         json={"symbol": "TEST1", "name": "Test Asset", "asset_type": "stock", "currency": "USD"},
@@ -316,16 +357,274 @@ def test_universe_add_and_remove_asset(client: TestClient) -> None:
 
     delete = client.delete("/assets/TEST1")
     assert delete.status_code == 200
-    assert delete.json()["deleted"] is True
+    assert delete.json() == {
+        "deleted": True,
+        "symbol": "TEST1",
+        "purged": False,
+        "dependency_counts": {
+            "price_history": 0,
+            "portfolio_positions": 0,
+            "simulated_orders": 0,
+            "signals": 0,
+            "news_items": 0,
+        },
+    }
 
     assets_after = {a["symbol"] for a in client.get("/assets").json()}
     assert "TEST1" not in assets_after
 
 
-def test_universe_remove_missing_asset(client: TestClient) -> None:
+def test_remove_asset_with_dependencies_returns_conflict_without_changes(client: TestClient) -> None:
+    asset_id_before, counts_before, totals_before = _asset_dependency_state("AAPL")
+    assert asset_id_before is not None
+    assert all(count > 0 for count in counts_before.values())
+
+    response = client.delete("/assets/AAPL")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert all(f"{table}={count}" in detail for table, count in counts_before.items())
+    assert _asset_dependency_state("AAPL") == (asset_id_before, counts_before, totals_before)
+
+
+@pytest.mark.parametrize("confirm_symbol", [None, "aapl", "MSFT"])
+def test_purge_asset_requires_exact_confirmation(
+    client: TestClient,
+    confirm_symbol: str | None,
+) -> None:
+    state_before = _asset_dependency_state("AAPL")
+    params = {"purge": "true"}
+    if confirm_symbol is not None:
+        params["confirm_symbol"] = confirm_symbol
+
+    response = client.delete("/assets/AAPL", params=params)
+
+    assert response.status_code == 400
+    assert _asset_dependency_state("AAPL") == state_before
+
+
+def test_purge_asset_with_confirmation_creates_backup_and_deletes_dependencies(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from backend.app.api import routes
+
+    asset_id_before, counts_before, totals_before = _asset_dependency_state("AAPL")
+    assert asset_id_before is not None
+    backup_reasons: list[str] = []
+    real_create_backup = routes.create_backup
+
+    def successful_backup(*, reason: str) -> dict[str, object]:
+        backup_reasons.append(reason)
+        return real_create_backup(reason=reason)
+
+    monkeypatch.setattr(routes, "create_backup", successful_backup)
+
+    response = client.delete(
+        "/assets/AAPL",
+        params={"purge": "true", "confirm_symbol": "AAPL"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "deleted": True,
+        "symbol": "AAPL",
+        "purged": True,
+        "dependency_counts": counts_before,
+    }
+    assert backup_reasons == ["pre-asset-purge-AAPL"]
+    asset_id_after, _, totals_after = _asset_dependency_state("AAPL")
+    assert asset_id_after is None
+    assert totals_after == {
+        table: totals_before[table] - counts_before[table]
+        for table in totals_before
+    }
+
+
+def test_purge_asset_without_created_backup_preserves_data(client: TestClient, monkeypatch) -> None:
+    state_before = _asset_dependency_state("AAPL")
+    monkeypatch.setattr(
+        "backend.app.api.routes.create_backup",
+        lambda *, reason: {"created": False, "reason": reason, "file": None},
+    )
+
+    response = client.delete(
+        "/assets/AAPL",
+        params={"purge": "true", "confirm_symbol": "AAPL"},
+    )
+
+    assert response.status_code == 503
+    assert _asset_dependency_state("AAPL") == state_before
+
+
+def test_purge_asset_when_backup_raises_preserves_data(client: TestClient, monkeypatch) -> None:
+    state_before = _asset_dependency_state("AAPL")
+
+    def failing_backup(*, reason: str) -> dict[str, object]:
+        raise OSError(f"backup failed for {reason}")
+
+    monkeypatch.setattr("backend.app.api.routes.create_backup", failing_backup)
+
+    response = client.delete(
+        "/assets/AAPL",
+        params={"purge": "true", "confirm_symbol": "AAPL"},
+    )
+
+    assert response.status_code == 503
+    assert _asset_dependency_state("AAPL") == state_before
+
+
+def test_remove_asset_missing_returns_not_found(client: TestClient) -> None:
     response = client.delete("/assets/NOPE")
 
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"purge": "true", "confirm_symbol": "DUP"}],
+    ids=["remove", "purge"],
+)
+def test_remove_asset_rejects_ambiguous_symbol(
+    client: TestClient,
+    monkeypatch,
+    params: dict[str, str],
+) -> None:
+    from backend.app.database import db_session
+
+    for asset_type in ("stock", "etf"):
+        response = client.post(
+            "/assets",
+            json={
+                "symbol": "DUP",
+                "name": f"Duplicate {asset_type}",
+                "asset_type": asset_type,
+                "currency": "USD",
+            },
+        )
+        assert response.status_code == 201
+
+    with db_session() as connection:
+        duplicate_ids = [
+            int(row["id"])
+            for row in connection.execute(
+                "SELECT id FROM assets WHERE symbol = 'DUP' ORDER BY id",
+            ).fetchall()
+        ]
+        connection.execute(
+            "INSERT INTO price_history (asset_id, date, close) VALUES (?, '2026-01-01', 10)",
+            (duplicate_ids[1],),
+        )
+
+    backup_reasons: list[str] = []
+
+    def backup_spy(*, reason: str) -> dict[str, object]:
+        backup_reasons.append(reason)
+        return {"created": True, "reason": reason, "file": "backup.db"}
+
+    monkeypatch.setattr("backend.app.api.routes.create_backup", backup_spy)
+
+    response = client.delete("/assets/DUP", params=params)
+
+    assert response.status_code == 409
+    assert backup_reasons == []
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM assets WHERE symbol = 'DUP'").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+            (duplicate_ids[1],),
+        ).fetchone()[0] == 1
+
+
+def test_remove_asset_counts_symbol_only_news_as_dependency(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    create = client.post(
+        "/assets",
+        json={"symbol": "NEWSY", "name": "Legacy News Asset", "asset_type": "stock", "currency": "USD"},
+    )
+    assert create.status_code == 201
+    with db_session() as connection:
+        news_id = connection.execute(
+            "INSERT INTO news_items (asset_id, symbol, title) VALUES (NULL, 'NEWSY', 'Legacy linked news')"
+        ).lastrowid
+
+    response = client.delete("/assets/NEWSY")
+
+    assert response.status_code == 409
+    assert "news_items=1" in response.json()["detail"]
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM assets WHERE symbol = 'NEWSY'").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM news_items WHERE id = ?", (news_id,)).fetchone()[0] == 1
+
+
+def test_purge_asset_deletes_symbol_only_news(client: TestClient, monkeypatch) -> None:
+    from backend.app.database import db_session
+
+    create = client.post(
+        "/assets",
+        json={"symbol": "NEWSY", "name": "Legacy News Asset", "asset_type": "stock", "currency": "USD"},
+    )
+    assert create.status_code == 201
+    with db_session() as connection:
+        news_id = connection.execute(
+            "INSERT INTO news_items (asset_id, symbol, title) VALUES (NULL, 'NEWSY', 'Legacy linked news')"
+        ).lastrowid
+
+    monkeypatch.setattr(
+        "backend.app.api.routes.create_backup",
+        lambda *, reason: {"created": True, "reason": reason, "file": "backup.db"},
+    )
+
+    response = client.delete(
+        "/assets/NEWSY",
+        params={"purge": "true", "confirm_symbol": "NEWSY"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dependency_counts"]["news_items"] == 1
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM assets WHERE symbol = 'NEWSY'").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM news_items WHERE id = ?", (news_id,)).fetchone()[0] == 0
+
+
+def test_remove_asset_blocks_concurrent_dependencies_between_count_and_delete(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from backend.app.api import routes
+    from backend.app.config import get_settings
+
+    create = client.post(
+        "/assets",
+        json={"symbol": "LOCKED", "name": "Lock Test Asset", "asset_type": "stock", "currency": "USD"},
+    )
+    assert create.status_code == 201
+    original_dependency_counts = routes.asset_dependency_counts
+    concurrent_write_errors: list[str] = []
+
+    def counts_with_concurrent_write(connection, asset_id: int) -> dict[str, int]:
+        counts = original_dependency_counts(connection, asset_id)
+        contender = sqlite3.connect(str(get_settings().database_path), timeout=0)
+        try:
+            contender.execute(
+                "INSERT INTO price_history (asset_id, date, close) VALUES (?, '2026-01-01', 10)",
+                (asset_id,),
+            )
+            contender.commit()
+        except sqlite3.OperationalError as exc:
+            concurrent_write_errors.append(str(exc))
+        finally:
+            contender.close()
+        return counts
+
+    monkeypatch.setattr(routes, "asset_dependency_counts", counts_with_concurrent_write)
+
+    response = client.delete("/assets/LOCKED")
+
+    assert response.status_code == 200
+    assert len(concurrent_write_errors) == 1
+    assert "locked" in concurrent_write_errors[0].lower()
 
 
 def test_backup_create_and_list(client: TestClient) -> None:

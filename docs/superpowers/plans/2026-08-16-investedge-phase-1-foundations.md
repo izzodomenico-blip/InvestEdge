@@ -225,7 +225,7 @@ git push -u origin HEAD
 
 **Contract:** `DELETE /assets/{symbol}` elimina direttamente solo asset senza dipendenze. Se esistono prezzi, posizioni, ordini, segnali o news collegate, restituisce 409. Il purge richiede `purge=true`, `confirm_symbol` esatto e backup riuscito.
 
-- [ ] **Step 1: Aggiungere test di regressione della cascade**
+- [x] **Step 1: Aggiungere test di regressione della cascade**
 
 I test devono coprire:
 
@@ -235,13 +235,13 @@ I test devono coprire:
 - purge con conferma: backup chiamato, 200, dipendenze eliminate;
 - backup che fallisce: 500/503 e asset invariato.
 
-- [ ] **Step 2: Dimostrare il fallimento attuale**
+- [x] **Step 2: Dimostrare il fallimento attuale**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_api.py -k "remove_asset or purge_asset" -vv
 ```
 
-- [ ] **Step 3: Implementare conteggio dipendenze e purge protetto**
+- [x] **Step 3: Implementare conteggio dipendenze e purge protetto**
 
 In `assets_service.py` aggiungere una funzione sola lettura:
 
@@ -261,14 +261,14 @@ confirm_symbol: str | None = Query(default=None)
 
 Prima del purge chiamare `create_backup(reason=f"pre-asset-purge-{symbol.upper()}")` e richiedere `created=True`. Il DELETE rimane nella transazione della route.
 
-- [ ] **Step 4: Verificare Task 3**
+- [x] **Step 4: Verificare Task 3**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_api.py -k "remove_asset or purge_asset or backup"
 backend\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-- [ ] **Step 5: Commit e push**
+- [x] **Step 5: Commit e push**
 
 ```powershell
 git add backend/app/services/assets_service.py backend/app/api/routes.py backend/app/models/schemas.py tests/test_api.py

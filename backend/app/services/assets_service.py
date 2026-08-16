@@ -214,8 +214,61 @@ def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut
     return _asset_from_base_row(connection, row)
 
 
-def delete_asset(connection: sqlite3.Connection, symbol: str) -> bool:
-    cursor = connection.execute("DELETE FROM assets WHERE UPPER(symbol) = UPPER(?)", (symbol,))
+def asset_symbol_match_count(connection: sqlite3.Connection, symbol: str) -> int:
+    row = connection.execute(
+        "SELECT COUNT(*) AS count FROM assets WHERE UPPER(symbol) = UPPER(?)",
+        (symbol,),
+    ).fetchone()
+    return int(row["count"])
+
+
+def asset_dependency_counts(connection: sqlite3.Connection, asset_id: int) -> dict[str, int]:
+    row = connection.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM price_history WHERE asset_id = ?) AS price_history,
+            (SELECT COUNT(*) FROM portfolio_positions WHERE asset_id = ?) AS portfolio_positions,
+            (SELECT COUNT(*) FROM simulated_orders WHERE asset_id = ?) AS simulated_orders,
+            (SELECT COUNT(*) FROM signals WHERE asset_id = ?) AS signals,
+            (
+                SELECT COUNT(*)
+                FROM news_items
+                WHERE asset_id = ?
+                    OR (
+                        asset_id IS NULL
+                        AND UPPER(symbol) = (SELECT UPPER(symbol) FROM assets WHERE id = ?)
+                    )
+            ) AS news_items
+        """,
+        (asset_id, asset_id, asset_id, asset_id, asset_id, asset_id),
+    ).fetchone()
+    return {
+        "price_history": int(row["price_history"]),
+        "portfolio_positions": int(row["portfolio_positions"]),
+        "simulated_orders": int(row["simulated_orders"]),
+        "signals": int(row["signals"]),
+        "news_items": int(row["news_items"]),
+    }
+
+
+def delete_asset(
+    connection: sqlite3.Connection,
+    asset_id: int,
+    *,
+    symbol: str,
+    purge: bool = False,
+) -> bool:
+    if purge:
+        connection.execute("DELETE FROM price_history WHERE asset_id = ?", (asset_id,))
+        connection.execute("DELETE FROM portfolio_positions WHERE asset_id = ?", (asset_id,))
+        connection.execute("DELETE FROM simulated_orders WHERE asset_id = ?", (asset_id,))
+        connection.execute("DELETE FROM signals WHERE asset_id = ?", (asset_id,))
+        connection.execute(
+            "DELETE FROM news_items WHERE asset_id = ? OR (asset_id IS NULL AND UPPER(symbol) = UPPER(?))",
+            (asset_id, symbol),
+        )
+
+    cursor = connection.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     return cursor.rowcount > 0
 
 

@@ -59,6 +59,21 @@ class AssetOut(AssetCreate):
     updated_at: str | None = None
 
 
+class AssetDependencyCountsOut(BaseModel):
+    price_history: int = Field(..., ge=0)
+    portfolio_positions: int = Field(..., ge=0)
+    simulated_orders: int = Field(..., ge=0)
+    signals: int = Field(..., ge=0)
+    news_items: int = Field(..., ge=0)
+
+
+class AssetDeleteOut(BaseModel):
+    deleted: bool
+    symbol: str
+    purged: bool
+    dependency_counts: AssetDependencyCountsOut
+
+
 class PricePointOut(BaseModel):
     date: str
     open: float

@@ -61,6 +61,7 @@ from backend.app.models import (
     WalkForwardIn,
     WalkForwardOut,
 )
+from backend.app.models.schemas import AssetDeleteOut
 from backend.app.services import google_sheets_import_service
 from backend.app.services.action_board_service import get_action_board
 from backend.app.services.alert_service import (
@@ -70,7 +71,14 @@ from backend.app.services.alert_service import (
     send_today_alert,
 )
 from backend.app.services.allocation_engine import AllocationEngine
-from backend.app.services.assets_service import create_asset, delete_asset, get_asset_by_symbol, list_assets
+from backend.app.services.assets_service import (
+    asset_dependency_counts,
+    asset_symbol_match_count,
+    create_asset,
+    delete_asset,
+    get_asset_by_symbol,
+    list_assets,
+)
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
 from backend.app.services.dashboard_service import get_dashboard
@@ -129,13 +137,66 @@ def post_asset(payload: AssetCreate) -> AssetOut:
         ) from exc
 
 
-@router.delete("/assets/{symbol}")
-def remove_asset(symbol: str) -> dict[str, bool | str]:
+@router.delete("/assets/{symbol}", response_model=AssetDeleteOut)
+def remove_asset(
+    symbol: str,
+    purge: bool = Query(default=False),
+    confirm_symbol: str | None = Query(default=None),
+) -> AssetDeleteOut:
     with db_session() as connection:
-        deleted = delete_asset(connection, symbol)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset {symbol.upper()} non trovato.")
-    return {"deleted": True, "symbol": symbol.upper()}
+        connection.execute("BEGIN IMMEDIATE")
+        symbol_matches = asset_symbol_match_count(connection, symbol)
+        if symbol_matches > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Asset {symbol.upper()} ambiguo: esistono {symbol_matches} strumenti con lo stesso simbolo. "
+                    "La cancellazione richiede un identificatore univoco."
+                ),
+            )
+
+        asset = get_asset_by_symbol(connection, symbol)
+        if asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset {symbol.upper()} non trovato.")
+
+        dependency_counts = asset_dependency_counts(connection, asset.id)
+        if purge:
+            if confirm_symbol != asset.symbol:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"confirm_symbol deve corrispondere esattamente a {asset.symbol}.",
+                )
+            try:
+                backup = create_backup(reason=f"pre-asset-purge-{asset.symbol.upper()}")
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Backup pre-purge non riuscito; asset e dipendenze non sono stati modificati.",
+                ) from exc
+            if backup.get("created") is not True:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Backup pre-purge non creato; asset e dipendenze non sono stati modificati.",
+                )
+        elif any(dependency_counts.values()):
+            summary = ", ".join(f"{table}={count}" for table, count in dependency_counts.items())
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Asset {asset.symbol} non eliminato: dipendenze presenti ({summary}). "
+                    "Usa purge=true con confirm_symbol esatto per una rimozione protetta da backup."
+                ),
+            )
+
+        deleted = delete_asset(connection, asset.id, symbol=asset.symbol, purge=purge)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset {asset.symbol} non trovato.")
+        return AssetDeleteOut(
+            deleted=True,
+            symbol=asset.symbol,
+            purged=purge,
+            dependency_counts=dependency_counts,
+        )
 
 
 @router.get("/portfolio", response_model=PortfolioSummaryOut)
