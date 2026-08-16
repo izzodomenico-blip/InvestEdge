@@ -31,7 +31,7 @@ ISIN_BY_SYMBOL: dict[str, str] = {
     "SHY": "US4642874329",
 }
 
-SCHEMA = """
+BASE_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS assets (
@@ -279,22 +279,6 @@ CREATE TABLE IF NOT EXISTS backtest_positions (
     FOREIGN KEY(backtest_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
-CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
-CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
-CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
-CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
-CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
-CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at);
-CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url);
-CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
-CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
-CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
-CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
-CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
-CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
-
 CREATE TABLE IF NOT EXISTS ml_models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     model_name TEXT NOT NULL,
@@ -345,8 +329,32 @@ CREATE TABLE IF NOT EXISTS ml_training_runs (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+"""
+
+
+INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
+CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
+CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
+CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at);
+CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date);
+CREATE INDEX IF NOT EXISTS idx_news_items_published ON news_items(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url);
+CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
+CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol);
+CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
+CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
 CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol ON ml_predictions(symbol, created_at);
 """
+
+
+SCHEMA = BASE_SCHEMA + INDEX_SCHEMA
 
 
 MIGRATIONS = {
@@ -516,12 +524,6 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if signal_schema and "STRONG_BUY" not in signal_schema["sql"]:
         connection.executescript(SIGNALS_REBUILD_SQL)
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_generated ON signals(asset_id, generated_at)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_asset_created ON signals(asset_id, created_at)")
-
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_simulated_orders_asset_date ON simulated_orders(asset_id, order_date)"
-    )
     # Backfill ISIN sui titoli noti (solo dove mancante): riempie i DB esistenti
     # senza bisogno di un nuovo seed, preservando i dati reali gia' scaricati.
     for symbol, isin in ISIN_BY_SYMBOL.items():
@@ -556,10 +558,6 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         """
     )
     connection.execute("UPDATE news_items SET updated_at = created_at WHERE updated_at IS NULL")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published ON news_items(symbol, published_at)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url)")
 
 
 @contextmanager
@@ -577,5 +575,6 @@ def db_session() -> Iterator[sqlite3.Connection]:
 
 def init_db() -> None:
     with get_connection() as connection:
-        connection.executescript(SCHEMA)
+        connection.executescript(BASE_SCHEMA)
         migrate_db(connection)
+        connection.executescript(INDEX_SCHEMA)

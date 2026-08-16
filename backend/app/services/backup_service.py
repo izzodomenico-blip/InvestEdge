@@ -5,7 +5,6 @@ Usa l'API nativa sqlite3 `Connection.backup`, sicura anche se il DB e' in uso
 """
 from __future__ import annotations
 
-import contextlib
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,7 +80,5 @@ def list_backups() -> list[dict[str, Any]]:
     return result
 
 
-def auto_backup_on_startup() -> None:
-    """Backup best-effort all'avvio. Non deve mai bloccare l'app."""
-    with contextlib.suppress(Exception):
-        create_backup(reason="startup")
+def backup_before_migration() -> dict[str, Any]:
+    return create_backup(reason="pre-migration")

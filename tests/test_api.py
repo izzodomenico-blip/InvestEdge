@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -46,6 +48,46 @@ def test_health_endpoint(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> None:
+    from backend.app import main
+
+    events: list[str] = []
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(main, "backup_before_migration", lambda: events.append("backup"))
+    monkeypatch.setattr(main, "init_db", lambda: events.append("init"))
+
+    async def run_lifespan() -> None:
+        async with main.lifespan(None):
+            events.append("yield")
+
+    asyncio.run(run_lifespan())
+
+    assert events == ["backup", "init", "yield"]
+
+
+def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
+    from backend.app import main
+
+    events: list[str] = []
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    def fail_backup() -> None:
+        events.append("backup")
+        raise RuntimeError("backup failed")
+
+    monkeypatch.setattr(main, "backup_before_migration", fail_backup)
+    monkeypatch.setattr(main, "init_db", lambda: events.append("init"))
+
+    async def run_lifespan() -> None:
+        async with main.lifespan(None):
+            events.append("yield")
+
+    with pytest.raises(RuntimeError, match="backup failed"):
+        asyncio.run(run_lifespan())
+
+    assert events == ["backup"]
 
 
 def test_admin_seed_route_is_not_exposed(client: TestClient) -> None:

@@ -139,7 +139,7 @@ git push -u origin HEAD
 
 **Contract:** Un database legacy riceve prima un backup consistente, poi le colonne mancanti, infine gli indici che le usano. Un backup fallito su un DB esistente blocca la migrazione; un DB inesistente può inizializzarsi senza backup.
 
-- [ ] **Step 1: Riprodurre la migrazione legacy che oggi fallisce**
+- [x] **Step 1: Riprodurre la migrazione legacy che oggi fallisce**
 
 In `tests/test_database.py`, creare un file SQLite con tabelle legacy `signals`, `simulated_orders`, `news_items` e `api_cache` prive delle colonne moderne ma con dati sentinella. Chiamare `init_db()` tramite `INVESTEDGE_DB_PATH` temporaneo e verificare:
 
@@ -149,13 +149,13 @@ assert "order_date" in table_columns(connection, "simulated_orders")
 assert connection.execute("SELECT COUNT(*) FROM signals").fetchone()[0] == 1
 ```
 
-- [ ] **Step 2: Eseguire il test e confermare `no such column` durante la creazione indice**
+- [x] **Step 2: Eseguire il test e confermare `no such column` durante la creazione indice**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_database.py -k legacy -vv
 ```
 
-- [ ] **Step 3: Separare schema base e indici post-migrazione**
+- [x] **Step 3: Separare schema base e indici post-migrazione**
 
 In `database.py` definire:
 
@@ -175,7 +175,7 @@ connection.executescript(INDEX_SCHEMA)
 
 Rimuovere da `migrate_db()` le duplicazioni di indici trasferite in `INDEX_SCHEMA`.
 
-- [ ] **Step 4: Rendere esplicito il backup pre-migrazione**
+- [x] **Step 4: Rendere esplicito il backup pre-migrazione**
 
 Sostituire il best-effort silenzioso con:
 
@@ -193,18 +193,18 @@ init_db()
 
 Se il DB non esiste, `create_backup` restituisce `created=False`; se esiste e SQLite backup fallisce, propagare l'errore e non migrare. Non cancellare automaticamente backup in caso di errore.
 
-- [ ] **Step 5: Testare ordine, backup e failure mode**
+- [x] **Step 5: Testare ordine, backup e failure mode**
 
 Aggiungere test con monkeypatch/spie che verifichino `backup -> init`, più un test in cui il backup solleva e `init_db` non viene chiamato.
 
-- [ ] **Step 6: Verificare Task 2**
+- [x] **Step 6: Verificare Task 2**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_database.py tests\test_api.py -k "legacy or backup or health"
 backend\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-- [ ] **Step 7: Commit e push**
+- [x] **Step 7: Commit e push**
 
 ```powershell
 git add backend/app/database.py backend/app/main.py backend/app/services/backup_service.py tests/test_database.py tests/test_api.py

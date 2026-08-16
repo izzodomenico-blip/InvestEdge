@@ -13,15 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.api.routes import router
 from backend.app.config import ROOT_DIR, get_settings
 from backend.app.database import init_db
-from backend.app.services.backup_service import auto_backup_on_startup
+from backend.app.services.backup_service import backup_before_migration
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    init_db()
-    # Backup automatico a ogni avvio (salta durante i test per non sporcare i temp).
+    # Backup pre-migrazione a ogni avvio (salta durante i test per non sporcare i temp).
     if "PYTEST_CURRENT_TEST" not in os.environ:
-        auto_backup_on_startup()
+        backup_before_migration()
+    init_db()
     yield
 
 
