@@ -194,8 +194,8 @@ export function PortfolioPage() {
   // negativo ed e' fuorviante. Mostriamo invece patrimonio + esposizioni distinte.
   const longPositions = summary.positions.filter((p) => p.quantity > 0);
   const shortPositions = summary.positions.filter((p) => p.quantity < 0);
-  const longExposure = longPositions.reduce((sum, p) => sum + p.current_value, 0);
-  const shortExposure = shortPositions.reduce((sum, p) => sum + Math.abs(p.current_value), 0);
+  const longExposure = longPositions.reduce((sum, p) => sum + p.current_value_base, 0);
+  const shortExposure = shortPositions.reduce((sum, p) => sum + Math.abs(p.current_value_base), 0);
   const hasShorts = shortExposure > 1e-9;
 
   return (
@@ -389,6 +389,12 @@ export function PortfolioPage() {
 
                     <p className="mt-3 text-xs text-slate-500">
                       Medio {formatCurrency(position.average_price, position.currency)} → attuale {formatCurrency(position.current_price, position.currency)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Equivalente EUR {formatCurrency(position.current_value_base, position.base_currency)} · P/L EUR{" "}
+                      <span className={pnlClass(position.unrealized_pnl_base)}>
+                        {formatCurrency(position.unrealized_pnl_base, position.base_currency)}
+                      </span>
                     </p>
                     {recommendation?.reason && <p className="mt-1 text-xs text-slate-500">{recommendation.reason}</p>}
 

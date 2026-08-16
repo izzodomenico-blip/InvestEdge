@@ -74,11 +74,17 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
     symbol TEXT,
     quantity REAL NOT NULL,
     average_price REAL NOT NULL,
+    fx_rate_to_base REAL NOT NULL DEFAULT 0,
+    average_price_base REAL NOT NULL DEFAULT 0,
     invested_amount REAL NOT NULL DEFAULT 0,
+    invested_amount_base REAL NOT NULL DEFAULT 0,
     current_price REAL NOT NULL DEFAULT 0,
     current_value REAL NOT NULL DEFAULT 0,
+    current_value_base REAL NOT NULL DEFAULT 0,
     realized_pnl REAL NOT NULL DEFAULT 0,
+    realized_pnl_base REAL NOT NULL DEFAULT 0,
     unrealized_pnl REAL NOT NULL DEFAULT 0,
+    unrealized_pnl_base REAL NOT NULL DEFAULT 0,
     unrealized_pnl_percent REAL NOT NULL DEFAULT 0,
     weight_percent REAL NOT NULL DEFAULT 0,
     asset_type TEXT,
@@ -98,8 +104,13 @@ CREATE TABLE IF NOT EXISTS simulated_orders (
     quantity REAL NOT NULL,
     price REAL NOT NULL,
     fees REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    fx_rate_to_base REAL NOT NULL DEFAULT 0,
     gross_amount REAL NOT NULL DEFAULT 0,
+    gross_amount_base REAL NOT NULL DEFAULT 0,
     net_amount REAL NOT NULL DEFAULT 0,
+    net_amount_base REAL NOT NULL DEFAULT 0,
+    fees_base REAL NOT NULL DEFAULT 0,
     order_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     note TEXT,
     strategy_tag TEXT,
@@ -113,6 +124,7 @@ CREATE TABLE IF NOT EXISTS simulated_orders (
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_date TEXT NOT NULL,
+    base_currency TEXT NOT NULL DEFAULT 'EUR',
     total_value REAL NOT NULL DEFAULT 0,
     invested_value REAL NOT NULL DEFAULT 0,
     cash REAL NOT NULL DEFAULT 0,
@@ -395,11 +407,17 @@ MIGRATIONS = {
     ],
     "portfolio_positions": [
         ("symbol", "ALTER TABLE portfolio_positions ADD COLUMN symbol TEXT"),
+        ("fx_rate_to_base", "ALTER TABLE portfolio_positions ADD COLUMN fx_rate_to_base REAL NOT NULL DEFAULT 0"),
+        ("average_price_base", "ALTER TABLE portfolio_positions ADD COLUMN average_price_base REAL NOT NULL DEFAULT 0"),
         ("invested_amount", "ALTER TABLE portfolio_positions ADD COLUMN invested_amount REAL NOT NULL DEFAULT 0"),
+        ("invested_amount_base", "ALTER TABLE portfolio_positions ADD COLUMN invested_amount_base REAL NOT NULL DEFAULT 0"),
         ("current_price", "ALTER TABLE portfolio_positions ADD COLUMN current_price REAL NOT NULL DEFAULT 0"),
         ("current_value", "ALTER TABLE portfolio_positions ADD COLUMN current_value REAL NOT NULL DEFAULT 0"),
+        ("current_value_base", "ALTER TABLE portfolio_positions ADD COLUMN current_value_base REAL NOT NULL DEFAULT 0"),
         ("realized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN realized_pnl REAL NOT NULL DEFAULT 0"),
+        ("realized_pnl_base", "ALTER TABLE portfolio_positions ADD COLUMN realized_pnl_base REAL NOT NULL DEFAULT 0"),
         ("unrealized_pnl", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl REAL NOT NULL DEFAULT 0"),
+        ("unrealized_pnl_base", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl_base REAL NOT NULL DEFAULT 0"),
         ("unrealized_pnl_percent", "ALTER TABLE portfolio_positions ADD COLUMN unrealized_pnl_percent REAL NOT NULL DEFAULT 0"),
         ("weight_percent", "ALTER TABLE portfolio_positions ADD COLUMN weight_percent REAL NOT NULL DEFAULT 0"),
         ("asset_type", "ALTER TABLE portfolio_positions ADD COLUMN asset_type TEXT"),
@@ -408,12 +426,20 @@ MIGRATIONS = {
     "simulated_orders": [
         ("symbol", "ALTER TABLE simulated_orders ADD COLUMN symbol TEXT"),
         ("order_type", "ALTER TABLE simulated_orders ADD COLUMN order_type TEXT"),
+        ("currency", "ALTER TABLE simulated_orders ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'"),
+        ("fx_rate_to_base", "ALTER TABLE simulated_orders ADD COLUMN fx_rate_to_base REAL NOT NULL DEFAULT 0"),
         ("gross_amount", "ALTER TABLE simulated_orders ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0"),
+        ("gross_amount_base", "ALTER TABLE simulated_orders ADD COLUMN gross_amount_base REAL NOT NULL DEFAULT 0"),
         ("net_amount", "ALTER TABLE simulated_orders ADD COLUMN net_amount REAL NOT NULL DEFAULT 0"),
+        ("net_amount_base", "ALTER TABLE simulated_orders ADD COLUMN net_amount_base REAL NOT NULL DEFAULT 0"),
+        ("fees_base", "ALTER TABLE simulated_orders ADD COLUMN fees_base REAL NOT NULL DEFAULT 0"),
         ("order_date", "ALTER TABLE simulated_orders ADD COLUMN order_date TEXT"),
         ("note", "ALTER TABLE simulated_orders ADD COLUMN note TEXT"),
         ("strategy_tag", "ALTER TABLE simulated_orders ADD COLUMN strategy_tag TEXT"),
         ("created_at", "ALTER TABLE simulated_orders ADD COLUMN created_at TEXT"),
+    ],
+    "portfolio_snapshots": [
+        ("base_currency", "ALTER TABLE portfolio_snapshots ADD COLUMN base_currency TEXT"),
     ],
     "price_history": [
         ("provider", "ALTER TABLE price_history ADD COLUMN provider TEXT"),
@@ -525,6 +551,12 @@ def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
 
 
 def migrate_db(connection: sqlite3.Connection) -> None:
+    position_columns_before = _table_columns(connection, "portfolio_positions")
+    order_columns_before = _table_columns(connection, "simulated_orders")
+    position_base_columns_added = "fx_rate_to_base" not in position_columns_before
+    order_currency_added = "currency" not in order_columns_before
+    order_base_columns_added = "fx_rate_to_base" not in order_columns_before
+
     for table_name, migrations in MIGRATIONS.items():
         columns = _table_columns(connection, table_name)
         for column_name, statement in migrations:
@@ -543,6 +575,42 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         connection.execute(
             "UPDATE assets SET isin = ? WHERE UPPER(symbol) = ? AND (isin IS NULL OR isin = '')",
             (isin, symbol),
+        )
+
+    if order_currency_added:
+        connection.execute(
+            """
+            UPDATE simulated_orders
+            SET currency = COALESCE(
+                (SELECT assets.currency FROM assets WHERE assets.id = simulated_orders.asset_id),
+                currency,
+                'EUR'
+            )
+            """
+        )
+    if position_base_columns_added:
+        connection.execute(
+            """
+            UPDATE portfolio_positions
+            SET fx_rate_to_base = 1,
+                average_price_base = average_price,
+                invested_amount_base = invested_amount,
+                current_value_base = current_value,
+                realized_pnl_base = realized_pnl,
+                unrealized_pnl_base = unrealized_pnl
+            WHERE UPPER(currency) = 'EUR' AND fx_rate_to_base = 0
+            """
+        )
+    if order_base_columns_added:
+        connection.execute(
+            """
+            UPDATE simulated_orders
+            SET fx_rate_to_base = 1,
+                gross_amount_base = gross_amount,
+                net_amount_base = net_amount,
+                fees_base = fees
+            WHERE UPPER(currency) = 'EUR' AND fx_rate_to_base = 0
+            """
         )
 
     # Pulizia residui: posizioni quasi-azzerate da vendite precedenti (es. 3e-7 quote)

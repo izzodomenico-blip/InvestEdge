@@ -36,6 +36,18 @@ def client(tmp_path, monkeypatch):
 
     seed_database(reset=True)
 
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        connection.execute(
+            """
+            INSERT INTO fx_rates (
+                from_currency, to_currency, rate, observed_at, provider, quality
+            )
+            VALUES ('USD', 'EUR', 0.92, date('now'), 'test', 'reference')
+            """
+        )
+
     from backend.app.main import create_app
 
     with TestClient(create_app()) as test_client:
@@ -660,6 +672,15 @@ def test_reports_csv_downloads(client: TestClient) -> None:
         assert "attachment" in response.headers["content-disposition"]
         assert response.text.splitlines()[0].startswith(header)
 
+    portfolio_headers = client.get("/reports/portfolio.csv").text.splitlines()[0].split(",")
+    orders_headers = client.get("/reports/orders.csv").text.splitlines()[0].split(",")
+    assert {"currency", "fx_rate_to_base", "current_value", "current_value_base", "base_currency"} <= set(
+        portfolio_headers
+    )
+    assert {"currency", "fx_rate_to_base", "gross_amount", "gross_amount_base", "base_currency"} <= set(
+        orders_headers
+    )
+
 
 def test_dashboard_after_seed(client: TestClient) -> None:
     response = client.get("/dashboard")
@@ -745,7 +766,10 @@ def test_portfolio_endpoint_after_seed(client: TestClient) -> None:
     data = response.json()
     assert data["total_value"] > 0
     assert data["cash"] > 0
+    assert data["base_currency"] == "EUR"
     assert len(data["positions"]) == 7
+    assert all(position["base_currency"] == "EUR" for position in data["positions"])
+    assert all("current_value_base" in position for position in data["positions"])
     assert data["allocation_by_asset_type"]
     assert isinstance(data["risk_warnings"], list)
 
@@ -788,8 +812,12 @@ def test_buy_with_sufficient_cash(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["order"]["gross_amount"] == 200
+    assert data["order"]["currency"] == "USD"
+    assert data["order"]["fx_rate_to_base"] == 0.92
+    assert data["order"]["gross_amount_base"] == 184
+    assert data["order"]["base_currency"] == "EUR"
     assert data["updated_position"]["quantity"] == 2
-    assert data["updated_portfolio_summary"]["cash"] == 9800
+    assert data["updated_portfolio_summary"]["cash"] == 9816
 
 
 def test_buy_with_insufficient_cash(client: TestClient) -> None:
@@ -836,7 +864,7 @@ def test_sell_with_sufficient_quantity_and_pnl(client: TestClient) -> None:
     data = response.json()
     assert data["order"]["order_type"] == "SELL"
     assert data["updated_position"]["quantity"] == 1
-    assert data["updated_portfolio_summary"]["realized_pnl"] == 20
+    assert data["updated_portfolio_summary"]["realized_pnl"] == 18.4
 
 
 def test_sell_with_insufficient_quantity(client: TestClient) -> None:
@@ -913,7 +941,7 @@ def test_sell_all_removes_position_and_keeps_realized_pnl(client: TestClient) ->
     portfolio = client.get("/portfolio").json()
     symbols = {p["symbol"] for p in portfolio["positions"]}
     assert "AAPL" not in symbols  # il titolo venduto del tutto non appare piu
-    assert portfolio["realized_pnl"] == 30.0  # 3 * (110 - 100), P/L realizzato conservato
+    assert portfolio["realized_pnl"] == 27.6  # 3 * (110 - 100) USD * 0,92, conservato in EUR
 
 
 def test_sell_all_with_rounded_quantity_closes_position(client: TestClient) -> None:
@@ -952,7 +980,7 @@ def test_short_requires_allow_short_flag(client: TestClient) -> None:
     portfolio = client.get("/portfolio").json()
     aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
     assert aapl["quantity"] == -5  # short
-    assert portfolio["cash"] == 10500  # 10000 + 5*100 di proventi
+    assert portfolio["cash"] == 10460  # 10000 EUR + 5*100 USD*0,92 di proventi
 
 
 def test_short_profit_when_price_falls(client: TestClient) -> None:
@@ -961,9 +989,9 @@ def test_short_profit_when_price_falls(client: TestClient) -> None:
     # ricopre piu' in basso -> profitto (100 - 90) * 10 = 100
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 90, "fees": 0})
     summary = client.get("/portfolio").json()
-    assert summary["realized_pnl"] == 100.0
+    assert summary["realized_pnl"] == 92.0
     assert "AAPL" not in {p["symbol"] for p in summary["positions"]}  # chiuso
-    assert summary["cash"] == 10100  # 10000 + 100 di utile
+    assert summary["cash"] == 10092  # 10000 EUR + 100 USD*0,92 di utile
 
 
 def test_short_loss_when_price_rises(client: TestClient) -> None:
@@ -972,7 +1000,7 @@ def test_short_loss_when_price_rises(client: TestClient) -> None:
     # il prezzo sale: ricoprire costa di piu' -> perdita (100 - 130) * 5 = -150
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 5, "price": 130, "fees": 0})
     summary = client.get("/portfolio").json()
-    assert summary["realized_pnl"] == -150.0
+    assert summary["realized_pnl"] == -138.0
 
 
 def test_short_position_triggers_risk_warning(client: TestClient) -> None:
@@ -990,7 +1018,7 @@ def test_flip_long_to_short_realizes_pnl(client: TestClient) -> None:
     portfolio = client.get("/portfolio").json()
     aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
     assert aapl["quantity"] == -5  # ora short
-    assert portfolio["realized_pnl"] == 200.0  # 10 * (120 - 100)
+    assert portfolio["realized_pnl"] == 184.0  # 10 * (120 - 100) USD * 0,92
 
 
 def test_portfolio_recommendations_endpoint(client: TestClient) -> None:
@@ -1248,6 +1276,7 @@ def test_scenario_market_crash(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["scenario_type"] == "MARKET_CRASH"
+    assert data["base_currency"] == "EUR"
     assert data["stressed_value"] < data["current_value"]
     assert data["absolute_loss"] < 0
     assert data["risk_level"] in {"LOW", "MEDIUM", "HIGH", "EXTREME"}

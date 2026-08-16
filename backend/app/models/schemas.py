@@ -118,14 +118,21 @@ class PortfolioPositionOut(BaseModel):
     asset_type: str
     quantity: float
     average_price: float
+    average_price_base: float
     invested_amount: float
+    invested_amount_base: float
     current_price: float
     current_value: float
+    current_value_base: float
     realized_pnl: float
+    realized_pnl_base: float
     unrealized_pnl: float
+    unrealized_pnl_base: float
     unrealized_pnl_percent: float
     weight_percent: float
     currency: str
+    fx_rate_to_base: float
+    base_currency: Literal["EUR"] = "EUR"
     technical_signal: str | None = None
     recommendation: str | None = None
 
@@ -376,6 +383,7 @@ class ScenarioRunOut(BaseModel):
     asset_impacts: list[ScenarioAssetImpactOut]
     class_impacts: list[ScenarioClassImpactOut]
     mitigation: list[str]
+    base_currency: Literal["EUR"] = "EUR"
 
 
 class RebalanceTradeOut(BaseModel):
@@ -564,6 +572,7 @@ class RiskWarningOut(BaseModel):
 
 
 class PortfolioSummaryOut(BaseModel):
+    base_currency: Literal["EUR"] = "EUR"
     cash: float
     total_value: float
     invested_value: float
@@ -599,8 +608,14 @@ class SimulatedOrderOut(BaseModel):
     quantity: float
     price: float
     fees: float
+    fees_base: float
     gross_amount: float
+    gross_amount_base: float
     net_amount: float
+    net_amount_base: float
+    currency: str
+    fx_rate_to_base: float
+    base_currency: Literal["EUR"] = "EUR"
     order_date: str
     note: str | None = None
     strategy_tag: str | None = None
@@ -614,6 +629,7 @@ class OrderSimulationOut(BaseModel):
 
 
 class PortfolioSnapshotOut(BaseModel):
+    base_currency: Literal["EUR"] = "EUR"
     id: int
     snapshot_date: str
     total_value: float

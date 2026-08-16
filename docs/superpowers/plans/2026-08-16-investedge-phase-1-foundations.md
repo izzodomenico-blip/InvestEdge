@@ -386,7 +386,7 @@ git push -u origin HEAD
 
 **Contract:** Prezzo, valore e P/L nativi restano separati dagli equivalenti EUR. Cash, riepilogo, pesi, rischio, scenario e snapshot usano soltanto valori EUR. Ogni ordine congela il cambio usato; un cambio mancante/stale blocca l'ordine.
 
-- [ ] **Step 1: Scrivere una matrice di test finanziari**
+- [x] **Step 1: Scrivere una matrice di test finanziari**
 
 Copertura minima con cambio USD/EUR = 0,80:
 
@@ -399,7 +399,7 @@ P/L nativo 100 USD, P/L base 80 EUR
 
 Testare anche SELL, short, fee in valuta nativa, cambio mancante, cambio stale e portafoglio misto AAPL USD + VWCE EUR.
 
-- [ ] **Step 2: Estendere schema e modelli mantenendo i campi nativi**
+- [x] **Step 2: Estendere schema e modelli mantenendo i campi nativi**
 
 Aggiungere a `portfolio_positions`:
 
@@ -416,17 +416,17 @@ currency, fx_rate_to_base, gross_amount_base, net_amount_base, fees_base
 
 I campi esistenti `invested_amount`, `current_value`, `realized_pnl`, `unrealized_pnl`, `gross_amount`, `net_amount` rimangono nativi per compatibilità. `average_price_base` è la base di costo media EUR del lotto corrente e permette di realizzare correttamente P/L base anche quando il cambio varia tra apertura e chiusura. Le risposte API espongono i nuovi campi e `base_currency="EUR"`.
 
-- [ ] **Step 3: Convertire una volta nel confine ordine/refresh**
+- [x] **Step 3: Convertire una volta nel confine ordine/refresh**
 
 In `simulate_order`, ottenere un `FXQuote` prima di verificare il cash. Salvare il rate nell'ordine e applicare cash/fee in EUR. In `refresh_portfolio`, valorizzare campi nativi e base, sommare soltanto `*_base` e calcolare i pesi sui valori base assoluti.
 
 Non usare il cambio corrente per riscrivere il P/L realizzato storico: gli ordini conservano il rate di esecuzione.
 
-- [ ] **Step 4: Aggiornare scenari, report e UI**
+- [x] **Step 4: Aggiornare scenari, report e UI**
 
 `scenario_service` usa `current_value_base`; `report_service` esporta colonne native, valuta, cambio e EUR. `PortfolioPage` mantiene prezzo/valore nativo per posizione e mostra accanto “Equivalente EUR”; i KPI consolidati restano EUR.
 
-- [ ] **Step 5: Verificare Task 5**
+- [x] **Step 5: Verificare Task 5**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_portfolio_accounting.py tests\test_api.py -k "portfolio or order or scenario or report"
@@ -434,7 +434,7 @@ backend\.venv\Scripts\python.exe -m ruff check backend tests
 npm run build
 ```
 
-- [ ] **Step 6: Commit e push**
+- [x] **Step 6: Commit e push**
 
 ```powershell
 git add backend/app/database.py backend/app/models/schemas.py backend/app/services/portfolio_engine.py backend/app/services/scenario_service.py backend/app/services/report_service.py frontend/src/lib/api.ts frontend/src/pages/PortfolioPage.tsx tests/test_portfolio_accounting.py tests/test_api.py

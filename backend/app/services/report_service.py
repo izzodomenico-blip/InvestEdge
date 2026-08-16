@@ -33,6 +33,15 @@ def portfolio_csv(connection: sqlite3.Connection) -> str:
             position.unrealized_pnl_percent,
             position.weight_percent,
             position.currency,
+            position.fx_rate_to_base,
+            position.average_price_base,
+            position.invested_amount,
+            position.invested_amount_base,
+            position.current_value_base,
+            position.realized_pnl,
+            position.realized_pnl_base,
+            position.unrealized_pnl_base,
+            position.base_currency,
         ]
         for position in summary.positions
     ]
@@ -48,6 +57,15 @@ def portfolio_csv(connection: sqlite3.Connection) -> str:
             "unrealized_pnl_percent",
             "weight_percent",
             "currency",
+            "fx_rate_to_base",
+            "average_price_base",
+            "invested_amount",
+            "invested_amount_base",
+            "current_value_base",
+            "realized_pnl",
+            "realized_pnl_base",
+            "unrealized_pnl_base",
+            "base_currency",
         ],
         rows,
     )
@@ -67,6 +85,12 @@ def orders_csv(connection: sqlite3.Connection) -> str:
             order.net_amount,
             order.note or "",
             order.strategy_tag or "",
+            order.currency,
+            order.fx_rate_to_base,
+            order.fees_base,
+            order.gross_amount_base,
+            order.net_amount_base,
+            order.base_currency,
         ]
         for order in orders
     ]
@@ -82,6 +106,12 @@ def orders_csv(connection: sqlite3.Connection) -> str:
             "net_amount",
             "note",
             "strategy",
+            "currency",
+            "fx_rate_to_base",
+            "fees_base",
+            "gross_amount_base",
+            "net_amount_base",
+            "base_currency",
         ],
         rows,
     )

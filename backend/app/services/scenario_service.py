@@ -69,7 +69,7 @@ def run_scenario(
 
     for position in summary.positions:
         asset_type = (position.asset_type or "stock").lower()
-        current_value = float(position.current_value)
+        current_value = float(position.current_value_base)
         shock_percent = symbol_overrides.get(position.symbol.upper(), shocks.get(asset_type, 0.0))
         impact = (shock_percent / 100.0) * current_value
         stressed = max(0.0, current_value + impact)
@@ -126,6 +126,7 @@ def run_scenario(
         "asset_impacts": asset_impacts,
         "class_impacts": class_impacts,
         "mitigation": _mitigation(percentage_loss, class_impacts, base_value, base_cash, risk_level),
+        "base_currency": "EUR",
     }
 
 

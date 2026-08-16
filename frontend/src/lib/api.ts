@@ -227,14 +227,21 @@ export type PortfolioPosition = {
   asset_type: string;
   quantity: number;
   average_price: number;
+  average_price_base: number;
   invested_amount: number;
+  invested_amount_base: number;
   current_price: number;
   current_value: number;
+  current_value_base: number;
   realized_pnl: number;
+  realized_pnl_base: number;
   unrealized_pnl: number;
+  unrealized_pnl_base: number;
   unrealized_pnl_percent: number;
   weight_percent: number;
   currency: string;
+  fx_rate_to_base: number;
+  base_currency: "EUR";
   technical_signal: Signal | null;
   recommendation: string | null;
 };
@@ -258,6 +265,7 @@ export type PortfolioSettings = {
 };
 
 export type PortfolioSummary = {
+  base_currency: "EUR";
   cash: number;
   total_value: number;
   invested_value: number;
@@ -273,6 +281,7 @@ export type PortfolioSummary = {
 };
 
 export type PortfolioSnapshot = {
+  base_currency: "EUR";
   id: number;
   snapshot_date: string;
   total_value: number;
@@ -302,8 +311,14 @@ export type SimulatedOrder = {
   quantity: number;
   price: number;
   fees: number;
+  fees_base: number;
   gross_amount: number;
+  gross_amount_base: number;
   net_amount: number;
+  net_amount_base: number;
+  currency: string;
+  fx_rate_to_base: number;
+  base_currency: "EUR";
   order_date: string;
   note: string | null;
   strategy_tag: string | null;
@@ -596,6 +611,7 @@ export type ScenarioClassImpact = {
 };
 
 export type ScenarioResult = {
+  base_currency: "EUR";
   scenario_type: string;
   scenario_label: string;
   current_value: number;

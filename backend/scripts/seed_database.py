@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -134,17 +134,21 @@ def _reset_seed_data(connection) -> None:
 
 
 def _seed_fx_rates(connection) -> None:
+    observed_at = datetime.now(UTC).date().isoformat()
+    connection.execute(
+        """
+        DELETE FROM fx_rates
+        WHERE from_currency = 'USD' AND to_currency = 'EUR' AND provider = 'seed'
+        """
+    )
     connection.execute(
         """
         INSERT INTO fx_rates (
             from_currency, to_currency, rate, observed_at, provider, quality
         )
         VALUES ('USD', 'EUR', ?, ?, 'seed', 'seed')
-        ON CONFLICT(from_currency, to_currency, observed_at, provider) DO UPDATE SET
-            rate = excluded.rate,
-            quality = excluded.quality
         """,
-        (SEED_USD_EUR_RATE, SEED_END_DATE.isoformat()),
+        (SEED_USD_EUR_RATE, observed_at),
     )
 
 
