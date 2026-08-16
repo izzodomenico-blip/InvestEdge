@@ -54,11 +54,11 @@ Il termine “Task” in questo documento indica un pacchetto coerente e revisio
 
 **Contract:** Docker pubblica backend e frontend soltanto su loopback; il frontend usa sempre `VITE_API_BASE_URL` e la porta backend 8000; le variabili già presenti nel processo hanno precedenza sui file `.env`; l'API HTTP di seed non esiste più; `npm audit` non riporta vulnerabilità high o critical.
 
-- [ ] **Step 1: Scrivere i test/config check che descrivono il comportamento corretto**
+- [x] **Step 1: Scrivere i test/config check che descrivono il comportamento corretto**
 
 Creare `tests/test_config.py` con test su `Settings.from_env()` che dimostrino che `INVESTEDGE_DB_PATH`, `INVESTEDGE_ENV` e `INVESTEDGE_CORS_ORIGINS` impostati nel processo vengono rispettati. Aggiungere un test route che verifichi `POST /admin/seed?reset=true == 404` in `tests/test_api.py`.
 
-- [ ] **Step 2: Eseguire i test e osservare il fallimento della route seed**
+- [x] **Step 2: Eseguire i test e osservare il fallimento della route seed**
 
 Run:
 
@@ -68,7 +68,7 @@ backend\.venv\Scripts\python.exe -m pytest tests\test_config.py tests\test_api.p
 
 Expected: il test `/admin/seed` fallisce perché la route è ancora esposta.
 
-- [ ] **Step 3: Correggere binding, variabili e precedenza `.env`**
+- [x] **Step 3: Correggere binding, variabili e precedenza `.env`**
 
 Applicare esattamente questi comportamenti:
 
@@ -88,11 +88,11 @@ In `frontend/src/lib/api.ts`, cambiare soltanto il fallback DEV da `http://127.0
 
 In `backend/app/config.py`, caricare entrambi i file con `override=False`; l'ambiente del processo deve vincere anche su `backend/.env`.
 
-- [ ] **Step 4: Rimuovere l'endpoint seed distruttivo**
+- [x] **Step 4: Rimuovere l'endpoint seed distruttivo**
 
 Eliminare da `routes.py` l'import HTTP-only di `seed_database` e la route `POST /admin/seed`. Conservare gli script CLI `scripts/seed_database.py` e `backend/scripts/seed_database.py`. Aggiornare l'elenco API nel README.
 
-- [ ] **Step 5: Aggiornare dipendenze frontend senza force**
+- [x] **Step 5: Aggiornare dipendenze frontend senza force**
 
 Usare versioni fisse compatibili con Node 22.12+:
 
@@ -103,7 +103,7 @@ npm install --save-dev vite@7.3.6 @vitejs/plugin-react@5.2.0 postcss@8.5.26
 
 Correggere soltanto le incompatibilità di API effettivamente rilevate dal build. Non migrare l'architettura delle route.
 
-- [ ] **Step 6: Verificare Task 1**
+- [x] **Step 6: Verificare Task 1**
 
 Run:
 
@@ -117,7 +117,7 @@ docker compose config
 
 Expected: tutti verdi; audit senza high/critical. Le moderate residue, se non risolvibili senza migrazioni estranee, vanno motivate nel report del Task.
 
-- [ ] **Step 7: Commit e push**
+- [x] **Step 7: Commit e push**
 
 ```powershell
 git add docker-compose.yml frontend/src/lib/api.ts frontend/package.json frontend/package-lock.json backend/app/config.py backend/app/api/routes.py README.md tests/test_config.py tests/test_api.py

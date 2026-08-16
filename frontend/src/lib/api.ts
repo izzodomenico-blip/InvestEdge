@@ -2,7 +2,7 @@ const API_URL =
   import.meta.env.VITE_API_BASE_URL ??
   (typeof window !== "undefined" && !import.meta.env.DEV
     ? window.location.origin
-    : "http://127.0.0.1:8001");
+    : "http://127.0.0.1:8000");
 
 if (import.meta.env.DEV) {
   console.info("[InvestEdge] API_URL", API_URL);

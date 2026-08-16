@@ -48,6 +48,12 @@ def test_health_endpoint(client: TestClient) -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_admin_seed_route_is_not_exposed(client: TestClient) -> None:
+    response = client.post("/admin/seed?reset=true")
+
+    assert response.status_code == 404
+
+
 def test_assets_after_seed(client: TestClient) -> None:
     response = client.get("/assets")
 

@@ -53,7 +53,6 @@ from backend.app.models import (
     ReportSummaryOut,
     ScenarioRunIn,
     ScenarioRunOut,
-    SeedSummaryOut,
     SignalOut,
     SimulatedOrderIn,
     SimulatedOrderOut,
@@ -85,7 +84,6 @@ from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
 from backend.app.services.tax_service import compute_tax_report
 from backend.app.services.technical_analysis_service import get_technical_analysis
-from backend.scripts.seed_database import seed_database
 
 router = APIRouter()
 portfolio_engine = PortfolioEngine()
@@ -660,8 +658,3 @@ def refresh_all_data(
 def data_usage() -> list[ApiUsageOut]:
     with db_session() as connection:
         return [ApiUsageOut(**row) for row in market_data_service.get_usage(connection)]
-
-
-@router.post("/admin/seed", response_model=SeedSummaryOut)
-def admin_seed(reset: bool = Query(default=False)) -> SeedSummaryOut:
-    return SeedSummaryOut(**seed_database(reset=reset))

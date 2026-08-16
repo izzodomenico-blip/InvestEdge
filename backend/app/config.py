@@ -8,8 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT_DIR / ".env")
-load_dotenv(ROOT_DIR / "backend" / ".env", override=True)
+load_dotenv(ROOT_DIR / ".env", override=False)
+load_dotenv(ROOT_DIR / "backend" / ".env", override=False)
 
 
 def _csv(value: str | None, default: list[str]) -> list[str]:

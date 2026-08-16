@@ -256,7 +256,7 @@ Keyword negative iniziali: earnings miss, revenue decline, lawsuit, downgrade, i
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-backend\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8001
+backend\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Endpoint iniziali:
@@ -303,7 +303,6 @@ Endpoint iniziali:
 - `GET /signals`
 - `GET /signals/{symbol}`
 - `GET /dashboard`
-- `POST /admin/seed?reset=true`
 
 Esempio inizializzazione portafoglio:
 
@@ -375,7 +374,7 @@ Risposta sintetica:
 }
 ```
 
-La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8001/docs`.
+La documentazione interattiva FastAPI e disponibile su `http://127.0.0.1:8000/docs`.
 
 ## Avvio frontend
 
@@ -387,7 +386,7 @@ npm run dev
 
 Frontend locale: `http://127.0.0.1:5173`.
 
-Il frontend usa `VITE_API_BASE_URL` se presente, con fallback a `http://127.0.0.1:8001`.
+Il frontend usa `VITE_API_BASE_URL` se presente, con fallback a `http://127.0.0.1:8000`.
 
 ## Test
 
