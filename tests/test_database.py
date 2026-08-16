@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -13,6 +14,755 @@ from backend.app.services import backup_service
 
 def table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
     return {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+
+
+def _initialize_database(database_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    get_settings.cache_clear()
+    try:
+        init_db()
+    finally:
+        get_settings.cache_clear()
+
+
+def _insert_instrument(connection: sqlite3.Connection, name: str) -> int:
+    return int(
+        connection.execute(
+            """
+            INSERT INTO instruments (
+                canonical_name, instrument_type, asset_class, quality_tier, source
+            )
+            VALUES (?, 'STOCK', 'EQUITY', 'REFERENCE_ONLY', 'TEST')
+            """,
+            (name,),
+        ).lastrowid
+    )
+
+
+def _insert_listing(
+    connection: sqlite3.Connection,
+    instrument_id: int,
+    ticker: str,
+    mic: str | None,
+    currency: str = "USD",
+) -> int:
+    return int(
+        connection.execute(
+            """
+            INSERT INTO instrument_listings (
+                instrument_id, ticker, mic, currency, listing_status,
+                trade_republic_status, source
+            )
+            VALUES (?, ?, ?, ?, 'ACTIVE', 'NEVER_SEEN', 'TEST')
+            """,
+            (instrument_id, ticker, mic, currency),
+        ).lastrowid
+    )
+
+
+def test_instrument_master_schema_is_additive_for_new_database(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "instrument-master.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert {
+            "instruments",
+            "instrument_identifiers",
+            "instrument_identifier_attestations",
+            "instrument_listings",
+            "provider_symbols",
+        } <= tables
+
+        asset_columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info(assets)")
+        }
+        assert asset_columns["instrument_listing_id"][3] == 0
+        assert any(
+            row[2] == "instrument_listings" and row[3] == "instrument_listing_id"
+            for row in connection.execute("PRAGMA foreign_key_list(assets)")
+        )
+
+        indexes = {
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
+            )
+        }
+        assert {
+            "uq_instrument_identifiers_global_primary",
+            "uq_instrument_listings_market_identity",
+            "uq_provider_symbols_verified_listing_capability",
+            "uq_provider_symbols_verified_symbol_capability",
+        } <= indexes.keys()
+        assert "WHEREstatus='VERIFIED'" in indexes[
+            "uq_provider_symbols_verified_listing_capability"
+        ].replace(" ", "")
+        assert "WHEREstatus='VERIFIED'" in indexes[
+            "uq_provider_symbols_verified_symbol_capability"
+        ].replace(" ", "")
+
+
+def test_instrument_master_legacy_backfill_is_idempotent_and_preserves_assets(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "legacy-instruments.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                exchange TEXT,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                isin TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(symbol, asset_type)
+            );
+            INSERT INTO assets (id, symbol, name, asset_type, exchange, currency, isin)
+            VALUES
+                (7, 'legacyeq', 'Legacy equity', 'stock', 'NASDAQ', 'usd', 'US0378331005'),
+                (11, 'cryptold', 'Legacy crypto', 'crypto', 'CRYPTO', 'eur', 'US5949181045'),
+                (12, 'fxlegacy', 'Legacy FX', 'fx', 'FX', 'eur', 'US67066G1040'),
+                (13, 'badisin', 'Invalid identifier', 'stock', 'LSE', 'gbp', 'NOT-AN-ISIN');
+            """
+        )
+
+    _initialize_database(database_path, monkeypatch)
+
+    from backend.app.services.instrument_service import InstrumentService
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        before_counts = {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in ("assets", "instruments", "instrument_listings", "instrument_identifiers")
+        }
+        assert [
+            row["id"]
+            for row in connection.execute("SELECT id FROM assets ORDER BY id")
+        ] == [7, 11, 12, 13]
+        assert before_counts == {
+            "assets": 4,
+            "instruments": 4,
+            "instrument_listings": 4,
+            "instrument_identifiers": 1,
+        }
+        assert connection.execute(
+            "SELECT COUNT(*) FROM assets WHERE instrument_listing_id IS NULL"
+        ).fetchone()[0] == 0
+
+        equity_listing = connection.execute(
+            """
+            SELECT l.ticker, l.mic, l.venue_name, l.currency, l.timezone,
+                   i.instrument_type, i.asset_class, i.quality_tier
+            FROM assets a
+            JOIN instrument_listings l ON l.id = a.instrument_listing_id
+            JOIN instruments i ON i.id = l.instrument_id
+            WHERE a.id = 7
+            """
+        ).fetchone()
+        assert dict(equity_listing) == {
+            "ticker": "LEGACYEQ",
+            "mic": None,
+            "venue_name": None,
+            "currency": "USD",
+            "timezone": None,
+            "instrument_type": "STOCK",
+            "asset_class": "EQUITY",
+            "quality_tier": "REFERENCE_ONLY",
+        }
+        assert connection.execute(
+            "SELECT normalized_value FROM instrument_identifiers"
+        ).fetchone()[0] == "US0378331005"
+        assert connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM instrument_identifiers ii
+            JOIN instruments i ON i.id = ii.instrument_id
+            WHERE i.instrument_type IN ('CRYPTO', 'FX')
+            """
+        ).fetchone()[0] == 0
+
+        assert InstrumentService.backfill_active_assets(connection) == 0
+        after_counts = {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in before_counts
+        }
+        assert after_counts == before_counts
+
+
+def test_instrument_master_same_primary_identifier_reuses_instrument_and_attests_sources(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "identifier-attestations.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                exchange TEXT,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                isin TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(symbol, asset_type)
+            );
+            INSERT INTO assets (symbol, name, asset_type, currency, isin)
+            VALUES
+                ('SAMEA', 'Same identity A', 'stock', 'USD', 'US0378331005'),
+                ('SAMEB', 'Same identity B', 'stock', 'EUR', 'US0378331005');
+            """
+        )
+
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        instrument_ids = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT l.instrument_id
+                FROM assets a
+                JOIN instrument_listings l ON l.id = a.instrument_listing_id
+                """
+            )
+        }
+        assert len(instrument_ids) == 1
+        instrument_id = instrument_ids.pop()
+        assert connection.execute("SELECT COUNT(*) FROM instrument_listings").fetchone()[0] == 2
+        isin_identifier_id = connection.execute(
+            "SELECT id FROM instrument_identifiers WHERE scheme = 'ISIN'"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO instrument_identifier_attestations (
+                identifier_id, source, observed_at, evidence_hash
+            )
+            VALUES (?, 'SECOND_SOURCE', '2026-08-16T12:00:00Z', ?)
+            """,
+            (isin_identifier_id, "a" * 64),
+        )
+        figi_identifier_id = connection.execute(
+            """
+            INSERT INTO instrument_identifiers (
+                scheme, normalized_value, scope, instrument_id, listing_id
+            )
+            VALUES ('FIGI', 'BBG000B9XRY4', 'INSTRUMENT', ?, NULL)
+            """,
+            (instrument_id,),
+        ).lastrowid
+        connection.executemany(
+            """
+            INSERT INTO instrument_identifier_attestations (
+                identifier_id, source, observed_at, evidence_hash
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (figi_identifier_id, "OPENFIGI", "2026-08-16T12:01:00Z", "b" * 64),
+                (figi_identifier_id, "ISSUER", "2026-08-16T12:02:00Z", "c" * 64),
+            ],
+        )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM instrument_identifiers WHERE scheme = 'ISIN'"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM instrument_identifiers WHERE scheme = 'FIGI'"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(DISTINCT source) FROM instrument_identifier_attestations"
+        ).fetchone()[0] >= 4
+
+
+@pytest.mark.parametrize(
+    ("scheme", "normalized_value"),
+    [("ISIN", "US0378331005"), ("FIGI", "BBG000B9XRY4")],
+)
+def test_instrument_master_concurrent_primary_identifier_collision_is_blocked(
+    tmp_path,
+    monkeypatch,
+    scheme: str,
+    normalized_value: str,
+) -> None:
+    database_path = tmp_path / f"identifier-race-{scheme.lower()}.db"
+    _initialize_database(database_path, monkeypatch)
+    barrier = Barrier(2)
+
+    def bind_identifier(name: str) -> bool:
+        with sqlite3.connect(database_path, timeout=10) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            barrier.wait()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                instrument_id = _insert_instrument(connection, name)
+                connection.execute(
+                    """
+                    INSERT INTO instrument_identifiers (
+                        scheme, normalized_value, scope, instrument_id, listing_id
+                    )
+                        VALUES (?, ?, 'INSTRUMENT', ?, NULL)
+                        """,
+                        (scheme, normalized_value, instrument_id),
+                )
+                connection.commit()
+                return True
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                return False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(bind_identifier, ["Race A", "Race B"]))
+
+    assert sorted(results) == [False, True]
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM instrument_identifiers WHERE scheme = ? AND normalized_value = ?",
+            (scheme, normalized_value),
+        ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("scheme", "canonical_value", "noncanonical_value"),
+    [
+        ("ISIN", "US0378331005", " us0378331005 "),
+        ("FIGI", "BBG000B9XRY4", "BBG 000B9XRY4"),
+    ],
+)
+def test_instrument_master_primary_identifier_rejects_noncanonical_collision(
+    tmp_path,
+    monkeypatch,
+    scheme: str,
+    canonical_value: str,
+    noncanonical_value: str,
+) -> None:
+    database_path = tmp_path / f"identifier-normalization-{scheme.lower()}.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        first_instrument = _insert_instrument(connection, "Canonical owner")
+        second_instrument = _insert_instrument(connection, "Noncanonical owner")
+        connection.execute(
+            """
+            INSERT INTO instrument_identifiers (
+                scheme, normalized_value, scope, instrument_id, listing_id
+            )
+            VALUES (?, ?, 'INSTRUMENT', ?, NULL)
+            """,
+            (scheme, canonical_value, first_instrument),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO instrument_identifiers (
+                    scheme, normalized_value, scope, instrument_id, listing_id
+                )
+                VALUES (?, ?, 'INSTRUMENT', ?, NULL)
+                """,
+                (scheme, noncanonical_value, second_instrument),
+            )
+
+        assert connection.execute(
+            "SELECT COUNT(*) FROM instrument_identifiers WHERE scheme = ?",
+            (scheme,),
+        ).fetchone()[0] == 1
+
+
+def test_instrument_master_does_not_promote_legacy_symbol_inferred_isin(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "legacy-inferred-isin.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                exchange TEXT,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                isin TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(symbol, asset_type)
+            );
+            INSERT INTO assets (symbol, name, asset_type, currency, isin)
+            VALUES ('AAPL', 'Legacy Apple without identifier evidence', 'stock', 'USD', NULL);
+            """
+        )
+
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT isin FROM assets WHERE symbol = 'AAPL'"
+        ).fetchone()[0] == "US0378331005"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM instrument_identifiers WHERE scheme = 'ISIN'"
+        ).fetchone()[0] == 0
+
+
+def test_instrument_listing_market_identity_allows_distinct_mics_and_blocks_collision(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "listing-identity.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        first = _insert_instrument(connection, "First listing")
+        second = _insert_instrument(connection, "Second listing")
+        third = _insert_instrument(connection, "Collision listing")
+        _insert_listing(connection, first, "ABC", "XNAS", "USD")
+        _insert_listing(connection, second, "abc", "XNYS", "usd")
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_listing(connection, third, "aBc", "xnas", "Usd")
+
+
+def test_instrument_listing_provider_symbol_lifecycle_requires_retirement_before_reuse(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "provider-symbol-lifecycle.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        first_listing = _insert_listing(
+            connection,
+            _insert_instrument(connection, "First provider listing"),
+            "AAA",
+            "XNAS",
+        )
+        second_listing = _insert_listing(
+            connection,
+            _insert_instrument(connection, "Second provider listing"),
+            "BBB",
+            "XNYS",
+        )
+        first_symbol_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, verified_at, evidence_hash, version
+            )
+            VALUES (
+                'stooq', ?, 'EOD', 'aaa.us', 'AAA.US', 'VERIFIED', 'TEST',
+                '2026-08-16T12:00:00Z', '2026-08-16T12:00:00Z', ?, 1
+            )
+            """,
+            (first_listing, "d" * 64),
+        ).lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, verified_at, evidence_hash, version
+                )
+                VALUES ('stooq', ?, 'EOD', 'other.us', 'OTHER.US', 'VERIFIED', 'TEST',
+                        '2026-08-16T12:01:00Z', '2026-08-16T12:01:00Z', ?, 2)
+                """,
+                (first_listing, "e" * 64),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, verified_at, evidence_hash, version
+                )
+                VALUES ('stooq', ?, 'EOD', 'AAA.US', 'AAA.US', 'VERIFIED', 'TEST',
+                        '2026-08-16T12:02:00Z', '2026-08-16T12:02:00Z', ?, 1)
+                """,
+                (second_listing, "f" * 64),
+            )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE provider_symbols SET status = 'CANDIDATE' WHERE id = ?",
+                (first_symbol_id,),
+            )
+
+        connection.execute(
+            "UPDATE provider_symbols SET status = 'RETIRED' WHERE id = ?",
+            (first_symbol_id,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE provider_symbols SET status = 'CANDIDATE' WHERE id = ?",
+                (first_symbol_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "DELETE FROM provider_symbols WHERE id = ?",
+                (first_symbol_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, evidence_hash, version,
+                    supersedes_provider_symbol_id
+                )
+                VALUES ('other-provider', ?, 'EOD', 'AAA.US', 'AAA.US', 'CANDIDATE',
+                        'TEST', '2026-08-16T12:02:30Z', ?, 1, ?)
+                """,
+                (second_listing, "0" * 64, first_symbol_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, evidence_hash, version,
+                    supersedes_provider_symbol_id
+                )
+                VALUES ('stooq', ?, 'INTRADAY', 'AAA.US', 'AAA.US', 'CANDIDATE',
+                        'TEST', '2026-08-16T12:02:31Z', ?, 1, ?)
+                """,
+                (second_listing, "3" * 64, first_symbol_id),
+            )
+        candidate_symbol_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, evidence_hash, version
+            )
+            VALUES ('stooq', ?, 'EOD', 'OTHER.US', 'OTHER.US', 'CANDIDATE',
+                    'TEST', '2026-08-16T12:02:32Z', ?, 2)
+            """,
+            (first_listing, "4" * 64),
+        ).lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, evidence_hash, version,
+                    supersedes_provider_symbol_id
+                )
+                VALUES ('stooq', ?, 'EOD', 'OTHER.US', 'OTHER.US', 'CANDIDATE',
+                        'TEST', '2026-08-16T12:02:33Z', ?, 2, ?)
+                """,
+                (second_listing, "5" * 64, candidate_symbol_id),
+            )
+        replacement_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, verified_at, evidence_hash, version,
+                supersedes_provider_symbol_id
+            )
+            VALUES ('stooq', ?, 'EOD', 'AAA.US', 'AAA.US', 'VERIFIED', 'TEST',
+                    '2026-08-16T12:03:00Z', '2026-08-16T12:03:00Z', ?, 1, ?)
+            """,
+            (second_listing, "1" * 64, first_symbol_id),
+        ).lastrowid
+        assert replacement_id is not None
+
+
+def test_instrument_listing_provider_history_blocks_replace_semantics(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "provider-symbol-replace.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        first_listing = _insert_listing(
+            connection,
+            _insert_instrument(connection, "Replace-protected listing"),
+            "SAFE",
+            "XNAS",
+        )
+        second_listing = _insert_listing(
+            connection,
+            _insert_instrument(connection, "Candidate listing"),
+            "NEXT",
+            "XNYS",
+        )
+        verified_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, verified_at, evidence_hash, version
+            )
+            VALUES ('stooq', ?, 'EOD', 'SAFE.US', 'SAFE.US', 'VERIFIED', 'TEST',
+                    '2026-08-16T12:00:00Z', '2026-08-16T12:00:00Z', ?, 1)
+            """,
+            (first_listing, "6" * 64),
+        ).lastrowid
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, evidence_hash, version
+                )
+                VALUES ('stooq', ?, 'EOD', 'REPLACED.US', 'REPLACED.US', 'CANDIDATE',
+                        'TEST', '2026-08-16T12:01:00Z', ?, 1)
+                """,
+                (first_listing, "7" * 64),
+            )
+
+        candidate_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, evidence_hash, version
+            )
+            VALUES ('stooq', ?, 'EOD', 'NEXT.US', 'NEXT.US', 'CANDIDATE', 'TEST',
+                    '2026-08-16T12:02:00Z', ?, 2)
+            """,
+            (second_listing, "8" * 64),
+        ).lastrowid
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                UPDATE OR REPLACE provider_symbols
+                SET listing_id = ?, version = 1
+                WHERE id = ?
+                """,
+                (first_listing, candidate_id),
+            )
+
+        assert connection.execute(
+            "SELECT status FROM provider_symbols WHERE id = ?",
+            (verified_id,),
+        ).fetchone()[0] == "VERIFIED"
+        assert connection.execute(
+            "SELECT status FROM provider_symbols WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()[0] == "CANDIDATE"
+
+
+def test_instrument_listing_concurrent_provider_symbol_verification_is_blocked(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "provider-symbol-race.db"
+    _initialize_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        listing_ids = [
+            _insert_listing(
+                connection,
+                _insert_instrument(connection, f"Provider race {suffix}"),
+                f"RACE{suffix}",
+                mic,
+            )
+            for suffix, mic in (("A", "XNAS"), ("B", "XNYS"))
+        ]
+    barrier = Barrier(2)
+
+    def verify_symbol(listing_id: int) -> bool:
+        with sqlite3.connect(database_path, timeout=10) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            barrier.wait()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO provider_symbols (
+                        provider, listing_id, capability, provider_symbol, normalized_symbol,
+                        status, source, observed_at, verified_at, evidence_hash, version
+                    )
+                    VALUES ('stooq', ?, 'EOD', 'race.us', 'RACE.US', 'VERIFIED', 'TEST',
+                            '2026-08-16T12:00:00Z', '2026-08-16T12:00:00Z', ?, 1)
+                    """,
+                    (listing_id, "2" * 64),
+                )
+                connection.commit()
+                return True
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                return False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(verify_symbol, listing_ids))
+
+    assert sorted(results) == [False, True]
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM provider_symbols WHERE status = 'VERIFIED'"
+        ).fetchone()[0] == 1
+
+
+def test_instrument_master_prepare_database_calls_backup_before_migration(
+    monkeypatch,
+) -> None:
+    from backend.app import database
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        backup_service,
+        "create_backup",
+        lambda *, reason: events.append(f"backup:{reason}")
+        or {"created": True, "reason": reason, "file": "backup.db"},
+    )
+    monkeypatch.setattr(database, "init_db", lambda: events.append("migration"))
+
+    result = backup_service.prepare_database(reason="pre-migration", backup_existing=True)
+
+    assert result["created"] is True
+    assert events == ["backup:pre-migration", "migration"]
+
+
+def test_instrument_master_unique_active_asset_contract(tmp_path, monkeypatch) -> None:
+    from backend.app.services.instrument_service import (
+        AmbiguousInstrumentError,
+        InstrumentService,
+    )
+
+    database_path = tmp_path / "unique-active-asset.db"
+    _initialize_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        assert InstrumentService.require_unique_active_asset(connection, "MISSING") is None
+
+        connection.execute(
+            """
+            INSERT INTO assets (symbol, name, asset_type, currency)
+            VALUES ('UNIQUE', 'Unique stock', 'stock', 'USD')
+            """
+        )
+        row = InstrumentService.require_unique_active_asset(connection, "unique")
+        assert isinstance(row, sqlite3.Row)
+        assert row["symbol"] == "UNIQUE"
+
+        connection.execute(
+            """
+            INSERT INTO assets (symbol, name, asset_type, currency)
+            VALUES ('UNIQUE', 'Unique ETF', 'etf', 'EUR')
+            """
+        )
+        with pytest.raises(AmbiguousInstrumentError) as error:
+            InstrumentService.require_unique_active_asset(connection, "unique")
+        expected_listing_ids = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT instrument_listing_id FROM assets WHERE symbol = 'UNIQUE' ORDER BY id"
+            )
+        )
+        assert error.value.symbol == "UNIQUE"
+        assert error.value.candidate_listing_ids == expected_listing_ids
 
 
 def test_init_db_migrates_legacy_tables_before_creating_indexes(tmp_path, monkeypatch) -> None:

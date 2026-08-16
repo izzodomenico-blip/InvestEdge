@@ -5,6 +5,38 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
+InstrumentType = Literal[
+    "STOCK",
+    "ETF",
+    "BOND",
+    "ETC",
+    "ETN",
+    "CRYPTO",
+    "FX",
+    "INDEX",
+    "RATE",
+    "MACRO",
+    "UNKNOWN",
+]
+AssetClass = Literal[
+    "EQUITY",
+    "FUND",
+    "FIXED_INCOME",
+    "COMMODITY",
+    "CRYPTO",
+    "FX",
+    "REFERENCE",
+    "UNKNOWN",
+]
+QualityTier = Literal["QUALIFIED", "OBSERVABLE", "REFERENCE_ONLY"]
+IdentifierScheme = Literal[
+    "ISIN",
+    "FIGI",
+    "OPENFIGI_TICKER",
+    "COINGECKO_ID",
+    "FRED_SERIES_ID",
+    "ECB_SERIES_KEY",
+]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]

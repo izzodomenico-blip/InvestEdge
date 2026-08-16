@@ -152,11 +152,11 @@ class AmbiguousInstrumentError(ValueError):
 
 Nuove tabelle additive: `instruments`, `instrument_identifiers`, `instrument_identifier_attestations`, `instrument_listings`, `provider_symbols`; nuova colonna nullable `assets.instrument_listing_id`. `instruments` contiene nome canonico, tipo/classe, tier iniziale `REFERENCE_ONLY`, source/date e timestamp. `instrument_identifiers` conserva `scheme`, `normalized_value`, scope `INSTRUMENT|LISTING` e owner ID; ISIN e FIGI hanno unicità globale su `(scheme, normalized_value)` e non includono la fonte. `instrument_identifier_attestations` collega più fonti/timestamp/evidence hash alla stessa identità canonica. `instrument_listings` contiene ticker, MIC nullable, venue nullable, currency, timezone nullable, stato listing, `trade_republic_status` (`NEVER_SEEN`, `CATALOGED`, `VERIFIED`, `UNAVAILABLE`), `trade_republic_cataloged_at` e `trade_republic_verified_at`; quando MIC è noto, `(UPPER(ticker), UPPER(mic), UPPER(currency))` è globalmente unico. `provider_symbols` è versionato con provider, listing, capability, normalized symbol, status `CANDIDATE|VERIFIED|RETIRED`, source, observed/verified timestamp, evidence hash e `supersedes_provider_symbol_id`. Due indici univoci parziali, entrambi con `WHERE status='VERIFIED'`, impongono un solo record corrente sia per `(provider, listing_id, capability)` sia per `(provider, capability, normalized_symbol)`: lo stesso simbolo provider non può attribuire dati a listing diversi; dopo il retirement esplicito può essere riusato da una nuova versione.
 
-- [ ] **Step 1: Scrivere i test di migrazione e identità**
+- [x] **Step 1: Scrivere i test di migrazione e identità**
 
 In `tests/test_database.py` aggiungere casi database nuovo e legacy che provino: creazione delle cinque tabelle/indici; colonna nullable su `assets`; backfill idempotente; conservazione degli ID; due listing omonimi su MIC diversi ammessi; collisione `(ticker, MIC, currency)` bloccata; stesso ISIN/FIGI attestato da fonti diverse ricondotto allo stesso instrument; tentativo concorrente di legare lo stesso identificativo a due instrument bloccato; lifecycle provider symbol; tentativi concorrenti di verificare lo stesso `(provider, capability, normalized_symbol)` su listing diversi bloccati; retirement e successivo riuso su un altro listing ammessi; nessuna identità inventata; backup chiamato prima della migrazione. In `tests/test_api.py` provare che `/assets` e `AssetOut` sono byte-for-byte compatibili nei campi preesistenti e che un lookup legacy ambiguo risponde 409.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_database.py tests\test_api.py -k "instrument_master or instrument_listing or legacy_symbol_ambiguity or assets_contract" -q
@@ -164,15 +164,15 @@ In `tests/test_database.py` aggiungere casi database nuovo e legacy che provino:
 
 Expected: failure perché schema, backfill e gestione 409 non esistono; nessun failure estraneo alla selezione.
 
-- [ ] **Step 3: Aggiungere schema e backfill additivi**
+- [x] **Step 3: Aggiungere schema e backfill additivi**
 
 In `BASE_SCHEMA` creare le tabelle per database nuovi; in `MIGRATIONS` aggiungere soltanto `assets.instrument_listing_id`. In `migrate_db()` eseguire un backfill transazionale e deterministico: una riga legacy genera un instrument e un listing con ticker uppercase, valuta uppercase, MIC/timezone null se non verificati; l'ISIN viene copiato solo se già presente, conforme al pattern `^[A-Z]{2}[A-Z0-9]{9}[0-9]$` e il tipo non è crypto/FX. Normalizzare ISIN/FIGI senza spazi e uppercase; per ticker/provider symbol applicare normalizzazione provider-specifica senza perdere il valore display. Usare transazione `BEGIN IMMEDIATE`, vincoli globali e attestazioni per rendere il rerun idempotente e impedire false duplicazioni cross-source.
 
-- [ ] **Step 4: Rendere esplicita l'ambiguità legacy**
+- [x] **Step 4: Rendere esplicita l'ambiguità legacy**
 
 `require_unique_active_asset()` esegue una query senza `LIMIT 1`: zero righe restituisce `None`, una riga restituisce il record, più righe solleva `AmbiguousInstrumentError(symbol, candidate_listing_ids)`. `assets_service` mappa l'errore a HTTP 409 senza modificare i payload di successo. Non migrare ancora tutti i caller a `listing_id`.
 
-- [ ] **Step 5: Eseguire GREEN e regressione Fase 1 mirata**
+- [x] **Step 5: Eseguire GREEN e regressione Fase 1 mirata**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_database.py tests\test_api.py tests\test_portfolio_accounting.py -q
@@ -181,7 +181,7 @@ In `BASE_SCHEMA` creare le tabelle per database nuovi; in `MIGRATIONS` aggiunger
 
 Expected: tutti i test selezionati passano; Ruff termina con `All checks passed!`; portfolio/EUR e API legacy restano verdi.
 
-- [ ] **Step 6: Review, commit e gate remoto**
+- [x] **Step 6: Review, commit e gate remoto**
 
 Eseguire `git diff --check`, review del diff e review indipendente focalizzata su migrazione reversibile, duplicati e caller symbol-only. Correggere ogni rilievo Critical/Important e rieseguire Step 5.
 

@@ -190,6 +190,257 @@ def test_assets_after_seed(client: TestClient) -> None:
     assert data[0]["last_price"] is not None
 
 
+def test_assets_contract_preserves_assetout_fields_and_excludes_listing_identity(
+    client: TestClient,
+) -> None:
+    from backend.app.models import AssetCreate, AssetOut
+
+    expected_create_fields = [
+        "symbol",
+        "name",
+        "asset_type",
+        "tax_category",
+        "exchange",
+        "currency",
+        "sector",
+        "country",
+        "risk_level",
+        "isin",
+    ]
+    expected_out_fields = [
+        *expected_create_fields,
+        "id",
+        "last_price",
+        "fx_rate_to_base",
+        "last_price_base",
+        "daily_change_pct",
+        "last_source",
+        "provider",
+        "is_real_data",
+        "last_price_date",
+        "last_fetch_at",
+        "score",
+        "technical_score",
+        "news_score",
+        "final_score",
+        "news_sentiment_label",
+        "news_impact_level",
+        "signal",
+        "confidence",
+        "technical_summary",
+        "updated_at",
+    ]
+
+    assert list(AssetCreate.model_fields) == expected_create_fields
+    assert list(AssetOut.model_fields) == expected_out_fields
+    canonical_asset = AssetOut(
+        symbol="CONTRACT",
+        name="Contract asset",
+        asset_type="stock",
+        tax_category="standard",
+        exchange="XNAS",
+        currency="USD",
+        sector="Technology",
+        country="US",
+        risk_level="medium",
+        isin="US0378331005",
+        id=42,
+        last_price=101.25,
+        fx_rate_to_base=0.92,
+        last_price_base=93.15,
+        daily_change_pct=1.5,
+        last_source="legacy-source",
+        provider="legacy-provider",
+        is_real_data=True,
+        last_price_date="2026-08-15",
+        last_fetch_at="2026-08-16T10:00:00Z",
+        score=75.0,
+        technical_score=70.0,
+        news_score=5.0,
+        final_score=75.0,
+        news_sentiment_label="POSITIVE",
+        news_impact_level="MEDIUM",
+        signal="BUY",
+        confidence="HIGH",
+        technical_summary="Legacy summary",
+        updated_at="2026-08-16T10:00:00Z",
+    )
+    assert canonical_asset.model_dump_json().encode() == (
+        b'{"symbol":"CONTRACT","name":"Contract asset","asset_type":"stock",'
+        b'"tax_category":"standard","exchange":"XNAS","currency":"USD",'
+        b'"sector":"Technology","country":"US","risk_level":"medium",'
+        b'"isin":"US0378331005","id":42,"last_price":101.25,'
+        b'"fx_rate_to_base":0.92,"last_price_base":93.15,"daily_change_pct":1.5,'
+        b'"last_source":"legacy-source","provider":"legacy-provider",'
+        b'"is_real_data":true,"last_price_date":"2026-08-15",'
+        b'"last_fetch_at":"2026-08-16T10:00:00Z","score":75.0,'
+        b'"technical_score":70.0,"news_score":5.0,"final_score":75.0,'
+        b'"news_sentiment_label":"POSITIVE","news_impact_level":"MEDIUM",'
+        b'"signal":"BUY","confidence":"HIGH","technical_summary":"Legacy summary",'
+        b'"updated_at":"2026-08-16T10:00:00Z"}'
+    )
+    response = client.get("/assets")
+    assert response.status_code == 200
+    assert all(list(asset) == expected_out_fields for asset in response.json())
+    assert b"instrument_listing_id" not in response.content
+
+
+def _create_ambiguous_assets(client: TestClient) -> None:
+    for asset_type in ("stock", "etf"):
+        response = client.post(
+            "/assets",
+            json={
+                "symbol": "AMBIG",
+                "name": f"Ambiguous {asset_type}",
+                "asset_type": asset_type,
+                "currency": "USD",
+            },
+        )
+        assert response.status_code == 201
+
+
+def test_legacy_symbol_ambiguity_returns_conflict_with_candidate_listings(
+    client: TestClient,
+) -> None:
+    _create_ambiguous_assets(client)
+
+    response = client.get("/assets/AMBIG")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        listing_ids = [
+            int(row["instrument_listing_id"])
+            for row in connection.execute(
+                "SELECT instrument_listing_id FROM assets WHERE symbol = 'AMBIG' ORDER BY id"
+            )
+        ]
+    assert "AMBIG" in detail
+    assert "listing" in detail.lower()
+    assert all(str(listing_id) in detail for listing_id in listing_ids)
+
+
+def test_legacy_symbol_ambiguity_blocks_symbol_only_read_and_write_callers(
+    client: TestClient,
+) -> None:
+    _create_ambiguous_assets(client)
+    backtest_payload = {
+        **_backtest_payload("BUY_AND_HOLD"),
+        "symbols": ["AMBIG"],
+    }
+    compare_payload = {
+        **_compare_payload(),
+        "symbols": ["AMBIG"],
+    }
+    allocation_payload = _allocation_payload(
+        "EQUAL_WEIGHT",
+        symbols=["AMBIG"],
+        confirmation_token="0" * 64,
+    )
+    requests = [
+        ("GET", "/prices/AMBIG", None),
+        ("GET", "/technical-analysis/AMBIG", None),
+        ("GET", "/signals/AMBIG", None),
+        ("GET", "/ml/predictions/AMBIG", None),
+        ("GET", "/news?symbol=AMBIG", None),
+        ("GET", "/news/sentiment/AMBIG", None),
+        ("GET", "/news/AMBIG", None),
+        ("GET", "/data/status/AMBIG", None),
+        (
+            "POST",
+            "/orders/simulate",
+            {"symbol": "AMBIG", "order_type": "BUY", "quantity": 1, "price": 10, "fees": 0},
+        ),
+        ("POST", "/portfolio/allocation/plan", allocation_payload),
+        ("POST", "/portfolio/allocation/apply", allocation_payload),
+        ("POST", "/portfolio/allocation/rebalance", allocation_payload),
+        ("POST", "/backtests/run", backtest_payload),
+        ("POST", "/backtests/compare", compare_payload),
+        ("POST", "/backtests/walk-forward", {**backtest_payload, "folds": 2}),
+        (
+            "POST",
+            "/ml/train",
+            {"model_name": "Ambiguous", "symbols": ["AMBIG"], "min_samples": 20, "cv_folds": 2},
+        ),
+        ("POST", "/ml/predict/AMBIG", {}),
+        ("POST", "/ml/predict-all", {}),
+        ("POST", "/news/refresh/AMBIG", None),
+        ("POST", "/news/refresh-all", None),
+        ("POST", "/data/refresh/AMBIG", None),
+        ("POST", "/data/refresh-all", None),
+    ]
+
+    responses = {
+        f"{method} {path}": client.request(method, path, json=payload)
+        for method, path, payload in requests
+    }
+
+    assert {
+        endpoint: response.status_code for endpoint, response in responses.items()
+    } == dict.fromkeys(responses, 409)
+    assert all("AMBIG" in response.json()["detail"] for response in responses.values())
+
+
+def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = client.post(
+        "/assets",
+        json={
+            "symbol": "RACELOCK",
+            "name": "Race lock stock",
+            "asset_type": "stock",
+            "currency": "USD",
+        },
+    )
+    assert response.status_code == 201
+    lock_errors: list[str] = []
+
+    def probe_concurrent_duplicate(
+        connection: sqlite3.Connection,
+        symbol: str,
+        force: bool = False,
+    ) -> dict[str, object]:
+        assert symbol == "RACELOCK"
+        assert force is False
+        database_path = connection.execute("PRAGMA database_list").fetchone()[2]
+        try:
+            with sqlite3.connect(database_path, timeout=0) as concurrent:
+                concurrent.execute(
+                    """
+                    INSERT INTO assets (symbol, name, asset_type, currency)
+                    VALUES ('RACELOCK', 'Concurrent ETF', 'etf', 'USD')
+                    """
+                )
+        except sqlite3.OperationalError as exc:
+            lock_errors.append(str(exc))
+        return {
+            "symbol": symbol,
+            "provider": "probe",
+            "rows_inserted": 0,
+            "rows_updated": 0,
+            "used_cache": False,
+            "used_fallback": False,
+            "message": "Lock probe completed.",
+        }
+
+    from backend.app.api import routes
+
+    monkeypatch.setattr(
+        routes.market_data_service,
+        "refresh_asset_prices",
+        probe_concurrent_duplicate,
+    )
+
+    response = client.post("/data/refresh/RACELOCK")
+
+    assert response.status_code == 200
+    assert lock_errors and all("locked" in error.lower() for error in lock_errors)
+
+
 def test_prices_for_symbol(client: TestClient) -> None:
     response = client.get("/prices/AAPL")
 

@@ -36,6 +36,112 @@ GOVERNMENT_BOND_TAX_SYMBOLS = {"BTP10Y"}
 BASE_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS instruments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_name TEXT NOT NULL,
+    instrument_type TEXT NOT NULL
+        CHECK(instrument_type IN (
+            'STOCK', 'ETF', 'BOND', 'ETC', 'ETN', 'CRYPTO', 'FX',
+            'INDEX', 'RATE', 'MACRO', 'UNKNOWN'
+        )),
+    asset_class TEXT NOT NULL
+        CHECK(asset_class IN (
+            'EQUITY', 'FUND', 'FIXED_INCOME', 'COMMODITY', 'CRYPTO',
+            'FX', 'REFERENCE', 'UNKNOWN'
+        )),
+    quality_tier TEXT NOT NULL DEFAULT 'REFERENCE_ONLY'
+        CHECK(quality_tier IN ('QUALIFIED', 'OBSERVABLE', 'REFERENCE_ONLY')),
+    source TEXT NOT NULL,
+    source_date TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS instrument_listings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_id INTEGER NOT NULL,
+    ticker TEXT NOT NULL CHECK(length(trim(ticker)) > 0),
+    mic TEXT CHECK(mic IS NULL OR length(trim(mic)) > 0),
+    venue_name TEXT,
+    currency TEXT NOT NULL CHECK(length(trim(currency)) > 0),
+    timezone TEXT,
+    listing_status TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(listing_status IN ('ACTIVE', 'INACTIVE', 'DELISTED')),
+    trade_republic_status TEXT NOT NULL DEFAULT 'NEVER_SEEN'
+        CHECK(trade_republic_status IN ('NEVER_SEEN', 'CATALOGED', 'VERIFIED', 'UNAVAILABLE')),
+    trade_republic_cataloged_at TEXT,
+    trade_republic_verified_at TEXT,
+    source TEXT NOT NULL,
+    source_date TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(instrument_id) REFERENCES instruments(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS instrument_identifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheme TEXT NOT NULL
+        CHECK(scheme IN (
+            'ISIN', 'FIGI', 'OPENFIGI_TICKER', 'COINGECKO_ID',
+            'FRED_SERIES_ID', 'ECB_SERIES_KEY'
+        )),
+    normalized_value TEXT NOT NULL CHECK(length(normalized_value) > 0),
+    scope TEXT NOT NULL CHECK(scope IN ('INSTRUMENT', 'LISTING')),
+    instrument_id INTEGER,
+    listing_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (scope = 'INSTRUMENT' AND instrument_id IS NOT NULL AND listing_id IS NULL)
+        OR
+        (scope = 'LISTING' AND instrument_id IS NULL AND listing_id IS NOT NULL)
+    ),
+    CHECK(
+        scheme NOT IN ('ISIN', 'FIGI')
+        OR (
+            normalized_value = UPPER(normalized_value)
+            AND normalized_value = TRIM(normalized_value)
+            AND INSTR(normalized_value, ' ') = 0
+            AND INSTR(normalized_value, CHAR(9)) = 0
+            AND INSTR(normalized_value, CHAR(10)) = 0
+            AND INSTR(normalized_value, CHAR(13)) = 0
+        )
+    ),
+    FOREIGN KEY(instrument_id) REFERENCES instruments(id) ON DELETE RESTRICT,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS instrument_identifier_attestations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identifier_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(identifier_id) REFERENCES instrument_identifiers(id) ON DELETE RESTRICT,
+    UNIQUE(identifier_id, source, observed_at, evidence_hash)
+);
+
+CREATE TABLE IF NOT EXISTS provider_symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    listing_id INTEGER NOT NULL,
+    capability TEXT NOT NULL CHECK(length(trim(capability)) > 0),
+    provider_symbol TEXT NOT NULL CHECK(length(trim(provider_symbol)) > 0),
+    normalized_symbol TEXT NOT NULL CHECK(length(normalized_symbol) > 0),
+    status TEXT NOT NULL CHECK(status IN ('CANDIDATE', 'VERIFIED', 'RETIRED')),
+    source TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    verified_at TEXT,
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),
+    supersedes_provider_symbol_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(status != 'VERIFIED' OR verified_at IS NOT NULL),
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    FOREIGN KEY(supersedes_provider_symbol_id) REFERENCES provider_symbols(id) ON DELETE RESTRICT,
+    UNIQUE(provider, listing_id, capability, version)
+);
+
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
@@ -48,9 +154,11 @@ CREATE TABLE IF NOT EXISTS assets (
     sector TEXT,
     country TEXT,
     risk_level TEXT NOT NULL DEFAULT 'medium',
+    instrument_listing_id INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(symbol, asset_type)
+    UNIQUE(symbol, asset_type),
+    FOREIGN KEY(instrument_listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS price_history (
@@ -362,6 +470,149 @@ CREATE TABLE IF NOT EXISTS ml_training_runs (
 
 INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
+CREATE INDEX IF NOT EXISTS idx_assets_instrument_listing ON assets(instrument_listing_id);
+CREATE INDEX IF NOT EXISTS idx_instrument_listings_instrument ON instrument_listings(instrument_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_identifiers_global_primary
+ON instrument_identifiers(scheme, normalized_value)
+WHERE scheme IN ('ISIN', 'FIGI');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_identifiers_instrument_owner
+ON instrument_identifiers(scheme, normalized_value, instrument_id)
+WHERE scope = 'INSTRUMENT' AND scheme NOT IN ('ISIN', 'FIGI');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_identifiers_listing_owner
+ON instrument_identifiers(scheme, normalized_value, listing_id)
+WHERE scope = 'LISTING' AND scheme NOT IN ('ISIN', 'FIGI');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_listings_market_identity
+ON instrument_listings(UPPER(ticker), UPPER(mic), UPPER(currency))
+WHERE mic IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_symbols_verified_listing_capability
+ON provider_symbols(UPPER(provider), listing_id, UPPER(capability))
+WHERE status = 'VERIFIED';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_symbols_verified_symbol_capability
+ON provider_symbols(UPPER(provider), UPPER(capability), UPPER(normalized_symbol))
+WHERE status = 'VERIFIED';
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_verified_retirement_only
+BEFORE UPDATE ON provider_symbols
+WHEN OLD.status = 'VERIFIED'
+AND (
+    NEW.status != 'RETIRED'
+    OR NEW.id IS NOT OLD.id
+    OR NEW.provider IS NOT OLD.provider
+    OR NEW.listing_id IS NOT OLD.listing_id
+    OR NEW.capability IS NOT OLD.capability
+    OR NEW.provider_symbol IS NOT OLD.provider_symbol
+    OR NEW.normalized_symbol IS NOT OLD.normalized_symbol
+    OR NEW.source IS NOT OLD.source
+    OR NEW.observed_at IS NOT OLD.observed_at
+    OR NEW.verified_at IS NOT OLD.verified_at
+    OR NEW.evidence_hash IS NOT OLD.evidence_hash
+    OR NEW.version IS NOT OLD.version
+    OR NEW.supersedes_provider_symbol_id IS NOT OLD.supersedes_provider_symbol_id
+    OR NEW.created_at IS NOT OLD.created_at
+)
+BEGIN
+    SELECT RAISE(ABORT, 'verified provider symbol must be retired explicitly');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_retired_immutable
+BEFORE UPDATE ON provider_symbols
+WHEN OLD.status = 'RETIRED'
+BEGIN
+    SELECT RAISE(ABORT, 'retired provider symbol history is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_history_no_delete
+BEFORE DELETE ON provider_symbols
+WHEN OLD.status IN ('VERIFIED', 'RETIRED')
+BEGIN
+    SELECT RAISE(ABORT, 'verified provider symbol history cannot be deleted');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_history_no_replace_insert
+BEFORE INSERT ON provider_symbols
+WHEN EXISTS (
+    SELECT 1
+    FROM provider_symbols historical
+    WHERE historical.status IN ('VERIFIED', 'RETIRED')
+      AND (
+          historical.id = NEW.id
+          OR (
+              UPPER(historical.provider) = UPPER(NEW.provider)
+              AND historical.listing_id = NEW.listing_id
+              AND UPPER(historical.capability) = UPPER(NEW.capability)
+              AND historical.version = NEW.version
+          )
+          OR (
+              NEW.status = 'VERIFIED'
+              AND historical.status = 'VERIFIED'
+              AND UPPER(historical.provider) = UPPER(NEW.provider)
+              AND UPPER(historical.capability) = UPPER(NEW.capability)
+              AND (
+                  historical.listing_id = NEW.listing_id
+                  OR UPPER(historical.normalized_symbol) = UPPER(NEW.normalized_symbol)
+              )
+          )
+      )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'provider symbol history cannot be replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_history_no_replace_update
+BEFORE UPDATE ON provider_symbols
+WHEN EXISTS (
+    SELECT 1
+    FROM provider_symbols historical
+    WHERE historical.id != OLD.id
+      AND historical.status IN ('VERIFIED', 'RETIRED')
+      AND (
+          historical.id = NEW.id
+          OR (
+              UPPER(historical.provider) = UPPER(NEW.provider)
+              AND historical.listing_id = NEW.listing_id
+              AND UPPER(historical.capability) = UPPER(NEW.capability)
+              AND historical.version = NEW.version
+          )
+          OR (
+              NEW.status = 'VERIFIED'
+              AND historical.status = 'VERIFIED'
+              AND UPPER(historical.provider) = UPPER(NEW.provider)
+              AND UPPER(historical.capability) = UPPER(NEW.capability)
+              AND (
+                  historical.listing_id = NEW.listing_id
+                  OR UPPER(historical.normalized_symbol) = UPPER(NEW.normalized_symbol)
+              )
+          )
+      )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'provider symbol history cannot be replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_supersedes_insert
+BEFORE INSERT ON provider_symbols
+WHEN NEW.supersedes_provider_symbol_id IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM provider_symbols previous
+    WHERE previous.id = NEW.supersedes_provider_symbol_id
+      AND previous.status = 'RETIRED'
+      AND UPPER(previous.provider) = UPPER(NEW.provider)
+      AND UPPER(previous.capability) = UPPER(NEW.capability)
+      AND UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_provider_symbols_supersedes_update
+BEFORE UPDATE ON provider_symbols
+WHEN NEW.supersedes_provider_symbol_id IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM provider_symbols previous
+    WHERE previous.id = NEW.supersedes_provider_symbol_id
+      AND previous.status = 'RETIRED'
+      AND UPPER(previous.provider) = UPPER(NEW.provider)
+      AND UPPER(previous.capability) = UPPER(NEW.capability)
+      AND UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
+END;
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
@@ -392,6 +643,11 @@ MIGRATIONS = {
         ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
         ("risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'medium'"),
         ("isin", "ALTER TABLE assets ADD COLUMN isin TEXT"),
+        (
+            "instrument_listing_id",
+            "ALTER TABLE assets ADD COLUMN instrument_listing_id INTEGER "
+            "REFERENCES instrument_listings(id) ON DELETE RESTRICT",
+        ),
         (
             "tax_category",
             "ALTER TABLE assets ADD COLUMN tax_category TEXT NOT NULL DEFAULT 'standard' "
@@ -580,14 +836,6 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if signal_schema and "STRONG_BUY" not in signal_schema["sql"]:
         connection.executescript(SIGNALS_REBUILD_SQL)
-    # Backfill ISIN sui titoli noti (solo dove mancante): riempie i DB esistenti
-    # senza bisogno di un nuovo seed, preservando i dati reali gia' scaricati.
-    for symbol, isin in ISIN_BY_SYMBOL.items():
-        connection.execute(
-            "UPDATE assets SET isin = ? WHERE UPPER(symbol) = ? AND (isin IS NULL OR isin = '')",
-            (isin, symbol),
-        )
-
     if tax_category_added:
         connection.execute(
             "UPDATE assets SET tax_category = 'crypto' WHERE LOWER(asset_type) = 'crypto'"
@@ -660,6 +908,30 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         """
     )
     connection.execute("UPDATE news_items SET updated_at = created_at WHERE updated_at IS NULL")
+
+    # Il backfill dell'identita' e' serializzato separatamente: il rebuild legacy
+    # di signals usa executescript(), che in SQLite delimita implicitamente la
+    # propria transazione.
+    connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        from backend.app.services.instrument_service import InstrumentService
+
+        InstrumentService.backfill_active_assets(connection)
+    except Exception:
+        connection.rollback()
+        raise
+    else:
+        connection.commit()
+
+    # Mantiene l'arricchimento legacy di Fase 1, ma soltanto dopo il backfill
+    # del master: un ISIN dedotto dal ticker non diventa evidenza di identita'.
+    for symbol, isin in ISIN_BY_SYMBOL.items():
+        connection.execute(
+            "UPDATE assets SET isin = ? WHERE UPPER(symbol) = ? AND (isin IS NULL OR isin = '')",
+            (isin, symbol),
+        )
+    connection.commit()
 
 
 @contextmanager

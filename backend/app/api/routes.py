@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import sqlite3
+from collections.abc import Iterable
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import Response
@@ -83,6 +84,7 @@ from backend.app.services.assets_service import (
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
 from backend.app.services.dashboard_service import get_dashboard
+from backend.app.services.instrument_service import AmbiguousInstrumentError
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
@@ -103,6 +105,42 @@ news_engine = NewsEngine()
 ml_engine = MLEngine()
 
 
+def _get_unique_asset(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
+    try:
+        return get_asset_by_symbol(connection, symbol)
+    except AmbiguousInstrumentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+def _ensure_unambiguous_symbols(
+    connection: sqlite3.Connection,
+    symbols: Iterable[str],
+) -> None:
+    normalized_symbols = {
+        symbol.strip().upper()
+        for symbol in symbols
+        if symbol and symbol.strip()
+    }
+    if normalized_symbols and not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    for symbol in sorted(normalized_symbols):
+        _get_unique_asset(connection, symbol)
+
+
+def _selected_asset_symbols(
+    connection: sqlite3.Connection,
+    limit: int | None = None,
+) -> list[str]:
+    rows = connection.execute(
+        "SELECT symbol FROM assets ORDER BY asset_type, symbol"
+    ).fetchall()
+    selected_rows = rows[:limit] if limit else rows
+    return [str(row["symbol"]) for row in selected_rows]
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "investedge-api"}
@@ -117,7 +155,7 @@ def get_assets() -> list[AssetOut]:
 @router.get("/assets/{symbol}", response_model=AssetOut)
 def get_asset(symbol: str) -> AssetOut:
     with db_session() as connection:
-        asset = get_asset_by_symbol(connection, symbol)
+        asset = _get_unique_asset(connection, symbol)
     if asset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -156,7 +194,7 @@ def remove_asset(
                 ),
             )
 
-        asset = get_asset_by_symbol(connection, symbol)
+        asset = _get_unique_asset(connection, symbol)
         if asset is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset {symbol.upper()} non trovato.")
 
@@ -231,6 +269,7 @@ def init_portfolio(payload: PortfolioInitIn) -> PortfolioSummaryOut:
 def simulate_order(payload: SimulatedOrderIn) -> OrderSimulationOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [payload.symbol])
             return portfolio_engine.simulate_order(connection, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -264,6 +303,7 @@ def get_portfolio_recommendations() -> list[PortfolioRecommendationOut]:
 def plan_allocation(payload: AllocationPlanIn) -> AllocationPlanOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, payload.symbols)
             return AllocationPlanOut(
                 **allocation_engine.plan(
                     connection,
@@ -283,6 +323,7 @@ def plan_allocation(payload: AllocationPlanIn) -> AllocationPlanOut:
 def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, payload.symbols)
             plan = allocation_engine.plan(
                 connection,
                 symbols=payload.symbols,
@@ -304,7 +345,7 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
             for allocation in plan["allocations"]:
                 if allocation["suggested_quantity"] <= 0 or not allocation["price"]:
                     continue
-                asset = get_asset_by_symbol(connection, allocation["symbol"])
+                asset = _get_unique_asset(connection, allocation["symbol"])
                 if asset is None:
                     continue
                 items.append(
@@ -403,6 +444,7 @@ def rebalance_portfolio(payload: AllocationPlanIn) -> RebalanceOut:
             symbols = payload.symbols or list(current.keys())
             if not symbols:
                 raise ValueError("Portafoglio vuoto: crea un portafoglio o indica gli asset da ottimizzare.")
+            _ensure_unambiguous_symbols(connection, symbols)
             total_value = summary.total_value if summary.total_value > 0 else payload.total_capital
             plan = allocation_engine.plan(
                 connection,
@@ -461,6 +503,7 @@ def rebalance_portfolio(payload: AllocationPlanIn) -> RebalanceOut:
 def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
             return backtest_engine.run_backtest(connection, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -470,6 +513,7 @@ def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
 def compare_backtests(payload: BacktestCompareIn) -> BacktestCompareOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
             return BacktestCompareOut(**backtest_engine.compare_strategies(connection, payload))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -479,6 +523,7 @@ def compare_backtests(payload: BacktestCompareIn) -> BacktestCompareOut:
 def walk_forward_backtest(payload: WalkForwardIn) -> WalkForwardOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
             return WalkForwardOut(**backtest_engine.walk_forward(connection, payload))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -527,6 +572,7 @@ def delete_backtest(
 @router.get("/prices/{symbol}", response_model=PriceHistoryOut)
 def get_prices(symbol: str, limit: int | None = Query(default=None, ge=1, le=1000)) -> PriceHistoryOut:
     with db_session() as connection:
+        _ensure_unambiguous_symbols(connection, [symbol])
         prices = get_price_history(connection, symbol, limit=limit)
     if prices is None:
         raise HTTPException(
@@ -543,8 +589,15 @@ def get_prices(symbol: str, limit: int | None = Query(default=None, ge=1, le=100
 
 @router.get("/technical-analysis/{symbol}", response_model=TechnicalAnalysisOut)
 def technical_analysis(symbol: str) -> TechnicalAnalysisOut:
-    with db_session() as connection:
-        analysis = get_technical_analysis(connection, symbol)
+    try:
+        with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
+            analysis = get_technical_analysis(connection, symbol)
+    except AmbiguousInstrumentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     if analysis is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -562,6 +615,7 @@ def get_signals() -> list[SignalOut]:
 @router.get("/signals/{symbol}", response_model=SignalOut)
 def get_signal(symbol: str) -> SignalOut:
     with db_session() as connection:
+        _ensure_unambiguous_symbols(connection, [symbol])
         signal = get_signal_by_symbol(connection, symbol)
     if signal is None:
         raise HTTPException(
@@ -607,6 +661,8 @@ def import_google_sheets_apply(payload: ImportInputIn | None = None) -> ImportAp
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except google_sheets_import_service.StaleImportError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except AmbiguousInstrumentError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -647,6 +703,23 @@ def ml_status() -> MLStatusOut:
 def ml_train(payload: MLTrainIn) -> MLTrainOut:
     try:
         with db_session() as connection:
+            training_symbols = payload.symbols
+            if not training_symbols:
+                training_symbols = [
+                    str(row["symbol"])
+                    for row in connection.execute(
+                        """
+                        SELECT DISTINCT a.symbol
+                        FROM assets a
+                        JOIN price_history ph ON ph.asset_id = a.id
+                        ORDER BY a.symbol
+                        """
+                    ).fetchall()
+                ]
+            _ensure_unambiguous_symbols(
+                connection,
+                [*training_symbols, payload.benchmark_symbol],
+            )
             return MLTrainOut(**ml_engine.train_model(connection, payload))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -662,6 +735,7 @@ def ml_models() -> list[MLModelSummaryOut]:
 def ml_predict(symbol: str, payload: MLPredictIn | None = None) -> MLPredictionOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return MLPredictionOut(
                 **ml_engine.predict_for_symbol(connection, symbol, payload.model_id if payload else None)
             )
@@ -673,6 +747,7 @@ def ml_predict(symbol: str, payload: MLPredictIn | None = None) -> MLPredictionO
 def ml_predict_all(payload: MLPredictIn | None = None) -> MLPredictAllOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection))
             return MLPredictAllOut(**ml_engine.predict_all_watchlist(connection, payload.model_id if payload else None))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -681,6 +756,7 @@ def ml_predict_all(payload: MLPredictIn | None = None) -> MLPredictAllOut:
 @router.get("/ml/predictions/{symbol}", response_model=list[MLPredictionOut])
 def ml_predictions(symbol: str, limit: int = Query(default=10, ge=1, le=50)) -> list[MLPredictionOut]:
     with db_session() as connection:
+        _ensure_unambiguous_symbols(connection, [symbol])
         return [MLPredictionOut(**item) for item in ml_engine.latest_predictions(connection, symbol, limit=limit)]
 
 
@@ -696,6 +772,8 @@ def get_news(
     symbol: str | None = Query(default=None, min_length=1, max_length=24),
 ) -> list[NewsItemOut]:
     with db_session() as connection:
+        if symbol is not None:
+            _ensure_unambiguous_symbols(connection, [symbol])
         return [NewsItemOut(**item) for item in news_engine.get_market_news(connection, limit=limit, symbol=symbol)]
 
 
@@ -709,6 +787,7 @@ def news_status() -> NewsStatusOut:
 def news_sentiment(symbol: str) -> NewsSentimentSummaryOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return NewsSentimentSummaryOut(**news_engine.get_news_sentiment_summary(connection, symbol))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -718,6 +797,7 @@ def news_sentiment(symbol: str) -> NewsSentimentSummaryOut:
 def refresh_news(symbol: str, force: bool = Query(default=False)) -> NewsRefreshResultOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return NewsRefreshResultOut(**news_engine.refresh_news_for_symbol(connection, symbol, force=force))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -729,6 +809,7 @@ def refresh_all_news(
     force: bool = Query(default=False),
 ) -> NewsRefreshAllOut:
     with db_session() as connection:
+        _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection, limit))
         return NewsRefreshAllOut(**news_engine.refresh_all_news(connection, limit=limit, force=force))
 
 
@@ -736,6 +817,7 @@ def refresh_all_news(
 def get_symbol_news(symbol: str, limit: int = Query(default=50, ge=1, le=200)) -> list[NewsItemOut]:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return [NewsItemOut(**item) for item in news_engine.get_news_for_symbol(connection, symbol, limit=limit)]
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -751,6 +833,7 @@ def data_status() -> DataStatusOut:
 def asset_data_status(symbol: str) -> AssetDataStatusOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return AssetDataStatusOut(**market_data_service.get_data_status(connection, symbol))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -760,6 +843,7 @@ def asset_data_status(symbol: str) -> AssetDataStatusOut:
 def refresh_asset_data(symbol: str, force: bool = Query(default=False)) -> DataRefreshResultOut:
     try:
         with db_session() as connection:
+            _ensure_unambiguous_symbols(connection, [symbol])
             return DataRefreshResultOut(**market_data_service.refresh_asset_prices(connection, symbol, force=force))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -771,6 +855,7 @@ def refresh_all_data(
     force: bool = Query(default=False),
 ) -> DataRefreshAllOut:
     with db_session() as connection:
+        _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection, limit))
         return DataRefreshAllOut(**market_data_service.refresh_all_watchlist(connection, limit=limit, force=force))
 
 

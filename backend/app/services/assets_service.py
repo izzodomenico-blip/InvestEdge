@@ -4,6 +4,7 @@ import sqlite3
 
 from backend.app.models import AssetCreate, AssetOut
 from backend.app.services.fx_service import FXRateUnavailable, FXService
+from backend.app.services.instrument_service import InstrumentService
 
 fx_service = FXService()
 
@@ -225,16 +226,7 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
 
 
 def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
-    row = connection.execute(
-        """
-        SELECT id, symbol, name, asset_type, tax_category, exchange, currency, sector, country,
-            risk_level, isin, updated_at
-        FROM assets
-        WHERE UPPER(symbol) = UPPER(?)
-        LIMIT 1
-        """,
-        (symbol,),
-    ).fetchone()
+    row = InstrumentService.require_unique_active_asset(connection, symbol)
     if row is None:
         return None
     return _asset_from_base_row(connection, row)
@@ -320,6 +312,7 @@ def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetO
             payload.isin,
         ),
     )
+    InstrumentService.backfill_active_assets(connection)
     row = connection.execute(
         """
         SELECT id, symbol, name, asset_type, tax_category, exchange, currency, sector, country,
