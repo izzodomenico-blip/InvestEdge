@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -208,6 +209,21 @@ def get_portfolio() -> PortfolioSummaryOut:
 @router.post("/portfolio/init", response_model=PortfolioSummaryOut)
 def init_portfolio(payload: PortfolioInitIn) -> PortfolioSummaryOut:
     with db_session() as connection:
+        has_destructive_state = bool(
+            connection.execute(
+                """
+                SELECT
+                    EXISTS(SELECT 1 FROM portfolio_positions LIMIT 1)
+                    OR EXISTS(SELECT 1 FROM simulated_orders LIMIT 1)
+                    OR EXISTS(SELECT 1 FROM portfolio_snapshots LIMIT 1)
+                """
+            ).fetchone()[0]
+        )
+        if has_destructive_state and payload.confirm_reset != "RESET_PORTFOLIO":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Conferma esplicita richiesta per azzerare il portafoglio.",
+            )
         return portfolio_engine.initialize_portfolio(connection, payload)
 
 
@@ -276,6 +292,14 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
                 max_weight=payload.max_weight,
                 lookback_days=payload.lookback_days,
             )
+            if payload.confirmation_token is None or not hmac.compare_digest(
+                payload.confirmation_token,
+                plan["confirmation_token"],
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Il piano e cambiato: ricalcola l'allocazione prima di applicarla.",
+                )
             items = []
             for allocation in plan["allocations"]:
                 if allocation["suggested_quantity"] <= 0 or not allocation["price"]:
@@ -394,12 +418,16 @@ def rebalance_portfolio(payload: AllocationPlanIn) -> RebalanceOut:
             for symbol in dict.fromkeys([*symbols, *current.keys()]):
                 position = current.get(symbol)
                 target_item = target.get(symbol)
-                current_value = float(position.current_value) if position else 0.0
+                current_value = float(position.current_value_base) if position else 0.0
                 target_value = float(target_item["capital"]) if target_item else 0.0
                 price = (
-                    float(target_item["price"])
-                    if target_item and target_item.get("price")
-                    else (float(position.current_price) if position and position.current_price else None)
+                    float(target_item["price_base"])
+                    if target_item and target_item.get("price_base")
+                    else (
+                        float(position.current_price) * float(position.fx_rate_to_base)
+                        if position and position.current_price and position.fx_rate_to_base
+                        else None
+                    )
                 )
                 delta_value = round(target_value - current_value, 2)
                 action = "BUY" if delta_value > 1 else "SELL" if delta_value < -1 else "HOLD"
@@ -472,8 +500,24 @@ def get_backtest(backtest_id: int) -> BacktestResultOut:
 
 
 @router.delete("/backtests/{backtest_id}")
-def delete_backtest(backtest_id: int) -> dict[str, int | bool]:
+def delete_backtest(
+    backtest_id: int,
+    confirmation: str | None = Query(default=None),
+) -> dict[str, int | bool]:
     with db_session() as connection:
+        row = connection.execute(
+            "SELECT name FROM backtest_runs WHERE id = ?",
+            (backtest_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest non trovato.")
+        normalized_name = " ".join(str(row["name"] or "").split())
+        expected_confirmation = f"{normalized_name} #{backtest_id}" if normalized_name else f"#{backtest_id}"
+        if confirmation != expected_confirmation:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Conferma esplicita non valida per il backtest richiesto.",
+            )
         deleted = backtest_engine.delete_backtest(connection, backtest_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest non trovato.")
@@ -553,10 +597,16 @@ def import_google_sheets_apply(payload: ImportInputIn | None = None) -> ImportAp
     try:
         with db_session() as connection:
             return ImportApplyOut(
-                **google_sheets_import_service.apply_import(connection, payload.csv_url if payload else None)
+                **google_sheets_import_service.apply_import(
+                    connection,
+                    payload.csv_url if payload else None,
+                    payload.confirmation_token if payload else None,
+                )
             )
     except google_sheets_import_service.ImportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except google_sheets_import_service.StaleImportError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import io
+import json
 import sqlite3
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -42,6 +45,10 @@ _MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
 
 
 class ImportDisabledError(ValueError):
+    pass
+
+
+class StaleImportError(ValueError):
     pass
 
 
@@ -138,7 +145,9 @@ def parse_holdings(csv_text: str) -> dict[str, Any]:
         if quantity <= 0:
             continue
 
-        asset_type = (_cell(row, mapping, "asset_type") or "stock").lower().replace(" ", "_")
+        asset_type_cell = _cell(row, mapping, "asset_type")
+        currency_cell = _cell(row, mapping, "currency")
+        asset_type = (asset_type_cell or "stock").lower().replace(" ", "_")
         if asset_type not in _VALID_ASSET_TYPES:
             asset_type = "stock"
 
@@ -149,7 +158,9 @@ def parse_holdings(csv_text: str) -> dict[str, Any]:
                 "asset_type": asset_type,
                 "quantity": round(quantity, 6),
                 "average_price": round(average_price, 6),
-                "currency": (_cell(row, mapping, "currency") or "EUR").upper()[:8],
+                "currency": (currency_cell or "EUR").upper()[:8],
+                "asset_type_explicit": bool(asset_type_cell),
+                "currency_explicit": bool(currency_cell),
             }
         )
 
@@ -175,12 +186,15 @@ def _require_import_enabled() -> None:
 
 
 def _validate_csv_url(url: str) -> str:
+    invalid_url = False
     try:
         parsed = urlsplit(url)
         port = parsed.port
         hostname = (parsed.hostname or "").lower()
-    except ValueError as exc:
-        raise ValueError("URL Google Sheets non valida o non attendibile.") from exc
+    except ValueError:
+        invalid_url = True
+    if invalid_url:
+        raise ValueError("URL Google Sheets non valida o non attendibile.")
 
     googleusercontent_subdomain = (
         len(hostname) > len(_GOOGLEUSERCONTENT_SUFFIX)
@@ -228,6 +242,7 @@ def fetch_csv(csv_url: str | None = None) -> str:
         raise ValueError("Il limite dell'import Google Sheets non e' configurato correttamente.")
     max_bytes = min(configured_max_bytes, _MAX_DOWNLOAD_BYTES)
 
+    request_failed = False
     try:
         with httpx.Client(timeout=20, follow_redirects=False) as client:
             redirects_followed = 0
@@ -250,8 +265,10 @@ def fetch_csv(csv_url: str | None = None) -> str:
                     response.raise_for_status()
                     payload = _read_response(response, max_bytes)
                     break
-    except httpx.HTTPError as exc:
-        raise ValueError("Impossibile leggere il foglio Google Sheets.") from exc
+    except httpx.HTTPError:
+        request_failed = True
+    if request_failed:
+        raise ValueError("Impossibile leggere il foglio Google Sheets.")
 
     try:
         return payload.decode("utf-8-sig")
@@ -270,7 +287,21 @@ def status() -> dict[str, Any]:
 
 def preview(csv_url: str | None = None) -> dict[str, Any]:
     _require_import_enabled()
-    return parse_holdings(fetch_csv(csv_url))
+    parsed = parse_holdings(fetch_csv(csv_url))
+    parsed["confirmation_token"] = _confirmation_token(parsed)
+    return parsed
+
+
+def _confirmation_token(parsed: dict[str, Any]) -> str:
+    canonical = {
+        "holdings": parsed["holdings"],
+        "errors": parsed["errors"],
+        "rows_total": parsed["rows_total"],
+        "rows_valid": parsed["rows_valid"],
+        "rows_invalid": parsed["rows_invalid"],
+    }
+    payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _ensure_import_reference_price(
@@ -295,8 +326,15 @@ def _ensure_import_reference_price(
     )
 
 
-def apply_import(connection: sqlite3.Connection, csv_url: str | None = None) -> dict[str, Any]:
+def apply_import(
+    connection: sqlite3.Connection,
+    csv_url: str | None = None,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
     parsed = preview(csv_url)
+    current_token = parsed["confirmation_token"]
+    if confirmation_token is None or not hmac.compare_digest(confirmation_token, current_token):
+        raise StaleImportError("L'anteprima non corrisponde piu al foglio corrente. Genera una nuova anteprima.")
     holdings = parsed["holdings"]
     if not holdings:
         raise ValueError("Nessuna posizione valida da importare. Controlla il foglio.")
@@ -319,12 +357,26 @@ def apply_import(connection: sqlite3.Connection, csv_url: str | None = None) -> 
                     ),
                 )
                 asset_id = created.id
+                asset_type = created.asset_type
+                currency = created.currency
                 created_assets += 1
             else:
                 asset_id = asset.id
+                if (
+                    holding["asset_type_explicit"]
+                    and holding["asset_type"] != asset.asset_type
+                ) or (
+                    holding["currency_explicit"]
+                    and holding["currency"] != asset.currency
+                ):
+                    raise ValueError(
+                        f"Metadata incompatibili per {holding['symbol']}: usa tipo e valuta dell'asset esistente."
+                    )
+                asset_type = asset.asset_type
+                currency = asset.currency
 
             _ensure_import_reference_price(connection, asset_id, holding["average_price"])
-            fx_quote = portfolio_engine.fx_service.get_rate(connection, holding["currency"])
+            fx_quote = portfolio_engine.fx_service.get_rate(connection, currency)
             average_price_base = round(holding["average_price"] * fx_quote.rate, 6)
             initial_equity_base += round(holding["quantity"] * average_price_base, 6)
             items.append(
@@ -333,8 +385,8 @@ def apply_import(connection: sqlite3.Connection, csv_url: str | None = None) -> 
                     "symbol": holding["symbol"],
                     "quantity": holding["quantity"],
                     "average_price": holding["average_price"],
-                    "asset_type": holding["asset_type"],
-                    "currency": holding["currency"],
+                    "asset_type": asset_type,
+                    "currency": currency,
                     "notes": "Importato da Google Sheets",
                 }
             )

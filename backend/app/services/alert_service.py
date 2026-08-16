@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import sqlite3
 from typing import Any
 
@@ -75,7 +76,7 @@ def _format_board(board: dict[str, Any]) -> str:
     if board["data_mode"] == "SEED":
         lines.append("⚠️ <i>Dati simulati: indicazioni dimostrative.</i>")
         lines.append("")
-    lines.append(board["headline"])
+    lines.append(html.escape(str(board["headline"]), quote=False))
     lines.append("")
 
     actions = board["actions"]
@@ -85,9 +86,11 @@ def _format_board(board: dict[str, Any]) -> str:
     else:
         for action in shown:
             emoji = _TYPE_EMOJI.get(action["type"], "•")
-            symbol = f" <b>{action['symbol']}</b>" if action.get("symbol") else ""
-            lines.append(f"{emoji}{symbol} {action['title']}")
-            lines.append(f"   <i>{action['reason']}</i>")
+            symbol = f" <b>{html.escape(str(action['symbol']), quote=False)}</b>" if action.get("symbol") else ""
+            title = html.escape(str(action["title"]), quote=False)
+            reason = html.escape(str(action["reason"]), quote=False)
+            lines.append(f"{emoji}{symbol} {title}")
+            lines.append(f"   <i>{reason}</i>")
     lines.append("")
     lines.append("<i>Supporto decisionale, non consigli finanziari. Gli ordini li esegui tu.</i>")
     return "\n".join(lines)

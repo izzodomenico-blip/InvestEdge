@@ -3,6 +3,9 @@ from __future__ import annotations
 import sqlite3
 
 from backend.app.models import AssetCreate, AssetOut
+from backend.app.services.fx_service import FXRateUnavailable, FXService
+
+fx_service = FXService()
 
 
 def _latest_price_metrics(connection: sqlite3.Connection, asset_id: int) -> tuple[float | None, float | None]:
@@ -56,7 +59,21 @@ def _latest_price_metadata(connection: sqlite3.Connection, asset_id: int) -> dic
     }
 
 
-def _asset_from_row(row: sqlite3.Row) -> AssetOut:
+def _base_price_metrics(
+    connection: sqlite3.Connection,
+    currency: str,
+    last_price: float | None,
+) -> tuple[float | None, float | None]:
+    try:
+        fx_rate_to_base = fx_service.get_rate(connection, currency).rate
+    except FXRateUnavailable:
+        return None, None
+    last_price_base = float(last_price) * fx_rate_to_base if last_price is not None else None
+    return fx_rate_to_base, last_price_base
+
+
+def _asset_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> AssetOut:
+    fx_rate_to_base, last_price_base = _base_price_metrics(connection, row["currency"], row["last_price"])
     return AssetOut(
         id=row["id"],
         symbol=row["symbol"],
@@ -70,6 +87,8 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
         risk_level=row["risk_level"],
         isin=row["isin"],
         last_price=row["last_price"],
+        fx_rate_to_base=fx_rate_to_base,
+        last_price_base=last_price_base,
         daily_change_pct=row["daily_change_pct"],
         last_source=row["last_source"],
         provider=row["provider"],
@@ -91,6 +110,7 @@ def _asset_from_row(row: sqlite3.Row) -> AssetOut:
 
 def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> AssetOut:
     latest_price, daily_change_pct = _latest_price_metrics(connection, row["id"])
+    fx_rate_to_base, last_price_base = _base_price_metrics(connection, row["currency"], latest_price)
     price_metadata = _latest_price_metadata(connection, row["id"])
     signal_row = connection.execute(
         """
@@ -117,6 +137,8 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         risk_level=row["risk_level"],
         isin=row["isin"],
         last_price=latest_price,
+        fx_rate_to_base=fx_rate_to_base,
+        last_price_base=last_price_base,
         daily_change_pct=daily_change_pct,
         last_source=price_metadata["last_source"],
         provider=price_metadata["provider"],
@@ -199,7 +221,7 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
         ORDER BY a.asset_type, a.symbol
         """
     ).fetchall()
-    return [_asset_from_row(row) for row in rows]
+    return [_asset_from_row(connection, row) for row in rows]
 
 
 def get_asset_by_symbol(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:

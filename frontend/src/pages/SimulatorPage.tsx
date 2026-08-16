@@ -94,14 +94,19 @@ export function SimulatorPage() {
   const quantity = Number(form.quantity);
   const effectivePrice = form.price ? Number(form.price) : selectedAsset?.last_price ?? 0;
   const grossAmount = Number.isFinite(quantity * effectivePrice) ? quantity * effectivePrice : 0;
+  const fxRateToBase = selectedAsset?.fx_rate_to_base ?? null;
+  const grossAmountBase = fxRateToBase == null ? 0 : grossAmount * fxRateToBase;
   const effectiveFees = form.fees
     ? Number(form.fees)
     : grossAmount * ((portfolio?.settings.default_fee_percent ?? 0.1) / 100);
-  const netAmount = form.order_type === "BUY" ? grossAmount + effectiveFees : grossAmount - effectiveFees;
-  const projectedCash = (portfolio?.cash ?? 0) + (form.order_type === "BUY" ? -netAmount : netAmount);
+  const effectiveFeesBase = fxRateToBase == null ? 0 : effectiveFees * fxRateToBase;
+  const netAmountBase = form.order_type === "BUY"
+    ? grossAmountBase + effectiveFeesBase
+    : grossAmountBase - effectiveFeesBase;
+  const projectedCash = (portfolio?.cash ?? 0) + (form.order_type === "BUY" ? -netAmountBase : netAmountBase);
   const projectedWeight =
-    portfolio && form.order_type === "BUY" && grossAmount > 0
-      ? ((selectedPosition?.current_value ?? 0) + grossAmount) / Math.max(portfolio.total_value, 1) * 100
+    portfolio && form.order_type === "BUY" && grossAmountBase > 0
+      ? ((selectedPosition?.current_value_base ?? 0) + grossAmountBase) / Math.max(portfolio.total_value, 1) * 100
       : selectedPosition?.weight_percent ?? 0;
 
   const validationError = useMemo(() => {
@@ -117,14 +122,17 @@ export function SimulatorPage() {
     if (form.fees && Number(form.fees) < 0) {
       return "Le commissioni non possono essere negative.";
     }
-    if (form.order_type === "BUY" && portfolio && netAmount > portfolio.cash) {
+    if (fxRateToBase == null) {
+      return "Cambio verso EUR non disponibile per questo asset.";
+    }
+    if (form.order_type === "BUY" && portfolio && netAmountBase > portfolio.cash) {
       return "Cash insufficiente per questo BUY simulato.";
     }
     if (form.order_type === "SELL" && (!selectedPosition || quantity > selectedPosition.quantity)) {
       return "Quantita insufficiente per questo SELL simulato.";
     }
     return null;
-  }, [effectivePrice, form.fees, form.order_type, form.price, form.symbol, netAmount, portfolio, quantity, selectedPosition]);
+  }, [effectivePrice, form.fees, form.order_type, form.price, form.symbol, fxRateToBase, netAmountBase, portfolio, quantity, selectedPosition]);
 
   const previewWarnings = useMemo(() => {
     const warnings: string[] = [];
@@ -137,14 +145,14 @@ export function SimulatorPage() {
     if (selectedAsset.asset_type === "crypto") {
       const currentCrypto = portfolio.allocation_by_asset_type.crypto ?? 0;
       const projectedCrypto = form.order_type === "BUY"
-        ? currentCrypto + (grossAmount / Math.max(portfolio.total_value, 1)) * 100
+        ? currentCrypto + (grossAmountBase / Math.max(portfolio.total_value, 1)) * 100
         : currentCrypto;
       if (projectedCrypto > portfolio.settings.crypto_max_weight) {
         warnings.push(`Esposizione crypto stimata ${projectedCrypto.toFixed(1)}%, oltre la soglia configurata.`);
       }
     }
     return warnings;
-  }, [form.order_type, grossAmount, portfolio, projectedWeight, selectedAsset]);
+  }, [form.order_type, grossAmountBase, portfolio, projectedWeight, selectedAsset]);
 
   async function submitOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

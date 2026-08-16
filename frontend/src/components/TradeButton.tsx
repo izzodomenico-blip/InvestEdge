@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Lightbulb, ShoppingCart, TrendingDown, X } from "lucide-react";
 
-import { apiGet, apiPost, type OrderSimulationResponse, type PortfolioSummary, type SimulatedOrderInput } from "../lib/api";
+import { apiGet, apiPost, type Asset, type OrderSimulationResponse, type PortfolioSummary, type SimulatedOrderInput } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 
 type Props = {
@@ -57,8 +57,9 @@ export function TradeButton({
   const [pctOfPortfolio, setPctOfPortfolio] = useState<number | null>(null);
   const [suggestedQty, setSuggestedQty] = useState<number | null>(null);
   const [portfolioBase, setPortfolioBase] = useState<number | null>(null);
+  const [priceBase, setPriceBase] = useState<number | null>(null);
 
-  const buyQty = px > 0 && amount ? Number(amount) / px : 0;
+  const buyQty = priceBase != null && priceBase > 0 && amount ? Number(amount) / priceBase : 0;
 
   async function openModal(e: React.MouseEvent) {
     e.stopPropagation();
@@ -66,6 +67,7 @@ export function TradeButton({
     setMsg(null);
     setSuggestedQty(null);
     setPortfolioBase(null);
+    setPriceBase(null);
     setQty(maxQuantity ? String(maxQuantity) : "");
     setOpen(true);
 
@@ -73,7 +75,14 @@ export function TradeButton({
       // Suggerisce l'importo "giusto" in base a capitale disponibile + rischio.
       setAmount("");
       try {
-        const ptf = await apiGet<PortfolioSummary>("/portfolio");
+        const [ptf, asset] = await Promise.all([
+          apiGet<PortfolioSummary>("/portfolio"),
+          apiGet<Asset>(`/assets/${encodeURIComponent(symbol)}`),
+        ]);
+        if (asset.last_price_base == null || asset.last_price_base <= 0) {
+          throw new Error("Prezzo EUR non disponibile per questo asset.");
+        }
+        setPriceBase(asset.last_price_base);
         const base = ptf.total_value > 0 ? ptf.total_value : ptf.cash;
         const weight = targetWeight(assetType, riskLevel);
         let target = base * weight;
@@ -83,10 +92,11 @@ export function TradeButton({
         setSuggested(target);
         setPctOfPortfolio(base > 0 ? (target / base) * 100 : null);
         setAmount(target > 0 ? String(target) : "1000");
-      } catch {
+      } catch (error) {
         setSuggested(null);
         setCash(null);
         setAmount("1000");
+        setErr(error instanceof Error ? error.message : "Prezzo EUR non disponibile per questo asset.");
       }
     }
 
@@ -94,20 +104,28 @@ export function TradeButton({
       // Suggerisce QUANTE quote shortare in base al patrimonio + rischio, cosi'
       // non si apre uno short sproporzionato al conto (lo short e' piu' prudente).
       try {
-        const ptf = await apiGet<PortfolioSummary>("/portfolio");
+        const [ptf, asset] = await Promise.all([
+          apiGet<PortfolioSummary>("/portfolio"),
+          apiGet<Asset>(`/assets/${encodeURIComponent(symbol)}`),
+        ]);
+        if (asset.last_price_base == null || asset.last_price_base <= 0) {
+          throw new Error("Prezzo EUR non disponibile per questo asset.");
+        }
+        setPriceBase(asset.last_price_base);
         const base = ptf.total_value > 0 ? ptf.total_value : ptf.cash;
         const targetNotional = Math.max(0, base * targetWeight(assetType, riskLevel) * 0.6);
         // almeno 1 quota quando il prezzo e' valido (per titoli cari su conti piccoli
         // il calcolo darebbe 0; l'avviso di sproporzione gestisce il caso "1 e' gia' troppo").
-        const q = px > 0 ? Math.max(1, Math.floor(targetNotional / px)) : 0;
+        const q = Math.max(1, Math.floor(targetNotional / asset.last_price_base));
         setPortfolioBase(base);
         setCash(ptf.cash);
         setSuggestedQty(q > 0 ? q : null);
-        setPctOfPortfolio(base > 0 ? ((q * px) / base) * 100 : null);
+        setPctOfPortfolio(base > 0 ? ((q * asset.last_price_base) / base) * 100 : null);
         if (q > 0) setQty(String(q));
-      } catch {
+      } catch (error) {
         setSuggestedQty(null);
         setPortfolioBase(null);
+        setErr(error instanceof Error ? error.message : "Prezzo EUR non disponibile per questo asset.");
       }
     }
     // isCover / isSell: il campo quantità è già precompilato con maxQuantity (sopra).
@@ -185,12 +203,12 @@ export function TradeButton({
                 <Lightbulb className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" aria-hidden="true" />
                 <div className="text-sm text-slate-200">
                   <p>
-                    Importo consigliato: <b className="text-emerald-200">{formatCurrency(suggested, currency)}</b>
+                    Importo consigliato: <b className="text-emerald-200">{formatCurrency(suggested, "EUR")}</b>
                     {pctOfPortfolio != null && <> (~{pctOfPortfolio.toFixed(0)}% del portafoglio)</>}
                   </p>
                   <p className="mt-0.5 text-xs text-slate-500">
                     Calibrato sul rischio dell'asset per restare diversificato. Liquidità disponibile{" "}
-                    {cash != null ? formatCurrency(cash, currency) : "N/D"}.
+                    {cash != null ? formatCurrency(cash, "EUR") : "N/D"}.
                   </p>
                 </div>
               </div>
@@ -247,7 +265,7 @@ export function TradeButton({
                 <div className="text-sm text-slate-200">
                   <p>
                     Quantità consigliata: <b className="text-cyan-200">{suggestedQty.toLocaleString("it-IT")} quote</b>
-                    {" "}(~{formatCurrency(suggestedQty * px, currency)}
+                    {" "}(~{formatCurrency(suggestedQty * (priceBase ?? 0), "EUR")}
                     {pctOfPortfolio != null && <>, ~{pctOfPortfolio.toFixed(0)}% del conto</>})
                   </p>
                   <p className="mt-0.5 text-xs text-slate-500">Calibrata sul rischio per non aprire uno short sproporzionato al conto.</p>
@@ -277,9 +295,9 @@ export function TradeButton({
                 </button>
               ) : null}
             </label>
-            {isShort && portfolioBase != null && px > 0 && Number(qty) * px > portfolioBase && (
+            {isShort && portfolioBase != null && priceBase != null && Number(qty) * priceBase > portfolioBase && (
               <p className="mt-2 rounded-lg border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
-                ⚠ Stai shortando ~{formatCurrency(Number(qty) * px, currency)}, più del tuo intero conto ({formatCurrency(portfolioBase, currency)}). Un broker reale non lo permetterebbe — sei sicuro?
+                ⚠ Stai shortando ~{formatCurrency(Number(qty) * priceBase, "EUR")}, più del tuo intero conto ({formatCurrency(portfolioBase, "EUR")}). Un broker reale non lo permetterebbe — sei sicuro?
               </p>
             )}
           </>

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from backend.app.services.fx_service import FXService
 
 TRADING_DAYS = 252
 DEFAULT_TARGET_VOL = 0.15
@@ -18,6 +22,7 @@ class AllocationEngine:
     """
 
     lookback_days: int = 120
+    fx_service: FXService = field(default_factory=FXService)
 
     def plan(
         self,
@@ -58,12 +63,14 @@ class AllocationEngine:
                 f"target {target * 100:.1f}%, capitale investito {invested_fraction * 100:.0f}%."
             )
 
-        invested_capital = total_capital * invested_fraction
+        target_invested_capital = total_capital * invested_fraction
         allocations: list[dict[str, Any]] = []
         for asset, weight in zip(assets, weights, strict=True):
-            capital = invested_capital * weight
+            capital = target_invested_capital * weight
             price = asset["price"]
-            quantity = math.floor(capital / price) if price and price > 0 else 0
+            price_base = asset["price_base"]
+            quantity = math.floor(capital / price_base) if price_base and price_base > 0 else 0
+            actual_cost_base = quantity * price_base
             allocations.append(
                 {
                     "symbol": asset["symbol"],
@@ -71,13 +78,16 @@ class AllocationEngine:
                     "weight_percent": round(weight * invested_fraction * 100, 2),
                     "capital": round(capital, 2),
                     "price": round(price, 4) if price else None,
+                    "price_base": round(price_base, 4) if price_base else None,
+                    "actual_cost_base": round(actual_cost_base, 2),
                     "suggested_quantity": quantity,
                     "volatility": round(asset["volatility"], 4),
                     "score": asset["score"],
                 }
             )
 
-        return {
+        invested_capital = sum(float(item["actual_cost_base"]) for item in allocations)
+        result = {
             "method": method,
             "total_capital": round(total_capital, 2),
             "invested_capital": round(invested_capital, 2),
@@ -87,6 +97,9 @@ class AllocationEngine:
             "allocations": allocations,
             "notes": notes,
         }
+        canonical = json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        result["confirmation_token"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return result
 
     # ------------------------------------------------------------------ helpers
 
@@ -131,12 +144,14 @@ class AllocationEngine:
                 (row["id"],),
             ).fetchone()
             score = float(score_row["score"]) if score_row and score_row["score"] is not None else None
+            fx_rate_to_base = self.fx_service.get_rate(connection, str(row["currency"])).rate
             assets.append(
                 {
                     "symbol": row["symbol"],
                     "name": row["name"],
                     "currency": row["currency"],
                     "price": series[-1],
+                    "price_base": series[-1] * fx_rate_to_base,
                     "volatility": self._annualized_vol(series),
                     "score": score,
                 }

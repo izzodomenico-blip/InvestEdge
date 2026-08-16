@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -133,6 +135,117 @@ def test_backup_before_migration_allows_missing_database(tmp_path, monkeypatch) 
         get_settings.cache_clear()
 
     assert result["created"] is False
+
+
+def test_same_second_backups_preserve_distinct_contents_and_reasons(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "investedge.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO sentinel (value) VALUES ('first-state')")
+
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    monkeypatch.setattr(backup_service, "_stamp", lambda: "20260816-120000")
+    get_settings.cache_clear()
+    try:
+        first = backup_service.create_backup(reason="pre-seed-reset")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("UPDATE sentinel SET value = 'second-state'")
+        second = backup_service.create_backup(reason="manual")
+    finally:
+        get_settings.cache_clear()
+
+    assert first["file"] != second["file"]
+    assert "pre-seed-reset" in first["file"]
+    assert "manual" in second["file"]
+    backup_dir = database_path.parent / "backups"
+    with sqlite3.connect(backup_dir / first["file"]) as connection:
+        assert connection.execute("SELECT value FROM sentinel").fetchone()[0] == "first-state"
+    with sqlite3.connect(backup_dir / second["file"]) as connection:
+        assert connection.execute("SELECT value FROM sentinel").fetchone()[0] == "second-state"
+
+
+def test_concurrent_backups_reserve_unique_targets_atomically(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "investedge.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO sentinel (value) VALUES ('preserved')")
+
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    monkeypatch.setattr(backup_service, "_stamp", lambda: "20260816-120000")
+    get_settings.cache_clear()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(backup_service.create_backup, ["worker-one", "worker-two"]))
+    finally:
+        get_settings.cache_clear()
+
+    names = {result["file"] for result in results}
+    assert len(names) == 2
+    backup_dir = database_path.parent / "backups"
+    for name in names:
+        with sqlite3.connect(backup_dir / name) as connection:
+            assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert connection.execute("SELECT value FROM sentinel").fetchone()[0] == "preserved"
+
+
+def test_failed_backup_removes_reserved_target(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "investedge.db"
+    database_path.write_bytes(b"sqlite-source-sentinel")
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    get_settings.cache_clear()
+
+    def fail_connect(path):  # noqa: ANN001, ANN202
+        raise sqlite3.OperationalError("simulated open failure")
+
+    monkeypatch.setattr(backup_service.sqlite3, "connect", fail_connect)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="simulated open failure"):
+            backup_service.create_backup(reason="failure-probe")
+    finally:
+        get_settings.cache_clear()
+
+    backup_dir = database_path.parent / "backups"
+    assert list(backup_dir.glob("investedge-*.db")) == []
+
+
+def test_prune_backups_keeps_newest_filesystem_timestamp(tmp_path, monkeypatch) -> None:
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    older = backup_dir / "investedge-99999999-manual-old.db"
+    newer = backup_dir / "investedge-00000000-manual-new.db"
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
+    os.utime(older, (1000, 1000))
+    os.utime(newer, (2000, 2000))
+    monkeypatch.setattr(backup_service, "_backups_dir", lambda: backup_dir)
+
+    removed = backup_service.prune_backups(keep=1)
+
+    assert removed == 1
+    assert newer.exists()
+    assert not older.exists()
+
+
+def test_seed_reset_backs_up_custom_legacy_database_before_migration(tmp_path, monkeypatch) -> None:
+    from backend.scripts.seed_database import seed_database
+
+    database_path = tmp_path / "custom" / "legacy.db"
+    database_path.parent.mkdir()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE legacy_sentinel (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO legacy_sentinel (value) VALUES ('preserved-before-reset')")
+
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    get_settings.cache_clear()
+    try:
+        seed_database(reset=True)
+    finally:
+        get_settings.cache_clear()
+
+    backups = list((database_path.parent / "backups").glob("investedge-*-pre-seed-reset-*.db"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as connection:
+        assert connection.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "preserved-before-reset"
 
 
 def test_init_db_creates_traceable_fx_rates_and_lookup_index(tmp_path, monkeypatch) -> None:

@@ -12,16 +12,16 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes import router
 from backend.app.config import ROOT_DIR, get_settings
-from backend.app.database import init_db
-from backend.app.services.backup_service import backup_before_migration
+from backend.app.services.backup_service import prepare_database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Backup pre-migrazione a ogni avvio (salta durante i test per non sporcare i temp).
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        backup_before_migration()
-    init_db()
+    prepare_database(
+        reason="pre-migration",
+        backup_existing="PYTEST_CURRENT_TEST" not in os.environ,
+    )
     yield
 
 

@@ -140,7 +140,10 @@ export function AllocationPlanner() {
     setError(null);
     setApplied(null);
     try {
-      await apiPost("/portfolio/allocation/apply", plannedInput);
+      await apiPost("/portfolio/allocation/apply", {
+        ...plannedInput,
+        confirmation_token: plan?.confirmation_token,
+      });
       setApplied("Portafoglio sostituito con questo piano ✓");
       setShowApplyConfirmation(false);
     } catch (err) {

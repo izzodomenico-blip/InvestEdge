@@ -65,7 +65,10 @@ export function ImportPage() {
     setBusy(true);
     setError(null);
     try {
-      const result = await apiPost<ImportApplyResult>("/import/google-sheets/apply", previewInput);
+      const result = await apiPost<ImportApplyResult>("/import/google-sheets/apply", {
+        ...previewInput,
+        confirmation_token: preview?.confirmation_token,
+      });
       setApplied(result);
       setPreview(null);
       setShowApplyConfirmation(false);

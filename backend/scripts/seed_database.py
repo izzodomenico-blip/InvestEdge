@@ -14,8 +14,9 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend.app.database import ISIN_BY_SYMBOL, db_session, init_db
+from backend.app.database import ISIN_BY_SYMBOL, db_session
 from backend.app.models import PortfolioInitIn, SimulatedOrderIn
+from backend.app.services.backup_service import prepare_database
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
@@ -220,7 +221,7 @@ def _create_demo_portfolio(connection) -> dict[str, int]:
 
 def seed_database(reset: bool = False) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
-    init_db()
+    prepare_database(reason="pre-seed-reset" if reset else "pre-seed")
 
     price_rows_inserted = 0
     signals_inserted = 0

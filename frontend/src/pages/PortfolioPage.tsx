@@ -132,7 +132,10 @@ export function PortfolioPage() {
     setResetting(true);
     setResetMsg(null);
     try {
-      const portfolio = await apiPost<PortfolioSummary>("/portfolio/init", { initial_cash: cash });
+      const portfolio = await apiPost<PortfolioSummary>("/portfolio/init", {
+        initial_cash: cash,
+        confirm_reset: "RESET_PORTFOLIO",
+      });
       setSummary(portfolio);
       setSnapshots([]);
       setRecommendations([]);

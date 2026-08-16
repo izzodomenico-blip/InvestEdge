@@ -267,7 +267,7 @@ export function BacktestPage() {
     setDeleting(true);
     setError(null);
     try {
-      await apiDelete(`/backtests/${target.id}`);
+      await apiDelete(`/backtests/${target.id}?confirmation=${encodeURIComponent(deleteConfirmation)}`);
       setHistory((current) => current.filter((item) => item.id !== target.id));
       setResult((current) => current?.backtest_id === target.id ? null : current);
       setDeleteTarget((current) => current?.id === target.id ? null : current);

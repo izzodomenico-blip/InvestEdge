@@ -5,6 +5,7 @@ import csv
 import io
 import sqlite3
 
+import httpx
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -105,6 +106,15 @@ def _enable_google_sheets_import(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+def _preview_and_apply_import(client: TestClient, payload: dict[str, object]) -> httpx.Response:
+    preview = client.post("/import/google-sheets/preview", json=payload)
+    assert preview.status_code == 200
+    return client.post(
+        "/import/google-sheets/apply",
+        json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
+    )
+
+
 def test_health_endpoint(client: TestClient) -> None:
     response = client.get("/health")
 
@@ -117,8 +127,14 @@ def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> Non
 
     events: list[str] = []
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setattr(main, "backup_before_migration", lambda: events.append("backup"))
-    monkeypatch.setattr(main, "init_db", lambda: events.append("init"))
+
+    def prepare_database(**kwargs) -> None:  # noqa: ANN003
+        assert kwargs == {"reason": "pre-migration", "backup_existing": True}
+        events.append("prepare")
+
+    monkeypatch.setattr(main, "prepare_database", prepare_database, raising=False)
+    monkeypatch.setattr(main, "backup_before_migration", lambda: events.append("legacy-backup"), raising=False)
+    monkeypatch.setattr(main, "init_db", lambda: events.append("legacy-init"), raising=False)
 
     async def run_lifespan() -> None:
         async with main.lifespan(None):
@@ -126,7 +142,7 @@ def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> Non
 
     asyncio.run(run_lifespan())
 
-    assert events == ["backup", "init", "yield"]
+    assert events == ["prepare", "yield"]
 
 
 def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
@@ -135,12 +151,18 @@ def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
     events: list[str] = []
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
-    def fail_backup() -> None:
-        events.append("backup")
+    def fail_prepare(**kwargs) -> None:  # noqa: ANN003
+        assert kwargs == {"reason": "pre-migration", "backup_existing": True}
+        events.append("prepare")
         raise RuntimeError("backup failed")
 
-    monkeypatch.setattr(main, "backup_before_migration", fail_backup)
-    monkeypatch.setattr(main, "init_db", lambda: events.append("init"))
+    def fail_legacy_backup() -> None:
+        events.append("legacy-backup")
+        raise RuntimeError("backup failed")
+
+    monkeypatch.setattr(main, "prepare_database", fail_prepare, raising=False)
+    monkeypatch.setattr(main, "backup_before_migration", fail_legacy_backup, raising=False)
+    monkeypatch.setattr(main, "init_db", lambda: events.append("legacy-init"), raising=False)
 
     async def run_lifespan() -> None:
         async with main.lifespan(None):
@@ -149,7 +171,7 @@ def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="backup failed"):
         asyncio.run(run_lifespan())
 
-    assert events == ["backup"]
+    assert events == ["prepare"]
 
 
 def test_admin_seed_route_is_not_exposed(client: TestClient) -> None:
@@ -287,9 +309,9 @@ def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> Non
         lambda csv_url=None: csv_text,
     )
 
-    response = client.post(
-        "/import/google-sheets/apply",
-        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    response = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
     )
 
     assert response.status_code == 200
@@ -324,9 +346,9 @@ def test_import_apply_creates_new_asset_with_import_reference_price(
         ),
     )
 
-    response = client.post(
-        "/import/google-sheets/apply",
-        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    response = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
     )
 
     assert response.status_code == 200
@@ -351,6 +373,127 @@ def test_import_apply_creates_new_asset_with_import_reference_price(
     assert tuple(reference_price) == (100, "google_sheets_import", "google_sheets_import", 0)
 
 
+@pytest.mark.parametrize(
+    "header,row",
+    [
+        ("symbol,quantity,average_price,asset_type,currency", "VWCE,2,100,etf,USD"),
+        ("symbol,quantity,average_price,asset_type,currency", "VWCE,2,100,crypto,EUR"),
+    ],
+)
+def test_import_apply_rejects_explicit_existing_asset_metadata_mismatch(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    header: str,
+    row: str,
+) -> None:
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: f"{header}\n{row}\n",
+    )
+    before = client.get("/portfolio").json()
+
+    response = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert response.status_code == 400
+    assert "metadata" in response.json()["detail"].lower()
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+
+
+def test_import_apply_uses_canonical_metadata_when_optional_columns_are_omitted(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: "symbol,quantity,average_price\nVWCE,2,100\n",
+    )
+
+    response = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert response.status_code == 200
+    position = next(item for item in client.get("/portfolio").json()["positions"] if item["symbol"] == "VWCE")
+    assert position["asset_type"] == "etf"
+    assert position["currency"] == "EUR"
+
+
+def test_import_optional_metadata_is_explicit_per_nonempty_row_cell(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_google_sheets_import(monkeypatch)
+    csv_text = (
+        "symbol,quantity,average_price,asset_type,currency\n"
+        "AAPL,1,100,,\n"
+        "VWCE,2,100,crypto,EUR\n"
+    )
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: csv_text,
+    )
+
+    mismatch = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert mismatch.status_code == 400
+    assert "VWCE" in mismatch.json()["detail"]
+
+    csv_text = (
+        "symbol,quantity,average_price,asset_type,currency\n"
+        "AAPL,1,100,,\n"
+        "VWCE,2,100,etf,EUR\n"
+    )
+    applied = _preview_and_apply_import(
+        client,
+        {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert applied.status_code == 200
+    positions = {item["symbol"]: item for item in client.get("/portfolio").json()["positions"]}
+    assert positions["AAPL"]["asset_type"] == "stock"
+    assert positions["AAPL"]["currency"] == "USD"
+    assert positions["VWCE"]["asset_type"] == "etf"
+    assert positions["VWCE"]["currency"] == "EUR"
+
+
+def test_import_apply_rejects_stale_preview(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_google_sheets_import(monkeypatch)
+    csv_versions = iter(
+        [
+            "symbol,quantity,average_price,currency\nAAPL,1,150,USD\n",
+            "symbol,quantity,average_price,currency\nMSFT,1,300,USD\n",
+        ]
+    )
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: next(csv_versions),
+    )
+    before = client.get("/portfolio").json()
+    input_payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+    preview_response = client.post("/import/google-sheets/preview", json=input_payload)
+    assert preview_response.status_code == 200
+    confirmation_token = preview_response.json().get("confirmation_token")
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={**input_payload, "confirmation_token": confirmation_token},
+    )
+
+    assert response.status_code == 409
+    assert client.get("/portfolio").json()["positions"] == before["positions"]
+
+
 def test_import_rolls_back_positions_assets_and_settings_on_second_position_error(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -359,9 +502,9 @@ def test_import_rolls_back_positions_assets_and_settings_on_second_position_erro
     from backend.app.services import google_sheets_import_service
 
     _enable_google_sheets_import(monkeypatch)
-    allocation_response = client.post(
-        "/portfolio/allocation/apply",
-        json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"], total_capital=50000),
+    allocation_response = _plan_and_apply_allocation(
+        client,
+        _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"], total_capital=50000),
     )
     assert allocation_response.status_code == 200
 
@@ -396,10 +539,14 @@ def test_import_rolls_back_positions_assets_and_settings_on_second_position_erro
         )
         asset_count_before = int(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
 
+        preview = google_sheets_import_service.preview(
+            "https://docs.google.com/spreadsheets/d/test/export?format=csv"
+        )
         with pytest.raises(sqlite3.IntegrityError, match="forced second position failure"):
             google_sheets_import_service.apply_import(
                 connection,
                 "https://docs.google.com/spreadsheets/d/test/export?format=csv",
+                preview["confirmation_token"],
             )
 
         positions_after = [
@@ -526,7 +673,7 @@ def test_ml_predict_without_model_fails(client: TestClient) -> None:
 def test_tax_report_after_buy_sell(client: TestClient) -> None:
     client.post(
         "/portfolio/init",
-        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0},
+        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 10, "price": 100, "fees": 0})
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "SELL", "quantity": 5, "price": 140, "fees": 0})
@@ -694,7 +841,7 @@ def test_tax_csv_short_uses_realization_sides_and_native_base_values(client: Tes
 def test_tax_report_empty(client: TestClient) -> None:
     client.post(
         "/portfolio/init",
-        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0},
+        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
     response = client.get("/tax/report")
 
@@ -1042,6 +1189,28 @@ def test_dashboard_after_seed(client: TestClient) -> None:
     assert data["data_status"]["data_mode"] == "SEED"
 
 
+def test_dashboard_counts_short_only_positions(client: TestClient) -> None:
+    _init_flat(client)
+    opened = client.post(
+        "/orders/simulate",
+        json={
+            "symbol": "AAPL",
+            "order_type": "SELL",
+            "quantity": 2,
+            "price": 100,
+            "fees": 0,
+            "allow_short": True,
+        },
+    )
+    assert opened.status_code == 200
+    assert len(client.get("/portfolio").json()["positions"]) == 1
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["positions_count"] == 1
+
+
 def _price_frame(values: list[float]) -> pd.DataFrame:
     dates = pd.date_range("2024-01-01", periods=len(values), freq="D")
     return pd.DataFrame(
@@ -1127,8 +1296,9 @@ def test_init_portfolio(client: TestClient) -> None:
         json={
             "initial_cash": 25000,
             "max_single_asset_weight": 20,
-            "max_asset_class_weight": 50,
-            "default_fee_percent": 0.2,
+                "max_asset_class_weight": 50,
+                "default_fee_percent": 0.2,
+                "confirm_reset": "RESET_PORTFOLIO",
         },
     )
 
@@ -1140,6 +1310,17 @@ def test_init_portfolio(client: TestClient) -> None:
     assert data["settings"]["default_fee_percent"] == 0.2
 
 
+def test_portfolio_init_requires_backend_confirmation(client: TestClient) -> None:
+    before = client.get("/portfolio").json()
+
+    response = client.post("/portfolio/init", json={"initial_cash": 25000})
+
+    assert response.status_code == 400
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+
+
 def test_buy_with_sufficient_cash(client: TestClient) -> None:
     client.post(
         "/portfolio/init",
@@ -1148,6 +1329,7 @@ def test_buy_with_sufficient_cash(client: TestClient) -> None:
             "max_single_asset_weight": 50,
             "max_asset_class_weight": 80,
             "default_fee_percent": 0,
+            "confirm_reset": "RESET_PORTFOLIO",
         },
     )
 
@@ -1175,6 +1357,7 @@ def test_buy_with_insufficient_cash(client: TestClient) -> None:
             "max_single_asset_weight": 50,
             "max_asset_class_weight": 80,
             "default_fee_percent": 0,
+            "confirm_reset": "RESET_PORTFOLIO",
         },
     )
 
@@ -1195,6 +1378,7 @@ def test_sell_with_sufficient_quantity_and_pnl(client: TestClient) -> None:
             "max_single_asset_weight": 50,
             "max_asset_class_weight": 80,
             "default_fee_percent": 0,
+            "confirm_reset": "RESET_PORTFOLIO",
         },
     )
     client.post(
@@ -1222,6 +1406,7 @@ def test_sell_with_insufficient_quantity(client: TestClient) -> None:
             "max_single_asset_weight": 50,
             "max_asset_class_weight": 80,
             "default_fee_percent": 0,
+            "confirm_reset": "RESET_PORTFOLIO",
         },
     )
 
@@ -1242,6 +1427,7 @@ def test_average_price_calculation(client: TestClient) -> None:
             "max_single_asset_weight": 80,
             "max_asset_class_weight": 90,
             "default_fee_percent": 0,
+            "confirm_reset": "RESET_PORTFOLIO",
         },
     )
     client.post(
@@ -1279,7 +1465,7 @@ def test_positions_include_name_and_isin(client: TestClient) -> None:
 def test_sell_all_removes_position_and_keeps_realized_pnl(client: TestClient) -> None:
     client.post(
         "/portfolio/init",
-        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0},
+        json={"initial_cash": 10000, "max_single_asset_weight": 80, "max_asset_class_weight": 90, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 3, "price": 100, "fees": 0})
     # vendita totale
@@ -1295,7 +1481,7 @@ def test_sell_all_with_rounded_quantity_closes_position(client: TestClient) -> N
     # quantita' frazionaria: "Vendi tutto" usa il valore arrotondato e deve comunque chiudere
     client.post(
         "/portfolio/init",
-        json={"initial_cash": 10000, "max_single_asset_weight": 90, "max_asset_class_weight": 90, "default_fee_percent": 0},
+        json={"initial_cash": 10000, "max_single_asset_weight": 90, "max_asset_class_weight": 90, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
     client.post("/orders/simulate", json={"symbol": "AAPL", "order_type": "BUY", "quantity": 1.123456789, "price": 100, "fees": 0})
     # vende la quantita' arrotondata a 8 decimali (come fa il bottone "Vendi tutto")
@@ -1309,7 +1495,7 @@ def test_sell_all_with_rounded_quantity_closes_position(client: TestClient) -> N
 def _init_flat(client: TestClient, cash: float = 10000) -> None:
     client.post(
         "/portfolio/init",
-        json={"initial_cash": cash, "max_single_asset_weight": 100, "max_asset_class_weight": 100, "default_fee_percent": 0},
+        json={"initial_cash": cash, "max_single_asset_weight": 100, "max_asset_class_weight": 100, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
 
 
@@ -1550,6 +1736,15 @@ def _allocation_payload(method: str = "RISK_PARITY", **overrides: object) -> dic
     return payload
 
 
+def _plan_and_apply_allocation(client: TestClient, payload: dict[str, object]) -> httpx.Response:
+    plan_response = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan_response.status_code == 200
+    return client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": plan_response.json()["confirmation_token"]},
+    )
+
+
 def test_allocation_equal_weight(client: TestClient) -> None:
     response = client.post("/portfolio/allocation/plan", json=_allocation_payload("EQUAL_WEIGHT"))
 
@@ -1606,9 +1801,9 @@ def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
     assert plan_response.status_code == 200
     plan = plan_response.json()
 
-    response = client.post(
-        "/portfolio/allocation/apply",
-        json=payload,
+    response = _plan_and_apply_allocation(
+        client,
+        payload,
     )
 
     assert response.status_code == 200
@@ -1621,9 +1816,116 @@ def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
     assert data["settings"]["current_cash"] == plan["cash_buffer"]
 
 
+def test_allocation_apply_reconciles_integer_residual_in_eur(client: TestClient) -> None:
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["VWCE"], total_capital=10000)
+    plan_response = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan_response.status_code == 200
+    plan = plan_response.json()
+    allocation = plan["allocations"][0]
+    expected_cost = allocation["suggested_quantity"] * allocation["price"]
+    expected_cash = payload["total_capital"] - expected_cost
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": plan["confirmation_token"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["cash"] == pytest.approx(expected_cash, abs=0.01)
+    assert data["total_value"] == pytest.approx(payload["total_capital"], abs=0.01)
+    assert allocation["actual_cost_base"] == pytest.approx(expected_cost, abs=0.01)
+
+
+def test_allocation_apply_uses_base_price_for_usd_asset(client: TestClient) -> None:
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    plan_response = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan_response.status_code == 200
+    plan = plan_response.json()
+    allocation = plan["allocations"][0]
+    expected_price_base = allocation["price"] * 0.92
+    expected_quantity = int(payload["total_capital"] // expected_price_base)
+    expected_cost = expected_quantity * expected_price_base
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": plan["confirmation_token"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert allocation["price_base"] == pytest.approx(expected_price_base, abs=0.0001)
+    assert allocation["suggested_quantity"] == expected_quantity
+    assert data["positions"][0]["average_price"] == pytest.approx(allocation["price"], abs=0.0001)
+    assert data["cash"] == pytest.approx(payload["total_capital"] - expected_cost, abs=0.01)
+    assert data["total_value"] == pytest.approx(payload["total_capital"], abs=0.01)
+
+
+def test_rebalance_uses_base_values_for_usd_position(client: TestClient) -> None:
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    applied = _plan_and_apply_allocation(client, payload)
+    assert applied.status_code == 200
+    position = applied.json()["positions"][0]
+
+    response = client.post("/portfolio/allocation/rebalance", json=payload)
+
+    assert response.status_code == 200
+    trade = response.json()["trades"][0]
+    expected_price_base = position["current_price"] * position["fx_rate_to_base"]
+    assert trade["action"] != "SELL"
+    assert trade["current_value"] == pytest.approx(position["current_value_base"], abs=0.01)
+    assert trade["price"] == pytest.approx(expected_price_base, abs=0.0001)
+    assert trade["delta_quantity"] == pytest.approx(trade["delta_value"] / expected_price_base, abs=0.0001)
+
+
+def test_assets_expose_eur_reference_prices(client: TestClient) -> None:
+    assets = {asset["symbol"]: asset for asset in client.get("/assets").json()}
+
+    assert assets["AAPL"]["fx_rate_to_base"] == pytest.approx(0.92)
+    assert assets["AAPL"]["last_price_base"] == pytest.approx(assets["AAPL"]["last_price"] * 0.92)
+    assert assets["VWCE"]["fx_rate_to_base"] == pytest.approx(1.0)
+    assert assets["VWCE"]["last_price_base"] == pytest.approx(assets["VWCE"]["last_price"])
+
+
+def test_allocation_apply_rejects_stale_plan(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    plan_response = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan_response.status_code == 200
+    confirmation_token = plan_response.json().get("confirmation_token")
+    with db_session() as connection:
+        connection.execute(
+            """
+            UPDATE price_history
+            SET close = close * 2
+            WHERE id = (
+                SELECT ph.id
+                FROM price_history ph
+                JOIN assets a ON a.id = ph.asset_id
+                WHERE a.symbol = 'AAPL'
+                ORDER BY ph.date DESC, ph.is_real_data DESC, ph.id DESC
+                LIMIT 1
+                )
+                """
+            )
+    before = client.get("/portfolio").json()["positions"]
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": confirmation_token},
+    )
+
+    assert response.status_code == 409
+    assert client.get("/portfolio").json()["positions"] == before
+
+
 def test_scenario_market_crash(client: TestClient) -> None:
     # crea un portafoglio dal pianificatore così lo scenario ha posizioni
-    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "BTC", "SPY"]))
+    _plan_and_apply_allocation(
+        client,
+        _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "BTC", "SPY"]),
+    )
 
     response = client.post("/scenarios/run", json={"scenario_type": "MARKET_CRASH"})
 
@@ -1639,7 +1941,10 @@ def test_scenario_market_crash(client: TestClient) -> None:
 
 
 def test_scenario_custom_shocks(client: TestClient) -> None:
-    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"]))
+    _plan_and_apply_allocation(
+        client,
+        _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"]),
+    )
 
     response = client.post(
         "/scenarios/run",
@@ -1721,7 +2026,7 @@ def test_scenario_preserves_signed_short_liability_and_labels_gain_neutrally(cli
 def test_scenario_empty_portfolio_fails(client: TestClient) -> None:
     client.post(
         "/portfolio/init",
-        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0},
+        json={"initial_cash": 10000, "max_single_asset_weight": 50, "max_asset_class_weight": 80, "default_fee_percent": 0, "confirm_reset": "RESET_PORTFOLIO"},
     )
 
     response = client.post("/scenarios/run", json={"scenario_type": "MARKET_CRASH"})
@@ -1732,7 +2037,10 @@ def test_scenario_empty_portfolio_fails(client: TestClient) -> None:
 
 def test_rebalance_produces_trades(client: TestClient) -> None:
     # portafoglio iniziale concentrato su AAPL
-    client.post("/portfolio/allocation/apply", json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"]))
+    _plan_and_apply_allocation(
+        client,
+        _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"]),
+    )
 
     response = client.post(
         "/portfolio/allocation/rebalance",
@@ -1771,6 +2079,24 @@ def test_backtest_history_and_detail_endpoints(client: TestClient) -> None:
     assert any(item["id"] == backtest_id for item in list_response.json())
     assert detail_response.json()["backtest_id"] == backtest_id
     assert detail_response.json()["trades"] is not None
+
+
+def test_delete_backtest_requires_backend_confirmation(client: TestClient) -> None:
+    run_response = client.post("/backtests/run", json=_backtest_payload("BUY_AND_HOLD"))
+    assert run_response.status_code == 200
+    backtest_id = run_response.json()["backtest_id"]
+
+    response = client.delete(f"/backtests/{backtest_id}")
+
+    assert response.status_code == 400
+    assert client.get(f"/backtests/{backtest_id}").status_code == 200
+
+    confirmed = client.delete(
+        f"/backtests/{backtest_id}",
+        params={"confirmation": f"Test BUY_AND_HOLD #{backtest_id}"},
+    )
+    assert confirmed.status_code == 200
+    assert client.get(f"/backtests/{backtest_id}").status_code == 404
 
 
 def test_backtest_no_lookahead_on_future_jump() -> None:

@@ -44,6 +44,8 @@ class AssetOut(AssetCreate):
     id: int
     tax_category: TaxCategory
     last_price: float | None = None
+    fx_rate_to_base: float | None = None
+    last_price_base: float | None = None
     daily_change_pct: float | None = None
     last_source: str | None = None
     provider: str | None = None
@@ -230,6 +232,7 @@ class AlertStatusOut(BaseModel):
 
 class ImportInputIn(BaseModel):
     csv_url: str | None = None
+    confirmation_token: str | None = None
 
 
 class ImportHoldingOut(BaseModel):
@@ -247,6 +250,7 @@ class ImportPreviewOut(BaseModel):
     rows_invalid: int
     holdings: list[ImportHoldingOut]
     errors: list[str]
+    confirmation_token: str
 
 
 class ImportStatusOut(BaseModel):
@@ -615,6 +619,7 @@ class PortfolioInitIn(BaseModel):
     max_single_asset_weight: float = Field(default=25, gt=0, le=100)
     max_asset_class_weight: float = Field(default=50, gt=0, le=100)
     default_fee_percent: float = Field(default=0.1, ge=0, le=5)
+    confirm_reset: Literal["RESET_PORTFOLIO"] | None = None
 
 
 class PortfolioSettingsOut(BaseModel):
@@ -926,6 +931,7 @@ class AllocationPlanIn(BaseModel):
     target_volatility: float | None = Field(default=0.15, gt=0, le=2)
     max_weight: float | None = Field(default=None, gt=0, le=1)
     lookback_days: int = Field(default=120, ge=20, le=750)
+    confirmation_token: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class AllocationItemOut(BaseModel):
@@ -934,6 +940,8 @@ class AllocationItemOut(BaseModel):
     weight_percent: float
     capital: float
     price: float | None = None
+    price_base: float | None = None
+    actual_cost_base: float
     suggested_quantity: int
     volatility: float
     score: float | None = None
@@ -948,6 +956,7 @@ class AllocationPlanOut(BaseModel):
     estimated_volatility: float
     allocations: list[AllocationItemOut]
     notes: list[str] = Field(default_factory=list)
+    confirmation_token: str
 
 
 class DataProviderStatusOut(BaseModel):

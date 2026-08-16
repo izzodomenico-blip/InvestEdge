@@ -256,3 +256,26 @@ def test_refresh_prices_handles_settings_error(
     output = capsys.readouterr().out
     assert "Refresh prezzi fallito" in output
     assert "private configuration details" not in output
+
+
+def test_format_board_escapes_dynamic_html_fields() -> None:
+    board = {
+        "data_mode": "REAL",
+        "headline": "Mercato <incerto> & volatile",
+        "actions": [
+            {
+                "type": "BUY",
+                "symbol": "A<&B>",
+                "title": "Compra <ora> & valuta",
+                "reason": "Score > 50 & rischio < medio",
+            }
+        ],
+    }
+
+    message = alert_service._format_board(board)
+
+    assert "<b>InvestEdge - Cosa fare oggi</b>" in message
+    assert "Mercato &lt;incerto&gt; &amp; volatile" in message
+    assert "<b>A&lt;&amp;B&gt;</b>" in message
+    assert "Compra &lt;ora&gt; &amp; valuta" in message
+    assert "<i>Score &gt; 50 &amp; rischio &lt; medio</i>" in message

@@ -28,6 +28,8 @@ export type Asset = {
   country: string | null;
   risk_level: string;
   last_price: number | null;
+  fx_rate_to_base: number | null;
+  last_price_base: number | null;
   daily_change_pct: number | null;
   last_source: string | null;
   provider: string | null;
@@ -168,6 +170,7 @@ export type ImportPreview = {
   rows_invalid: number;
   holdings: ImportHolding[];
   errors: string[];
+  confirmation_token: string;
 };
 
 export type ImportStatus = {
@@ -762,6 +765,7 @@ export type AllocationPlanInput = {
   target_volatility?: number | null;
   max_weight?: number | null;
   lookback_days?: number;
+  confirmation_token?: string;
 };
 
 export type AllocationItem = {
@@ -770,6 +774,8 @@ export type AllocationItem = {
   weight_percent: number;
   capital: number;
   price: number | null;
+  price_base: number | null;
+  actual_cost_base: number;
   suggested_quantity: number;
   volatility: number;
   score: number | null;
@@ -784,6 +790,7 @@ export type AllocationPlan = {
   estimated_volatility: number;
   allocations: AllocationItem[];
   notes: string[];
+  confirmation_token: string;
 };
 
 export type DataProviderStatus = {

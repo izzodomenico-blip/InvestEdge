@@ -779,7 +779,7 @@ git push -u origin HEAD
 
 **Contract:** Il report contiene comandi, risultati, rischi residui e rollback. Nessun “tutto risolto” senza output recente. Qualsiasi correzione emersa nello smoke riceve prima un test di regressione.
 
-- [ ] **Step 1: Eseguire la suite completa pulita**
+- [x] **Step 1: Eseguire la suite completa pulita**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest
@@ -791,7 +791,7 @@ npm audit --audit-level=high
 docker compose config
 ```
 
-- [ ] **Step 2: Provare migrazione e restore reali su copie temporanee**
+- [x] **Step 2: Provare migrazione e restore reali su copie temporanee**
 
 Usare soltanto directory temporanee create con PowerShell `New-Item`; non toccare il DB utente. Verificare:
 
@@ -799,11 +799,11 @@ Usare soltanto directory temporanee create con PowerShell `New-Item`; non toccar
 - backup fallito -> nessuna migrazione;
 - ripristino della copia pre-migration e apertura valida SQLite.
 
-- [ ] **Step 3: Eseguire smoke launcher e rete locale**
+- [x] **Step 3: Eseguire smoke launcher e rete locale**
 
 Avviare con gli script esistenti, verificare health, caricamento UI, frontend->backend sulla porta 8000, processi chiusi senza residui e porte non esposte su interfacce diverse da loopback. Non cancellare processi non avviati dal test.
 
-- [ ] **Step 4: Eseguire review regressioni/sicurezza**
+- [x] **Step 4: Eseguire review regressioni/sicurezza**
 
 Usare `superpowers:requesting-code-review` su diff completo della Fase 1. Verificare esplicitamente:
 
@@ -816,11 +816,11 @@ Usare `superpowers:requesting-code-review` su diff completo della Fase 1. Verifi
 - scenario short firmato;
 - package audit senza high/critical.
 
-- [ ] **Step 5: Scrivere report riproducibile**
+- [x] **Step 5: Scrivere report riproducibile**
 
 Il report deve includere: commit iniziale/finale, branch remoto, file cambiati per Task, test e output sintetico, limiti noti, istruzioni di rollback, conferma che trading reale resta disabilitato e roadmap Fase 2.
 
-- [ ] **Step 6: Commit e push del report**
+- [x] **Step 6: Commit e push del report**
 
 ```powershell
 git add docs/reports/2026-08-16-phase-1-verification.md README.md Avvia-InvestEdge.bat scripts/launcher.ps1
@@ -828,7 +828,7 @@ git commit -m "docs: verify phase 1 reliability foundations"
 git push -u origin HEAD
 ```
 
-- [ ] **Step 7: Gate finale remoto**
+- [x] **Step 7: Gate finale remoto**
 
 Verificare:
 

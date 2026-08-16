@@ -17,7 +17,7 @@ news_engine = NewsEngine()
 def get_dashboard(connection: sqlite3.Connection) -> DashboardOut:
     assets_count = connection.execute("SELECT COUNT(*) AS count FROM assets").fetchone()["count"]
     positions_count = connection.execute(
-        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 0"
+        "SELECT COUNT(*) AS count FROM portfolio_positions WHERE quantity > 1e-9 OR quantity < -1e-9"
     ).fetchone()["count"]
     signals_count = connection.execute("SELECT COUNT(*) AS count FROM signals").fetchone()["count"]
     price_points_count = connection.execute("SELECT COUNT(*) AS count FROM price_history").fetchone()["count"]

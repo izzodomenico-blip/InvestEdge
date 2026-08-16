@@ -32,7 +32,6 @@ $NodeModulesDir = Join-Path $FrontendDir "node_modules"
 $DistDir = Join-Path $FrontendDir "dist"
 $DistIndex = Join-Path $DistDir "index.html"
 $SrcDir = Join-Path $FrontendDir "src"
-$DbFile = Join-Path $DataDir "investedge.db"
 $SeedScript = Join-Path $ProjectRoot "scripts\seed_database.py"
 $LockFile = Join-Path $DataDir ".investedge.lock"
 $LogFile = Join-Path $DataDir "launcher.log"
@@ -123,7 +122,16 @@ if (-not (Test-Path $VenvPython)) {
 function Get-FileHash256 {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return "" }
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    $stream = $null
+    $hasher = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        $hasher = [System.Security.Cryptography.SHA256]::Create()
+        return [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace("-", "")
+    } finally {
+        if ($null -ne $hasher) { $hasher.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
 }
 
 $reqHashNow = Get-FileHash256 $ReqFile
@@ -219,14 +227,40 @@ if ($needBuild) {
 }
 
 # --- DB seed ---
-function Test-DbEmpty {
-    param([string]$Db)
-    if (-not (Test-Path $Db)) { return $true }
-    if ((Get-Item $Db).Length -lt 4096) { return $true }
-    return $false
+function Resolve-EffectiveDbPath {
+    param(
+        [string]$Python,
+        [string]$Root
+    )
+    Push-Location $Root
+    try {
+        $resolvedOutput = & $Python -c "from backend.app.config import Settings; print(Settings.from_env().database_path)" 2>&1
+        $resolveExitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($resolveExitCode -ne 0) {
+        throw "Impossibile risolvere INVESTEDGE_DB_PATH."
+    }
+    $resolved = ($resolvedOutput | Select-Object -Last 1).ToString().Trim()
+    if (-not $resolved) {
+        throw "INVESTEDGE_DB_PATH risolto a un path vuoto."
+    }
+    return [System.IO.Path]::GetFullPath($resolved)
 }
 
-if ($ForceSeed -or (Test-DbEmpty $DbFile)) {
+function Test-DbNeedsAutomaticSeed {
+    param([string]$Db)
+    return -not (Test-Path -LiteralPath $Db -PathType Leaf)
+}
+
+try {
+    $DbFile = Resolve-EffectiveDbPath -Python $VenvPython -Root $ProjectRoot
+} catch {
+    Stop-WithError $_.Exception.Message
+}
+
+if ($ForceSeed -or (Test-DbNeedsAutomaticSeed -Db $DbFile)) {
     Write-Log "INFO" "Inizializzo database (seed)..."
     Push-Location $ProjectRoot
     try {
@@ -313,10 +347,32 @@ $cleanup = {
     Write-Log "OK" "Lock rimosso. Ciao!"
 }
 
-try {
-    Push-Location $ProjectRoot
-    & $VenvPython -m uvicorn backend.app.main:app --host 127.0.0.1 --port $selectedPort
-} finally {
-    Pop-Location
-    & $cleanup
+function Invoke-InvestEdgeServer {
+    param(
+        [string]$Python,
+        [string]$Root,
+        [int]$Port,
+        [scriptblock]$Cleanup,
+        [ref]$ExitCode
+    )
+    try {
+        Push-Location $Root
+        try {
+            & $Python -m uvicorn backend.app.main:app --host 127.0.0.1 --port $Port
+            $ExitCode.Value = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        & $Cleanup
+    }
 }
+
+$serverExitCode = 1
+Invoke-InvestEdgeServer `
+    -Python $VenvPython `
+    -Root $ProjectRoot `
+    -Port $selectedPort `
+    -Cleanup $cleanup `
+    -ExitCode ([ref]$serverExitCode)
+exit $serverExitCode

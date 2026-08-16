@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -38,6 +39,13 @@ def _streaming_text_response(request: httpx.Request, text: str) -> httpx.Respons
         stream=httpx.ByteStream(text.encode("utf-8")),
         request=request,
     )
+
+
+def _assert_exception_chain_is_sanitized(error: BaseException, sentinel: str) -> None:
+    formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    assert sentinel not in formatted
+    assert error.__cause__ is None
+    assert error.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -264,3 +272,15 @@ def test_fetch_csv_sanitizes_network_errors(monkeypatch: pytest.MonkeyPatch, fai
     assert "SENTINEL_SECRET" not in str(captured.value)
     assert "token=" not in str(captured.value)
     assert secret_url not in str(captured.value)
+    _assert_exception_chain_is_sanitized(captured.value, "SENTINEL_SECRET")
+
+
+def test_fetch_csv_sanitizes_malformed_url_errors() -> None:
+    secret = "SENTINEL_SECRET_PORT"
+    malformed_url = f"https://docs.google.com:{secret}/spreadsheets/d/test/export"
+
+    with pytest.raises(ValueError) as captured:
+        google_sheets_import_service.fetch_csv(malformed_url)
+
+    assert str(captured.value) == "URL Google Sheets non valida o non attendibile."
+    _assert_exception_chain_is_sanitized(captured.value, secret)
