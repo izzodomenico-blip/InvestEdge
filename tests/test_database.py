@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from backend.app.config import get_settings
 from backend.app.database import init_db
 from backend.app.services import backup_service
@@ -131,3 +133,39 @@ def test_backup_before_migration_allows_missing_database(tmp_path, monkeypatch) 
         get_settings.cache_clear()
 
     assert result["created"] is False
+
+
+def test_init_db_creates_traceable_fx_rates_and_lookup_index(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "fx.db"
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    get_settings.cache_clear()
+    try:
+        init_db()
+    finally:
+        get_settings.cache_clear()
+
+    with sqlite3.connect(database_path) as connection:
+        assert table_columns(connection, "fx_rates") == {
+            "id",
+            "from_currency",
+            "to_currency",
+            "rate",
+            "observed_at",
+            "ingested_at",
+            "provider",
+            "quality",
+        }
+        index_columns = {
+            row[2]
+            for row in connection.execute("PRAGMA index_info(idx_fx_rates_pair_observed)")
+        }
+        assert index_columns == {"from_currency", "to_currency", "observed_at"}
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO fx_rates (
+                    from_currency, to_currency, rate, observed_at, provider, quality
+                )
+                VALUES ('USD', 'EUR', 0, '2026-08-14', 'test', 'reference')
+                """
+            )

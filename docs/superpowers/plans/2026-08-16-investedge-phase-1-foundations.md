@@ -292,7 +292,7 @@ git push -u origin HEAD
 
 **Contract:** Il cambio rappresenta quante unità EUR valgono una unità della valuta nativa. EUR/EUR vale 1. I cambi diversi da 1 conservano provider, data osservata, ingestione e quality. Mancanza o staleness non produce mai un fallback numerico inventato.
 
-- [ ] **Step 1: Scrivere test unitari per diretto, inverso, cache e assenza**
+- [x] **Step 1: Scrivere test unitari per diretto, inverso, cache e assenza**
 
 Definire l'interfaccia pubblica:
 
@@ -315,7 +315,7 @@ class FXService:
 
 Usare fixture XML registrate nel test; nessuna chiamata internet in pytest.
 
-- [ ] **Step 2: Aggiungere schema `fx_rates` dopo aver visto fallire i test**
+- [x] **Step 2: Aggiungere schema `fx_rates` dopo aver visto fallire i test**
 
 ```sql
 CREATE TABLE IF NOT EXISTS fx_rates (
@@ -333,17 +333,17 @@ CREATE TABLE IF NOT EXISTS fx_rates (
 
 Aggiungere indice su `(from_currency, to_currency, observed_at)` in `INDEX_SCHEMA`.
 
-- [ ] **Step 3: Implementare provider BCE limitato e sicuro**
+- [x] **Step 3: Implementare provider BCE limitato e sicuro**
 
 Usare solo `https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`, timeout distinti connect/read, limite risposta 1 MiB, status check e parser XML standard senza entità esterne. I reference rate BCE sono giornalieri e informativi: salvare `quality="reference"`, non `realtime`.
 
 Dato che il feed esprime `1 EUR = N valuta`, memorizzare il reciproco come `valuta -> EUR`.
 
-- [ ] **Step 4: Rendere esplicito il seed FX**
+- [x] **Step 4: Rendere esplicito il seed FX**
 
 Il seed deve inserire un cambio sintetico USD/EUR deterministico marcato `provider="seed"`, `quality="seed"`; non presentarlo come BCE o dato reale. Non inserire cambi per valute sconosciute.
 
-- [ ] **Step 5: Aggiungere configurazione minima**
+- [x] **Step 5: Aggiungere configurazione minima**
 
 In `Settings` e `.env.example` aggiungere soltanto:
 
@@ -353,14 +353,14 @@ ECB_FX_MAX_AGE_DAYS=7
 
 Il servizio deve poter distinguere un cambio stale; il blocco operativo verrà usato nel Task 5.
 
-- [ ] **Step 6: Verificare Task 4**
+- [x] **Step 6: Verificare Task 4**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_fx_service.py tests\test_database.py
 backend\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-- [ ] **Step 7: Commit e push**
+- [x] **Step 7: Commit e push**
 
 ```powershell
 git add backend/app/database.py backend/app/config.py backend/app/services/fx_service.py backend/scripts/seed_database.py .env.example tests/test_fx_service.py tests/test_database.py

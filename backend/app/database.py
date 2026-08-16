@@ -208,6 +208,18 @@ CREATE TABLE IF NOT EXISTS api_usage (
     UNIQUE(provider, usage_date)
 );
 
+CREATE TABLE IF NOT EXISTS fx_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    rate REAL NOT NULL CHECK(rate > 0),
+    observed_at TEXT NOT NULL,
+    ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provider TEXT NOT NULL,
+    quality TEXT NOT NULL,
+    UNIQUE(from_currency, to_currency, observed_at, provider)
+);
+
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -346,6 +358,7 @@ CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol);
 CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
+CREATE INDEX IF NOT EXISTS idx_fx_rates_pair_observed ON fx_rates(from_currency, to_currency, observed_at);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);

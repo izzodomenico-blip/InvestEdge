@@ -39,6 +39,7 @@ class Settings:
     coingecko_api_key: str | None = None
     fred_api_key: str | None = None
     api_cache_ttl_hours: int = 24
+    ecb_fx_max_age_days: int = 7
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
@@ -87,6 +88,7 @@ class Settings:
             coingecko_api_key=os.getenv("COINGECKO_API_KEY") or None,
             fred_api_key=os.getenv("FRED_API_KEY") or None,
             api_cache_ttl_hours=int(os.getenv("API_CACHE_TTL_HOURS", "24")),
+            ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),

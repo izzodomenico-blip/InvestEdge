@@ -23,6 +23,7 @@ from backend.app.services.scoring_engine import ScoringEngine
 FIXED_SEED = 20260517
 SEED_END_DATE = date(2026, 5, 17)
 SEED_CREATED_AT = "2026-05-17T00:00:00"
+SEED_USD_EUR_RATE = 0.92
 
 
 ASSETS: list[dict[str, Any]] = [
@@ -106,6 +107,7 @@ def _reset_seed_data(connection) -> None:
     connection.execute("DELETE FROM portfolio_positions")
     connection.execute("DELETE FROM portfolio_settings")
     connection.execute("DELETE FROM backtest_runs")
+    connection.execute("DELETE FROM fx_rates WHERE provider = 'seed'")
 
     symbols = [asset["symbol"] for asset in ASSETS]
     placeholders = ",".join("?" for _ in symbols)
@@ -129,6 +131,21 @@ def _reset_seed_data(connection) -> None:
     )
     connection.execute(f"DELETE FROM news_items WHERE asset_id IN ({id_placeholders})", asset_ids)
     connection.execute(f"DELETE FROM assets WHERE id IN ({id_placeholders})", asset_ids)
+
+
+def _seed_fx_rates(connection) -> None:
+    connection.execute(
+        """
+        INSERT INTO fx_rates (
+            from_currency, to_currency, rate, observed_at, provider, quality
+        )
+        VALUES ('USD', 'EUR', ?, ?, 'seed', 'seed')
+        ON CONFLICT(from_currency, to_currency, observed_at, provider) DO UPDATE SET
+            rate = excluded.rate,
+            quality = excluded.quality
+        """,
+        (SEED_USD_EUR_RATE, SEED_END_DATE.isoformat()),
+    )
 
 
 def _historical_close(connection, symbol: str, days_ago: int) -> float:
@@ -213,6 +230,8 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
     with db_session() as connection:
         if reset:
             _reset_seed_data(connection)
+
+        _seed_fx_rates(connection)
 
         for index, asset in enumerate(ASSETS):
             connection.execute(
