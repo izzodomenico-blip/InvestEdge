@@ -670,11 +670,11 @@ git push -u origin HEAD
 
 **Contract:** Il token Telegram non compare mai in eccezioni, risposte o log. Uno script schedulato fallito esce non-zero. I secret GitHub sono disponibili solo nello step di invio, non durante checkout/setup/install.
 
-- [ ] **Step 1: Scrivere test con token sentinella**
+- [x] **Step 1: Scrivere test con token sentinella**
 
 Mockare una `httpx.HTTPStatusError` la cui request URL contiene `SENTINEL_SECRET_TOKEN`; verificare che `str(RuntimeError)` non contenga token, URL o query. Testare exit code 1 per not configured/runtime error e 0 solo per disabilitato/inviato.
 
-- [ ] **Step 2: Implementare errore sanitizzato**
+- [x] **Step 2: Implementare errore sanitizzato**
 
 Non interpolare `str(exc)`. Il messaggio pubblico deve essere stabile, per esempio:
 
@@ -684,22 +684,22 @@ raise RuntimeError("Invio Telegram fallito per errore di rete o risposta non val
 
 La Bot API richiede il token nel path della request: il requisito è impedirne l'esposizione, non dichiarare falsamente che non sia trasmesso a Telegram.
 
-- [ ] **Step 3: Restituire exit code reale nello script**
+- [x] **Step 3: Restituire exit code reale nello script**
 
 Cambiare `main() -> int` e terminare con `raise SystemExit(main())`. `AlertNotConfigured` e altri errori di invio restituiscono 1. Il refresh prezzi può restare fail-soft, ma il suo log non deve includere URL/segreti.
 
-- [ ] **Step 4: Ridurre scope dei secret GitHub**
+- [x] **Step 4: Ridurre scope dei secret GitHub**
 
 Spostare `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e le API key da `jobs.send-alert.env` a `steps[-1].env` nello step `Run daily alert`. Mantenere il schedule disabilitato come già deciso.
 
-- [ ] **Step 5: Verificare Task 9**
+- [x] **Step 5: Verificare Task 9**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_alert_service.py tests\test_api.py -k "alert or telegram"
 backend\.venv\Scripts\python.exe -m ruff check backend scripts tests
 ```
 
-- [ ] **Step 6: Commit e push**
+- [x] **Step 6: Commit e push**
 
 ```powershell
 git add backend/app/services/alert_service.py scripts/send_daily_alert.py .github/workflows/daily-alert.yml tests/test_alert_service.py

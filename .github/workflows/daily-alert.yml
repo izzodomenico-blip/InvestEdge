@@ -23,16 +23,6 @@ jobs:
   send-alert:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      ENABLE_ALERTS: "true"
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      ENABLE_REAL_DATA: ${{ secrets.ENABLE_REAL_DATA || 'true' }}
-      ENABLE_REAL_NEWS: ${{ secrets.ENABLE_REAL_NEWS || 'true' }}
-      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-      COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,3 +35,13 @@ jobs:
           pip install -r backend/requirements.txt
       - name: Run daily alert
         run: python scripts/cloud_daily.py
+        env:
+          ENABLE_ALERTS: "true"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ENABLE_REAL_DATA: ${{ secrets.ENABLE_REAL_DATA || 'true' }}
+          ENABLE_REAL_NEWS: ${{ secrets.ENABLE_REAL_NEWS || 'true' }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}

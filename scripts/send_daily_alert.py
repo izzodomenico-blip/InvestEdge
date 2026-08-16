@@ -16,24 +16,28 @@ from backend.app.services.market_data_service import MarketDataService
 def _refresh_prices() -> None:
     """Aggiorna i prezzi reali prima dell'alert, cosi' segnali e P&L sono
     sull'ultima chiusura disponibile e non su dati fermi al refresh precedente."""
-    settings = get_settings()
-    if not settings.enable_real_data:
-        print("ENABLE_REAL_DATA=false: nessun refresh, alert sui dati esistenti.")
-        return
     try:
+        settings = get_settings()
+        if not settings.enable_real_data:
+            print("ENABLE_REAL_DATA=false: nessun refresh, alert sui dati esistenti.")
+            return
         with db_session() as connection:
             result = MarketDataService().refresh_all_watchlist(connection, limit=None, force=False)
         summary = result["summary"]
         print(f"Prezzi aggiornati: {summary['updated']} ok, {summary['fallback']} in fallback.")
-    except Exception as exc:  # noqa: BLE001 - se il refresh fallisce, invio comunque sull'ultimo dato
-        print(f"Refresh prezzi fallito (invio sull'ultimo dato): {exc}")
+    except Exception:  # noqa: BLE001 - se il refresh fallisce, invio comunque sull'ultimo dato
+        print("Refresh prezzi fallito; invio sull'ultimo dato disponibile.")
 
 
-def main() -> None:
-    settings = get_settings()
+def main() -> int:
+    try:
+        settings = get_settings()
+    except Exception:  # noqa: BLE001 - lo script non deve esporre dettagli di configurazione
+        print("Errore nella configurazione degli alert.")
+        return 1
     if not settings.enable_alerts:
         print("Alert disabilitati (ENABLE_ALERTS=false). Niente da inviare.")
-        return
+        return 0
     _refresh_prices()
     try:
         with db_session() as connection:
@@ -41,9 +45,12 @@ def main() -> None:
         print(f"Alert inviato: message_id={result['message_id']} azioni={result['actions_sent']}")
     except AlertNotConfigured as exc:
         print(f"Non configurato: {exc}")
-    except Exception as exc:  # noqa: BLE001 - script schedulato: logga ed esce senza crash
-        print(f"Errore invio alert: {exc}")
+        return 1
+    except Exception:  # noqa: BLE001 - script schedulato: comunica il fallimento al chiamante
+        print("Errore durante l'invio dell'alert.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

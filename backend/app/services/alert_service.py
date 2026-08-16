@@ -9,6 +9,7 @@ from backend.app.config import get_settings
 from backend.app.services.action_board_service import get_action_board
 
 _TELEGRAM_API = "https://api.telegram.org"
+_TELEGRAM_ERROR = "Invio Telegram fallito per errore di rete o risposta non valida."
 _TYPE_EMOJI = {
     "BUY": "\U0001F7E2",      # 🟢
     "REDUCE": "\U0001F7E1",   # 🟡
@@ -40,6 +41,8 @@ def _send_telegram(text: str) -> dict[str, Any]:
         raise AlertNotConfigured(
             "Telegram non configurato. Imposta TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID in backend/.env."
         )
+    payload: Any = None
+    request_failed = False
     try:
         with httpx.Client(timeout=20) as client:
             response = client.post(
@@ -48,11 +51,17 @@ def _send_telegram(text: str) -> dict[str, Any]:
             )
             response.raise_for_status()
             payload = response.json()
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"Invio Telegram fallito: {exc}") from exc
-    if not payload.get("ok"):
-        raise RuntimeError(f"Telegram ha rifiutato il messaggio: {payload.get('description', 'errore sconosciuto')}")
-    return {"ok": True, "message_id": payload["result"]["message_id"]}
+    except (httpx.HTTPError, ValueError):
+        request_failed = True
+    if request_failed or not isinstance(payload, dict) or payload.get("ok") is not True:
+        raise RuntimeError(_TELEGRAM_ERROR)
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError(_TELEGRAM_ERROR)
+    message_id = result.get("message_id")
+    if isinstance(message_id, bool) or not isinstance(message_id, int):
+        raise RuntimeError(_TELEGRAM_ERROR)
+    return {"ok": True, "message_id": message_id}
 
 
 def send_test_message() -> dict[str, Any]:
