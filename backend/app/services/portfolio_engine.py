@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -93,14 +94,32 @@ class PortfolioEngine:
         self,
         connection: sqlite3.Connection,
         items: list[dict[str, Any]],
+        *,
+        initial_equity_base: float,
+        current_cash_base: float,
     ) -> PortfolioSummaryOut:
         """Sostituisce tutte le posizioni con quelle fornite e ricalcola il portafoglio.
 
         Ogni item richiede: asset_id, symbol, quantity, average_price.
-        Opzionali: asset_type, currency, notes. Operazione atomica (SAVEPOINT)."""
+        Opzionali: asset_type, currency, notes. Posizioni e capitale sono aggiornati
+        atomicamente nello stesso SAVEPOINT."""
+        if not math.isfinite(initial_equity_base) or initial_equity_base < 0:
+            raise ValueError("Il capitale iniziale deve essere un importo EUR non negativo.")
+        if not math.isfinite(current_cash_base) or current_cash_base < 0:
+            raise ValueError("La liquidita corrente deve essere un importo EUR non negativo.")
+
         now = _now()
         connection.execute("SAVEPOINT replace_positions")
         try:
+            self.ensure_settings(connection)
+            connection.execute(
+                """
+                UPDATE portfolio_settings
+                SET initial_cash = ?, current_cash = ?, updated_at = ?
+                WHERE id = 1
+                """,
+                (initial_equity_base, current_cash_base, now),
+            )
             connection.execute("DELETE FROM portfolio_positions")
             for item in items:
                 quantity = float(item["quantity"])

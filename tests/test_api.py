@@ -96,6 +96,13 @@ def _asset_dependency_state(symbol: str) -> tuple[int | None, dict[str, int], di
         return asset_id, counts, totals
 
 
+def _enable_google_sheets_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.config import get_settings
+
+    monkeypatch.setenv("ENABLE_GOOGLE_SHEETS_IMPORT", "true")
+    get_settings.cache_clear()
+
+
 def test_health_endpoint(client: TestClient) -> None:
     response = client.get("/health")
 
@@ -229,7 +236,37 @@ def test_import_status_not_configured(client: TestClient) -> None:
     assert data["configured"] is False
 
 
-def test_import_preview_requires_url(client: TestClient) -> None:
+def test_import_preview_requires_enabled_flag(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: "symbol,quantity,average_price\nAAPL,1,150\n",
+    )
+
+    response = client.post(
+        "/import/google-sheets/preview",
+        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_import_apply_requires_enabled_flag(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: "symbol,quantity,average_price\nAAPL,1,150\n",
+    )
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_import_preview_requires_url_when_enabled(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_google_sheets_import(monkeypatch)
+
     response = client.post("/import/google-sheets/preview", json={"csv_url": ""})
 
     assert response.status_code == 400
@@ -237,6 +274,7 @@ def test_import_preview_requires_url(client: TestClient) -> None:
 
 
 def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> None:
+    _enable_google_sheets_import(monkeypatch)
     csv_text = (
         "symbol,quantity,average_price,currency\n"
         "AAPL,10,150,USD\n"
@@ -247,11 +285,17 @@ def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> Non
         lambda csv_url=None: csv_text,
     )
 
-    response = client.post("/import/google-sheets/apply", json={"csv_url": "http://example.test/sheet.csv"})
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
 
     assert response.status_code == 200
     data = response.json()
     assert data["imported"] == 2
+    assert data["initial_equity_base"] == pytest.approx(2484)
+    assert data["current_cash_base"] == 0
+    assert data["base_currency"] == "EUR"
 
     portfolio = client.get("/portfolio").json()
     symbols = {position["symbol"] for position in portfolio["positions"]}
@@ -259,6 +303,123 @@ def test_import_apply_replaces_positions(client: TestClient, monkeypatch) -> Non
     aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
     assert aapl["quantity"] == 10
     assert aapl["average_price"] == 150
+    assert portfolio["settings"]["initial_cash"] == pytest.approx(2484)
+    assert portfolio["settings"]["current_cash"] == 0
+
+
+def test_import_apply_creates_new_asset_with_import_reference_price(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,name,quantity,average_price,currency\n"
+            "NEWIMPORT,New Import Asset,2,100,EUR\n"
+        ),
+    )
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_assets"] == 1
+    portfolio = client.get("/portfolio").json()
+    position = next(item for item in portfolio["positions"] if item["symbol"] == "NEWIMPORT")
+    assert position["current_price"] == 100
+    assert position["current_value_base"] == 200
+    assert portfolio["settings"]["initial_cash"] == 200
+    assert portfolio["settings"]["current_cash"] == 0
+
+    with db_session() as connection:
+        reference_price = connection.execute(
+            """
+            SELECT ph.close, ph.source, ph.provider, ph.is_real_data
+            FROM price_history ph
+            JOIN assets a ON a.id = ph.asset_id
+            WHERE a.symbol = 'NEWIMPORT'
+            """
+        ).fetchone()
+
+    assert tuple(reference_price) == (100, "google_sheets_import", "google_sheets_import", 0)
+
+
+def test_import_rolls_back_positions_assets_and_settings_on_second_position_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+    from backend.app.services import google_sheets_import_service
+
+    _enable_google_sheets_import(monkeypatch)
+    allocation_response = client.post(
+        "/portfolio/allocation/apply",
+        json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT"], total_capital=50000),
+    )
+    assert allocation_response.status_code == 200
+
+    csv_text = (
+        "symbol,quantity,average_price,currency\n"
+        "SAFEIMPORT,2,100,EUR\n"
+        "FAILIMPORT,3,200,EUR\n"
+    )
+    monkeypatch.setattr(google_sheets_import_service, "fetch_csv", lambda csv_url=None: csv_text)
+
+    with db_session() as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_second_import_position
+            BEFORE INSERT ON portfolio_positions
+            WHEN NEW.symbol = 'FAILIMPORT'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced second position failure');
+            END
+            """
+        )
+        positions_before = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT asset_id, symbol, quantity, average_price FROM portfolio_positions ORDER BY id"
+            ).fetchall()
+        ]
+        settings_before = tuple(
+            connection.execute(
+                "SELECT initial_cash, current_cash, updated_at FROM portfolio_settings WHERE id = 1"
+            ).fetchone()
+        )
+        asset_count_before = int(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
+
+        with pytest.raises(sqlite3.IntegrityError, match="forced second position failure"):
+            google_sheets_import_service.apply_import(
+                connection,
+                "https://docs.google.com/spreadsheets/d/test/export?format=csv",
+            )
+
+        positions_after = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT asset_id, symbol, quantity, average_price FROM portfolio_positions ORDER BY id"
+            ).fetchall()
+        ]
+        settings_after = tuple(
+            connection.execute(
+                "SELECT initial_cash, current_cash, updated_at FROM portfolio_settings WHERE id = 1"
+            ).fetchone()
+        )
+        imported_assets = connection.execute(
+            "SELECT symbol FROM assets WHERE symbol IN ('SAFEIMPORT', 'FAILIMPORT')"
+        ).fetchall()
+        asset_count_after = int(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
+
+    assert positions_after == positions_before
+    assert settings_after == settings_before
+    assert imported_assets == []
+    assert asset_count_after == asset_count_before
 
 
 def test_ml_status_initially_empty(client: TestClient) -> None:
@@ -1254,9 +1415,14 @@ def test_allocation_max_weight_cap(client: TestClient) -> None:
 
 
 def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT", "SPY"])
+    plan_response = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan_response.status_code == 200
+    plan = plan_response.json()
+
     response = client.post(
         "/portfolio/allocation/apply",
-        json=_allocation_payload("EQUAL_WEIGHT", symbols=["AAPL", "MSFT", "SPY"]),
+        json=payload,
     )
 
     assert response.status_code == 200
@@ -1265,6 +1431,8 @@ def test_allocation_apply_creates_portfolio(client: TestClient) -> None:
     assert symbols == {"AAPL", "MSFT", "SPY"}
     assert all(position["quantity"] > 0 for position in data["positions"])
     assert data["invested_value"] > 0
+    assert data["settings"]["initial_cash"] == payload["total_capital"]
+    assert data["settings"]["current_cash"] == plan["cash_buffer"]
 
 
 def test_scenario_market_crash(client: TestClient) -> None:

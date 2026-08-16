@@ -9,7 +9,7 @@ import pytest
 from backend.app.config import Settings, get_settings
 from backend.app.database import SCHEMA
 from backend.app.services.fx_service import ECB_DAILY_URL, FXRateUnavailable, FXService
-from backend.scripts.seed_database import SEED_END_DATE, _seed_fx_rates
+from backend.scripts.seed_database import _seed_fx_rates
 
 ECB_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <gesmes:Envelope
@@ -188,8 +188,10 @@ def test_settings_reads_ecb_fx_max_age_days(monkeypatch) -> None:
 
 
 def test_seed_inserts_only_a_deterministic_usd_eur_quote(connection) -> None:
+    before_seed = datetime.now(UTC).date().isoformat()
     _seed_fx_rates(connection)
     _seed_fx_rates(connection)
+    after_seed = datetime.now(UTC).date().isoformat()
 
     rows = connection.execute(
         """
@@ -197,6 +199,8 @@ def test_seed_inserts_only_a_deterministic_usd_eur_quote(connection) -> None:
         FROM fx_rates
         """
     ).fetchall()
-    assert [tuple(row) for row in rows] == [
-        ("USD", "EUR", 0.92, SEED_END_DATE.isoformat(), "seed", "seed")
-    ]
+    assert len(rows) == 1
+    row = tuple(rows[0])
+    assert row[:3] == ("USD", "EUR", 0.92)
+    assert row[3] in {before_seed, after_seed}
+    assert row[4:] == ("seed", "seed")

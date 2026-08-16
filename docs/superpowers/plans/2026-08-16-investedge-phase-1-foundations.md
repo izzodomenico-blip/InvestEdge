@@ -459,7 +459,7 @@ git push -u origin HEAD
 
 **Contract:** L'import funziona solo con flag attivo, URL HTTPS Google Sheets fidati, redirect nuovamente validati, massimo 5 MiB e messaggi sanitizzati. Preview e apply usano gli stessi dati. Apply sostituisce posizioni e imposta coerentemente capitale iniziale/cash in una transazione.
 
-- [ ] **Step 1: Scrivere test SSRF e flag**
+- [x] **Step 1: Scrivere test SSRF e flag**
 
 Testare almeno:
 
@@ -471,7 +471,7 @@ Testare almeno:
 - body > 5 MiB -> rifiutato;
 - timeout/HTTP error -> messaggio senza URL, query, token o eccezione raw.
 
-- [ ] **Step 2: Implementare validatore e download streaming**
+- [x] **Step 2: Implementare validatore e download streaming**
 
 Consentire host esatti `docs.google.com`, `drive.google.com` e sottodomini Google-owned che terminano in `.googleusercontent.com`; schema solo HTTPS, porta assente o 443, niente username/password. Usare `follow_redirects=False` e validare ogni `Location` assoluta/relativa prima della richiesta seguente.
 
@@ -483,7 +483,7 @@ GOOGLE_SHEETS_IMPORT_MAX_BYTES=5242880
 
 Leggere in streaming e interrompere appena superato il limite.
 
-- [ ] **Step 3: Rendere la sostituzione economicamente esplicita**
+- [x] **Step 3: Rendere la sostituzione economicamente esplicita**
 
 Cambiare la firma in:
 
@@ -499,18 +499,18 @@ def replace_positions(
 
 L'apply allocation passa `total_capital` e `cash_buffer`. L'import passa come `initial_equity_base` la somma dei costi base delle posizioni importate e `current_cash_base=0`. Aggiornare `portfolio_settings.initial_cash/current_cash` nello stesso savepoint del DELETE/INSERT.
 
-- [ ] **Step 4: Verificare rollback totale**
+- [x] **Step 4: Verificare rollback totale**
 
 Aggiungere un test che forza errore sulla seconda posizione e dimostra che posizioni, asset creati e settings precedenti sono invariati.
 
-- [ ] **Step 5: Verificare Task 6**
+- [x] **Step 5: Verificare Task 6**
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest tests\test_import_security.py tests\test_api.py -k "import or allocation_apply or replace"
 backend\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-- [ ] **Step 6: Commit e push**
+- [x] **Step 6: Commit e push**
 
 ```powershell
 git add backend/app/config.py backend/app/services/google_sheets_import_service.py backend/app/services/portfolio_engine.py backend/app/api/routes.py backend/app/models/schemas.py .env.example tests/test_import_security.py tests/test_api.py

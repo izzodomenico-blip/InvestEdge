@@ -4,6 +4,7 @@ import csv
 import io
 import sqlite3
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -33,6 +34,15 @@ _HEADER_ALIASES: dict[str, set[str]] = {
     "currency": {"currency", "valuta", "ccy"},
 }
 _VALID_ASSET_TYPES = {"stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"}
+_TRUSTED_GOOGLE_HOSTS = {"docs.google.com", "drive.google.com"}
+_GOOGLEUSERCONTENT_SUFFIX = ".googleusercontent.com"
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_MAX_REDIRECTS = 3
+_MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
+
+
+class ImportDisabledError(ValueError):
+    pass
 
 
 def _norm_header(value: str) -> str:
@@ -156,18 +166,97 @@ def _resolve_csv_url(csv_url: str | None) -> str:
     url = (csv_url or "").strip() or (get_settings().google_sheets_csv_url or "")
     if not url:
         raise ValueError("Nessuna URL CSV configurata. Incolla il link CSV pubblico del foglio o impostalo in backend/.env.")
+    return _validate_csv_url(url)
+
+
+def _require_import_enabled() -> None:
+    if not get_settings().enable_google_sheets_import:
+        raise ImportDisabledError("Import Google Sheets disabilitato dalla configurazione.")
+
+
+def _validate_csv_url(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+        hostname = (parsed.hostname or "").lower()
+    except ValueError as exc:
+        raise ValueError("URL Google Sheets non valida o non attendibile.") from exc
+
+    googleusercontent_subdomain = (
+        len(hostname) > len(_GOOGLEUSERCONTENT_SUFFIX)
+        and hostname.endswith(_GOOGLEUSERCONTENT_SUFFIX)
+    )
+    trusted_host = hostname in _TRUSTED_GOOGLE_HOSTS or googleusercontent_subdomain
+    if (
+        parsed.scheme.lower() != "https"
+        or not trusted_host
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        raise ValueError("URL Google Sheets non valida o non attendibile.")
     return url
 
 
+def _read_response(response: httpx.Response, max_bytes: int) -> bytes:
+    content_encoding = response.headers.get("content-encoding", "identity").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise ValueError("Il foglio Google Sheets usa una compressione non supportata.")
+
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > max_bytes:
+            raise ValueError("Il foglio Google Sheets supera il limite massimo di 5 MiB.")
+
+    payload = bytearray()
+    for chunk in response.iter_raw():
+        if len(payload) + len(chunk) > max_bytes:
+            raise ValueError("Il foglio Google Sheets supera il limite massimo di 5 MiB.")
+        payload.extend(chunk)
+    return bytes(payload)
+
+
 def fetch_csv(csv_url: str | None = None) -> str:
-    url = _resolve_csv_url(csv_url)
+    _require_import_enabled()
+    current_url = _resolve_csv_url(csv_url)
+    configured_max_bytes = get_settings().google_sheets_import_max_bytes
+    if configured_max_bytes <= 0:
+        raise ValueError("Il limite dell'import Google Sheets non e' configurato correttamente.")
+    max_bytes = min(configured_max_bytes, _MAX_DOWNLOAD_BYTES)
+
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
+        with httpx.Client(timeout=20, follow_redirects=False) as client:
+            redirects_followed = 0
+            while True:
+                with client.stream(
+                    "GET",
+                    current_url,
+                    headers={"Accept-Encoding": "identity"},
+                ) as response:
+                    if response.status_code in _REDIRECT_STATUSES:
+                        if redirects_followed >= _MAX_REDIRECTS:
+                            raise ValueError("Il foglio Google Sheets ha troppi reindirizzamenti.")
+                        location = response.headers.get("location")
+                        if not location:
+                            raise ValueError("Il foglio Google Sheets ha restituito un reindirizzamento non valido.")
+                        current_url = _validate_csv_url(urljoin(current_url, location))
+                        redirects_followed += 1
+                        continue
+
+                    response.raise_for_status()
+                    payload = _read_response(response, max_bytes)
+                    break
     except httpx.HTTPError as exc:
-        raise ValueError(f"Impossibile leggere il foglio: {exc}") from exc
-    return response.text
+        raise ValueError("Impossibile leggere il foglio Google Sheets.") from exc
+
+    try:
+        return payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Il foglio Google Sheets non contiene un CSV UTF-8 valido.") from exc
 
 
 def status() -> dict[str, Any]:
@@ -180,50 +269,95 @@ def status() -> dict[str, Any]:
 
 
 def preview(csv_url: str | None = None) -> dict[str, Any]:
+    _require_import_enabled()
     return parse_holdings(fetch_csv(csv_url))
 
 
+def _ensure_import_reference_price(
+    connection: sqlite3.Connection,
+    asset_id: int,
+    average_price: float,
+) -> None:
+    has_price = connection.execute(
+        "SELECT 1 FROM price_history WHERE asset_id = ? LIMIT 1",
+        (asset_id,),
+    ).fetchone()
+    if has_price is not None:
+        return
+    connection.execute(
+        """
+        INSERT INTO price_history (
+            asset_id, date, close, adjusted_close, source, provider, is_real_data, fetched_at
+        )
+        VALUES (?, date('now'), ?, ?, 'google_sheets_import', 'google_sheets_import', 0, CURRENT_TIMESTAMP)
+        """,
+        (asset_id, average_price, average_price),
+    )
+
+
 def apply_import(connection: sqlite3.Connection, csv_url: str | None = None) -> dict[str, Any]:
-    parsed = parse_holdings(fetch_csv(csv_url))
+    parsed = preview(csv_url)
     holdings = parsed["holdings"]
     if not holdings:
         raise ValueError("Nessuna posizione valida da importare. Controlla il foglio.")
 
     created_assets = 0
     items: list[dict[str, Any]] = []
-    for holding in holdings:
-        asset = get_asset_by_symbol(connection, holding["symbol"])
-        if asset is None:
-            created = create_asset(
-                connection,
-                AssetCreate(
-                    symbol=holding["symbol"],
-                    name=holding["name"],
-                    asset_type=holding["asset_type"],
-                    currency=holding["currency"],
-                ),
-            )
-            asset_id = created.id
-            created_assets += 1
-        else:
-            asset_id = asset.id
-        items.append(
-            {
-                "asset_id": asset_id,
-                "symbol": holding["symbol"],
-                "quantity": holding["quantity"],
-                "average_price": holding["average_price"],
-                "asset_type": holding["asset_type"],
-                "currency": holding["currency"],
-                "notes": "Importato da Google Sheets",
-            }
-        )
+    initial_equity_base = 0.0
+    connection.execute("SAVEPOINT google_sheets_import")
+    try:
+        for holding in holdings:
+            asset = get_asset_by_symbol(connection, holding["symbol"])
+            if asset is None:
+                created = create_asset(
+                    connection,
+                    AssetCreate(
+                        symbol=holding["symbol"],
+                        name=holding["name"],
+                        asset_type=holding["asset_type"],
+                        currency=holding["currency"],
+                    ),
+                )
+                asset_id = created.id
+                created_assets += 1
+            else:
+                asset_id = asset.id
 
-    summary = portfolio_engine.replace_positions(connection, items)
+            _ensure_import_reference_price(connection, asset_id, holding["average_price"])
+            fx_quote = portfolio_engine.fx_service.get_rate(connection, holding["currency"])
+            average_price_base = round(holding["average_price"] * fx_quote.rate, 6)
+            initial_equity_base += round(holding["quantity"] * average_price_base, 6)
+            items.append(
+                {
+                    "asset_id": asset_id,
+                    "symbol": holding["symbol"],
+                    "quantity": holding["quantity"],
+                    "average_price": holding["average_price"],
+                    "asset_type": holding["asset_type"],
+                    "currency": holding["currency"],
+                    "notes": "Importato da Google Sheets",
+                }
+            )
+        initial_equity_base = round(initial_equity_base, 6)
+        summary = portfolio_engine.replace_positions(
+            connection,
+            items,
+            initial_equity_base=initial_equity_base,
+            current_cash_base=0,
+        )
+    except Exception:
+        connection.execute("ROLLBACK TO SAVEPOINT google_sheets_import")
+        connection.execute("RELEASE SAVEPOINT google_sheets_import")
+        raise
+    connection.execute("RELEASE SAVEPOINT google_sheets_import")
+
     return {
         "imported": len(holdings),
         "created_assets": created_assets,
         "rows_invalid": parsed["rows_invalid"],
         "errors": parsed["errors"],
         "portfolio_value": summary.total_value,
+        "initial_equity_base": initial_equity_base,
+        "current_cash_base": 0,
+        "base_currency": "EUR",
     }

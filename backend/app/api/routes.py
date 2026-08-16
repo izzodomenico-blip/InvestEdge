@@ -296,7 +296,12 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
                 )
             if not items:
                 raise ValueError("Nessuna posizione da creare: aumenta il capitale o controlla i prezzi disponibili.")
-            return portfolio_engine.replace_positions(connection, items)
+            return portfolio_engine.replace_positions(
+                connection,
+                items,
+                initial_equity_base=plan["total_capital"],
+                current_cash_base=plan["cash_buffer"],
+            )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -537,6 +542,8 @@ def import_google_sheets_status() -> ImportStatusOut:
 def import_google_sheets_preview(payload: ImportInputIn | None = None) -> ImportPreviewOut:
     try:
         return ImportPreviewOut(**google_sheets_import_service.preview(payload.csv_url if payload else None))
+    except google_sheets_import_service.ImportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -548,6 +555,8 @@ def import_google_sheets_apply(payload: ImportInputIn | None = None) -> ImportAp
             return ImportApplyOut(
                 **google_sheets_import_service.apply_import(connection, payload.csv_url if payload else None)
             )
+    except google_sheets_import_service.ImportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

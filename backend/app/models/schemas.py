@@ -476,6 +476,9 @@ class ImportApplyOut(BaseModel):
     rows_invalid: int
     errors: list[str]
     portfolio_value: float
+    initial_equity_base: float
+    current_cash_base: float
+    base_currency: Literal["EUR"] = "EUR"
 
 
 class AlertSendOut(BaseModel):
