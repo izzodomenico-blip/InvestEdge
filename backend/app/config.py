@@ -39,6 +39,10 @@ class Settings:
     coingecko_api_key: str | None = None
     fred_api_key: str | None = None
     api_cache_ttl_hours: int = 24
+    provider_http_connect_timeout_seconds: float = 5.0
+    provider_http_read_timeout_seconds: float = 20.0
+    provider_retry_after_cap_seconds: int = 60
+    provider_default_max_attempts: int = 3
     ecb_fx_max_age_days: int = 7
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
@@ -89,6 +93,18 @@ class Settings:
             coingecko_api_key=os.getenv("COINGECKO_API_KEY") or None,
             fred_api_key=os.getenv("FRED_API_KEY") or None,
             api_cache_ttl_hours=int(os.getenv("API_CACHE_TTL_HOURS", "24")),
+            provider_http_connect_timeout_seconds=float(
+                os.getenv("PROVIDER_HTTP_CONNECT_TIMEOUT_SECONDS", "5")
+            ),
+            provider_http_read_timeout_seconds=float(
+                os.getenv("PROVIDER_HTTP_READ_TIMEOUT_SECONDS", "20")
+            ),
+            provider_retry_after_cap_seconds=int(
+                os.getenv("PROVIDER_RETRY_AFTER_CAP_SECONDS", "60")
+            ),
+            provider_default_max_attempts=int(
+                os.getenv("PROVIDER_DEFAULT_MAX_ATTEMPTS", "3")
+            ),
             ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),

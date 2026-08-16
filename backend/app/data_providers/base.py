@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
+import threading
+import time
 from abc import ABC, abstractmethod
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Any
-
-import httpx
+from urllib.parse import urlsplit
 
 from backend.app.config import Settings
+from backend.app.data_providers.transport import SafeProviderTransport, SafeProviderTransportError
+from backend.app.services.provider_budget_service import (
+    ProviderBudgetExceeded,
+    ProviderBudgetManager,
+    ProviderBudgetPolicy,
+)
 
 
 def utc_now() -> str:
@@ -36,9 +41,29 @@ class BaseMarketDataProvider(ABC):
     provider_name = "base"
     daily_limit = 0
 
-    def __init__(self, settings: Settings, connection: sqlite3.Connection):
+    def __init__(
+        self,
+        settings: Settings,
+        connection: sqlite3.Connection,
+        transport: SafeProviderTransport | None = None,
+        budget_manager: ProviderBudgetManager | None = None,
+    ):
         self.settings = settings
         self.connection = connection
+        self.budget_manager = budget_manager or (
+            transport.budget_manager if transport is not None else ProviderBudgetManager()
+        )
+        if transport is None:
+            host = urlsplit(str(getattr(self, "base_url", ""))).hostname
+            transport = SafeProviderTransport(
+                allowed_hosts={host} if host else set(),
+                budget_manager=self.budget_manager,
+                settings=settings,
+            )
+        elif transport.budget_manager is not self.budget_manager:
+            transport = transport.with_budget_manager(self.budget_manager)
+        self.transport = transport
+        self._request_context = threading.local()
 
     @abstractmethod
     def get_daily_prices(self, symbol: str, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
@@ -92,33 +117,40 @@ class BaseMarketDataProvider(ABC):
         )
 
     def cache_key(self, endpoint: str, symbol: str, request_url: str) -> str:
-        request_hash = hashlib.sha256(request_url.encode("utf-8")).hexdigest()
-        return f"{self.provider_name}:{endpoint}:{symbol.upper()}:{request_hash}"
+        return f"provider:{self.provider_name}:{self._cache_scope(endpoint, symbol)}:{self.request_hash(request_url)}"
 
     def request_hash(self, request_url: str) -> str:
-        return hashlib.sha256(request_url.encode("utf-8")).hexdigest()
+        try:
+            return self.transport.prepare_legacy_url(
+                self.provider_name,
+                str(getattr(self, "endpoint", "EOD")),
+                "GET",
+                request_url,
+                None,
+                enforce_allowlist=False,
+            ).request_fingerprint
+        except SafeProviderTransportError as exc:
+            raise ProviderError(str(exc)) from None
 
     def get_from_cache(self, endpoint: str, symbol: str, request_url: str, force: bool = False) -> dict[str, Any] | None:
-        if force:
+        self._request_context.pending = (endpoint, symbol, request_url, force)
+        try:
+            response = self.transport.cached_response_for_url(
+                self.connection,
+                provider=self.provider_name,
+                operation=endpoint,
+                cache_scope=self._cache_scope(endpoint, symbol),
+                request_url=request_url,
+                now=datetime.now(UTC),
+                bypass_cache=force,
+            )
+        except SafeProviderTransportError as exc:
+            raise ProviderError(str(exc)) from None
+        if response is None:
             return None
-        row = self.connection.execute(
-            """
-            SELECT response_json, payload, expires_at
-            FROM api_cache
-            WHERE cache_key = ?
-            LIMIT 1
-            """,
-            (self.cache_key(endpoint, symbol, request_url),),
-        ).fetchone()
-        if row is None or not row["expires_at"]:
-            return None
-        expires_at = datetime.fromisoformat(row["expires_at"])
-        if expires_at <= datetime.now(UTC).replace(tzinfo=None):
-            return None
-        payload = row["response_json"] or row["payload"]
-        if not payload:
-            return None
-        return json.loads(payload)
+        if not isinstance(response.payload, dict):
+            raise ProviderError(f"{self.provider_name}:{endpoint}:INVALID_PAYLOAD")
+        return response.payload
 
     def save_to_cache(
         self,
@@ -128,45 +160,68 @@ class BaseMarketDataProvider(ABC):
         response_json: dict[str, Any],
         status: str = "OK",
     ) -> None:
-        now = utc_now()
-        expires_at = (
-            datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=self.settings.api_cache_ttl_hours)
-        ).isoformat(timespec="seconds")
-        payload = json.dumps(response_json)
-        self.connection.execute(
-            """
-            INSERT INTO api_cache (
-                cache_key, provider, endpoint, symbol, request_url_hash, response_json,
-                payload, status, last_update, expires_at, created_at
+        fingerprint = self.request_hash(request_url)
+        if getattr(self._request_context, "last_fingerprint", None) == fingerprint:
+            return
+        try:
+            self.transport.store_response_for_url(
+                self.connection,
+                provider=self.provider_name,
+                operation=endpoint,
+                cache_scope=self._cache_scope(endpoint, symbol),
+                request_url=request_url,
+                payload=response_json,
+                status_code=200 if status == "OK" else 206,
+                cache_ttl_seconds=self.settings.api_cache_ttl_hours * 3600,
+                now=datetime.now(UTC),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(cache_key) DO UPDATE SET
-                response_json = excluded.response_json,
-                payload = excluded.payload,
-                status = excluded.status,
-                last_update = excluded.last_update,
-                expires_at = excluded.expires_at
-            """,
-            (
-                self.cache_key(endpoint, symbol, request_url),
-                self.provider_name,
-                endpoint,
-                symbol.upper(),
-                self.request_hash(request_url),
-                payload,
-                payload,
-                status,
-                now,
-                expires_at,
-                now,
-            ),
-        )
+        except SafeProviderTransportError as exc:
+            raise ProviderError(str(exc)) from None
 
     def fetch_json(self, request_url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         self.ensure_enabled()
-        self.check_rate_limit()
-        with httpx.Client(timeout=20) as client:
-            response = client.get(request_url, headers=headers)
-            self.increment_usage()
-            response.raise_for_status()
-        return response.json()
+        pending = getattr(self._request_context, "pending", None)
+        if pending is not None and pending[2] == request_url:
+            endpoint, symbol, _request_url, force = pending
+        else:
+            endpoint = str(getattr(self, "endpoint", "EOD"))
+            symbol = "request"
+            force = False
+        try:
+            response = self.transport.request_url(
+                connection=self.connection,
+                policy=self._budget_policy(),
+                provider=self.provider_name,
+                operation=endpoint,
+                cache_scope=self._cache_scope(endpoint, symbol),
+                request_url=request_url,
+                headers=headers or {},
+                cache_ttl_seconds=self.settings.api_cache_ttl_hours * 3600,
+                max_response_bytes=16 * 1024 * 1024,
+                decoder="json",
+                now=datetime.now(UTC),
+                sleeper=time.sleep,
+                bypass_cache=bool(force),
+            )
+        except ProviderBudgetExceeded as exc:
+            raise RateLimitExceeded(str(exc)) from None
+        except SafeProviderTransportError as exc:
+            raise ProviderError(str(exc)) from None
+        finally:
+            self._request_context.pending = None
+        self._request_context.last_fingerprint = response.request_fingerprint
+        if not isinstance(response.payload, dict):
+            raise ProviderError(f"{self.provider_name}:{endpoint}:INVALID_PAYLOAD")
+        return response.payload
+
+    def _budget_policy(self) -> ProviderBudgetPolicy:
+        return ProviderBudgetPolicy(
+            minute_limit=None,
+            daily_limit=self.daily_limit if self.daily_limit > 0 else None,
+            monthly_limit=None,
+            max_attempts=self.settings.provider_default_max_attempts,
+        )
+
+    @staticmethod
+    def _cache_scope(endpoint: str, symbol: str) -> str:
+        return f"{endpoint}:{symbol.upper()}"

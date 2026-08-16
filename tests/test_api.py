@@ -2400,6 +2400,39 @@ def test_api_rate_limit_guard(client: TestClient) -> None:
             provider.check_rate_limit()
 
 
+def test_data_usage_compat_reads_budget_projection(client: TestClient) -> None:
+    from datetime import UTC, datetime
+
+    from backend.app.data_providers.transport import SafeProviderTransport
+    from backend.app.database import db_session
+    from backend.app.services.provider_budget_service import ProviderBudgetPolicy
+
+    with db_session() as connection:
+        reservation_id = SafeProviderTransport().budget_manager.reserve(
+            connection,
+            ProviderBudgetPolicy(minute_limit=10, daily_limit=25, monthly_limit=100),
+            "yahoo_finance",
+            "EOD",
+            "a" * 64,
+            datetime.now(UTC),
+        )
+        SafeProviderTransport().budget_manager.complete(
+            connection,
+            reservation_id,
+            "SUCCEEDED",
+            200,
+            0,
+            None,
+        )
+
+    response = client.get("/data/usage")
+
+    assert response.status_code == 200
+    usage = {item["provider"]: item for item in response.json()}
+    assert usage["yahoo_finance"]["calls_count"] == 1
+    assert usage["yahoo_finance"]["daily_limit"] == 0
+
+
 def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.alpha_vantage import AlphaVantageProvider

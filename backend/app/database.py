@@ -332,6 +332,35 @@ CREATE TABLE IF NOT EXISTS api_usage (
     UNIQUE(provider, usage_date)
 );
 
+CREATE TABLE IF NOT EXISTS provider_usage_windows (
+    provider TEXT NOT NULL,
+    window_kind TEXT NOT NULL CHECK(window_kind IN ('MINUTE', 'DAY', 'MONTH')),
+    window_start TEXT NOT NULL,
+    used_count INTEGER NOT NULL DEFAULT 0 CHECK(used_count >= 0),
+    configured_limit INTEGER CHECK(configured_limit IS NULL OR configured_limit >= 0),
+    effective_limit INTEGER CHECK(effective_limit IS NULL OR effective_limit >= 0),
+    cooldown_until TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(provider, window_kind, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS provider_request_log (
+    reservation_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL CHECK(length(request_fingerprint) = 64),
+    outcome TEXT CHECK(outcome IS NULL OR outcome IN (
+        'SUCCEEDED', 'CACHE_HIT', 'RATE_LIMITED', 'TIMED_OUT',
+        'RETRY_EXHAUSTED', 'REJECTED', 'DISABLED'
+    )),
+    status_code INTEGER,
+    retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
+    cooldown_until TEXT,
+    requested_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS fx_rates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_currency TEXT NOT NULL,
@@ -625,6 +654,12 @@ CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url);
 CREATE INDEX IF NOT EXISTS idx_api_cache_key ON api_cache(cache_key);
 CREATE INDEX IF NOT EXISTS idx_api_cache_provider_symbol ON api_cache(provider, symbol);
 CREATE INDEX IF NOT EXISTS idx_api_usage_provider_date ON api_usage(provider, usage_date);
+CREATE INDEX IF NOT EXISTS idx_provider_usage_windows_provider
+ON provider_usage_windows(provider, window_kind, window_start);
+CREATE INDEX IF NOT EXISTS idx_provider_request_log_provider_requested
+ON provider_request_log(provider, requested_at);
+CREATE INDEX IF NOT EXISTS idx_provider_request_log_fingerprint
+ON provider_request_log(request_fingerprint, requested_at);
 CREATE INDEX IF NOT EXISTS idx_fx_rates_pair_observed ON fx_rates(from_currency, to_currency, observed_at);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_curve(backtest_id, date);

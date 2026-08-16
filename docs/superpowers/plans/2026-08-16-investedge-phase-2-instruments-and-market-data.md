@@ -276,11 +276,11 @@ SafeProviderTransport.with_client(client: httpx.Client) -> SafeProviderTransport
 
 Nuove tabelle: `provider_usage_windows` con chiave `(provider, window_kind, window_start)` e `provider_request_log` con fingerprint SHA-256, operation, outcome, status/cooldown/retry e timestamp. Non persistono URL, query, header o corpo raw.
 
-- [ ] **Step 1: Scrivere i test RED del budget e della redazione**
+- [x] **Step 1: Scrivere i test RED del budget e della redazione**
 
 Copertura obbligatoria: reservation atomica; limiti minuto/giorno/mese; rollback della reservation non consumata; cache hit prima della quota; `bypass_cache=true` con cache preesistente produce una richiesta fisica governata; due richieste force concorrenti con lo stesso fingerprint vengono coalesciate in-flight in una sola richiesta fisica; una reservation per ogni tentativo HTTP fisicamente inviato; GET e POST JSON canonico; hash del body OpenFIGI senza payload raw; limite byte/decompressione prima del decode; content-type allowlist; redirect rifiutato; HTTP 429 con `Retry-After` e rate-limit header ufficiali; retry soltanto per timeout, 429, 500, 502, 503, 504; backoff deterministico con clock/sleeper iniettati; nessun retry per 400/401/403/404; divieto dei parametri case-insensitive `apikey`, `api_key`, `token`, `access_token`, `key`; eccezioni/log/API senza secret sentinella.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_provider_budget.py tests\test_api.py -k "provider_budget or safe_transport or secret_redaction or data_usage_compat" -q
@@ -288,19 +288,19 @@ Copertura obbligatoria: reservation atomica; limiti minuto/giorno/mese; rollback
 
 Expected: failure per moduli/tabelle mancanti e per mancata policy su query sensibili.
 
-- [ ] **Step 3: Implementare reservation e finestra temporale**
+- [x] **Step 3: Implementare reservation e finestra temporale**
 
 Normalizzare `window_start` in UTC: minuto `YYYY-MM-DDTHH:MM:00Z`, giorno `YYYY-MM-DD`, mese `YYYY-MM`. `reserve()` apre `BEGIN IMMEDIATE`, verifica tutte le finestre e crea una reservation unica; se una finestra è esaurita non incrementa nessun contatore. `complete()` è idempotente. Conservare `api_usage` come projection giornaliera per i caller Fase 1.
 
-- [ ] **Step 4: Implementare il trasporto fail-closed**
+- [x] **Step 4: Implementare il trasporto fail-closed**
 
 Accettare solo HTTPS e host allowlistati dal singolo adapter, `follow_redirects=False`, path separato e `base_url` privo di query/fragment/userinfo. Rifiutare qualsiasi query già incorporata nell'URL e qualsiasi secret nei params prima di costruire la richiesta. Il fingerprint usa `provider + operation + host + path + parametri non sensibili ordinati + SHA-256 del JSON canonico`, mai `str(request.url)`; il body raw non entra in DB/log. Controllare content type atteso e applicare `max_response_bytes` ai byte decompressi mentre si legge lo stream, prima del decode. Calcolare sempre il fingerprint e consultare sempre la deduplica in-flight prima di prenotare; consultare la cache persistente soltanto quando `bypass_cache=false`. `bypass_cache=true` salta esclusivamente il lookup della cache: non cambia fingerprint, in-flight dedupe, reservation/quota/cooldown, retry, validazione o scrittura della nuova risposta valida in cache. Ogni tentativo realmente inviato riserva quota e registra l'esito. Usare timeout espliciti, massimo 3 tentativi e delay `min(2 ** retry_index, 8)` secondi, rispettando un `Retry-After` numerico più lungo fino a 60 secondi e abbassando il budget/cooldown quando gli header ufficiali sono più restrittivi. `with_client()` sostituisce soltanto il client HTTP per fixture/test e conserva manager, cache, deduplica, policy, redazione e clock del transport; non esiste un percorso client diretto che bypassi `request()`. Le eccezioni pubbliche contengono solo provider, operation e codice stabile.
 
-- [ ] **Step 5: Adattare `BaseMarketDataProvider` senza cambiare il contratto legacy**
+- [x] **Step 5: Adattare `BaseMarketDataProvider` senza cambiare il contratto legacy**
 
 Iniettare transport e budget manager in `BaseMarketDataProvider` e `BaseNewsProvider`, mantenendo le firme sincrone `get_daily_prices(symbol, force=False) -> tuple[list[dict], bool]` e `get_news_for_symbol(symbol, force=False) -> tuple[list[dict], bool]`. Entrambi propagano letteralmente `force` come `bypass_cache=force` alla singola chiamata transport, senza usarlo per nessun altro gate. Eliminare hashing/cache basati sull'URL costruito in `news_base.py`; il contatore `calls_today` deriva dalla projection esistente. I nuovi dettagli saranno esposti additivamente nel Task 16.
 
-- [ ] **Step 6: Eseguire GREEN e regressione sicurezza**
+- [x] **Step 6: Eseguire GREEN e regressione sicurezza**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_provider_budget.py tests\test_api.py tests\test_alert_service.py tests\test_import_security.py -q
@@ -309,7 +309,7 @@ Iniettare transport e budget manager in `BaseMarketDataProvider` e `BaseNewsProv
 
 Expected: suite selezionata verde; sentinelle secret assenti; Ruff `All checks passed!`.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente focalizzata su race SQLite, doppio consumo quota, retry storm, SSRF, secret in eccezioni/cache e compatibilità `api_usage`. Correggere Critical/Important e ripetere Step 6.
 

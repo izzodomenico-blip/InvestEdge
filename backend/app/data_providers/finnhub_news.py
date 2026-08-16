@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
 
-import httpx
-
-from backend.app.data_providers.base import ProviderError
+from backend.app.data_providers.base import ProviderError, RateLimitExceeded
 from backend.app.data_providers.news_base import BaseNewsProvider
+from backend.app.data_providers.transport import SafeProviderTransportError
+from backend.app.services.provider_budget_service import ProviderBudgetExceeded
 from backend.app.services.sentiment_engine import classify_sentiment
 
 LOOKBACK_DAYS = 21
@@ -16,48 +16,51 @@ LOOKBACK_DAYS = 21
 class FinnhubNewsProvider(BaseNewsProvider):
     provider_name = "finnhub_news"
     endpoint = "company-news"
-    base_url = "https://finnhub.io/api/v1/company-news"
+    base_url = "https://finnhub.io"
+    path = "/api/v1/company-news"
 
     def api_key_configured(self) -> bool:
         return bool(self.settings.finnhub_api_key)
 
-    def _request_url(self, symbol: str) -> str:
+    def _request_params(self, symbol: str) -> dict[str, str]:
         today = datetime.now(UTC).date()
         start = today - timedelta(days=LOOKBACK_DAYS)
-        query = urlencode(
-            {
-                "symbol": symbol.upper(),
-                "from": start.isoformat(),
-                "to": today.isoformat(),
-                "token": self.settings.finnhub_api_key or "",
-            }
-        )
-        return f"{self.base_url}?{query}"
-
-    def _fetch_list(self, request_url: str) -> list[dict[str, Any]]:
-        self.ensure_enabled()
-        self.check_rate_limit()
-        with httpx.Client(timeout=20) as client:
-            response = client.get(request_url)
-            self.increment_usage()
-            response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, dict) and payload.get("error"):
-            raise ProviderError(str(payload.get("error")))
-        if not isinstance(payload, list):
-            raise ProviderError("Risposta news Finnhub non valida.")
-        return payload
+        return {
+            "symbol": symbol.upper(),
+            "from": start.isoformat(),
+            "to": today.isoformat(),
+        }
 
     def get_news_for_symbol(self, symbol: str, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
-        request_url = self._request_url(symbol)
-        cached = self.get_from_cache(self.endpoint, symbol, request_url, force=force)
-        if cached is not None:
-            return self.normalize_news(cached, symbol), True
-
-        articles = self._fetch_list(request_url)
-        wrapped = {"articles": articles[:50]}
-        self.save_to_cache(self.endpoint, symbol, request_url, wrapped)
-        return self.normalize_news(wrapped, symbol), False
+        self.ensure_enabled()
+        try:
+            response = self.transport.request(
+                connection=self.connection,
+                policy=self._budget_policy(),
+                provider=self.provider_name,
+                method="GET",
+                base_url=self.base_url,
+                path=self.path,
+                headers={"X-Finnhub-Token": self.settings.finnhub_api_key or ""},
+                params=self._request_params(symbol),
+                json_body=None,
+                operation=self.endpoint,
+                cache_scope=self._cache_scope(self.endpoint, symbol),
+                cache_ttl_seconds=self.settings.news_cache_ttl_hours * 3600,
+                max_response_bytes=8 * 1024 * 1024,
+                decoder="json",
+                now=datetime.now(UTC),
+                sleeper=time.sleep,
+                bypass_cache=force,
+            )
+        except ProviderBudgetExceeded as exc:
+            raise RateLimitExceeded(str(exc)) from None
+        except SafeProviderTransportError as exc:
+            raise ProviderError(str(exc)) from None
+        if not isinstance(response.payload, list):
+            raise ProviderError(f"{self.provider_name}:{self.endpoint}:INVALID_PAYLOAD")
+        wrapped = {"articles": response.payload[:50]}
+        return self.normalize_news(wrapped, symbol), response.from_cache
 
     def normalize_news(self, raw_response: dict[str, Any], symbol: str) -> list[dict[str, Any]]:
         articles = raw_response.get("articles")
