@@ -14,6 +14,7 @@ Trasformare InvestEdge in uno strumento locale affidabile per:
 
 - seguire un portafoglio reale, inizialmente vuoto, senza mescolarlo con dati demo;
 - creare più portafogli paper con budget virtuali indipendenti;
+- offrire il più ampio universo possibile di azioni, ETF, obbligazioni, ETC/ETN, cripto e riferimenti FX compatibile con fonti gratuite e uso personale;
 - acquistare e vendere strumenti reali usando prezzi di mercato osservati e costi simulati realistici;
 - eseguire strategie automatiche solo nei portafogli demo;
 - mostrare P/L giornaliero e totale, rischio, motivazioni e qualità dei dati;
@@ -30,6 +31,7 @@ InvestEdge rimane un sistema di analisi e simulazione. Non promette guadagni e n
 | Portafoglio reale | Registro separato, inizialmente vuoto |
 | Simulazioni | Più portafogli demo con budget indipendenti |
 | Strumenti demo | Strumenti e prezzi reali; capitale e possesso virtuali |
+| Ampiezza universo | Catalogo esteso, ricercabile e aggiornabile; automazione solo sugli strumenti qualificati |
 | Operatività | Manuale e automatica, ma esclusivamente paper |
 | Rischio predefinito | Profilo Bilanciato; disponibili Prudente e Aggressivo |
 | Runtime iniziale | Servizio locale Windows; nessun costo hosting |
@@ -77,6 +79,29 @@ Cripto e coppie FX non ricevono ISIN inventati. ETF, ETC, ETN o altri prodotti c
 
 Il catalogo ufficiale Trade Republic Italia costituisce una base versionata, non una garanzia permanente. `trade_republic_verified_at` distingue una verifica recente da una semplice presenza storica nel catalogo.
 
+#### 4.1.1 Copertura massima senza degradare l'affidabilità
+
+Il catalogo metadata viene mantenuto molto più ampio dell'insieme di strumenti caricati attivamente nei provider di prezzo. Questo consente di cercare molte opportunità senza consumare quote API per migliaia di titoli inutilizzati.
+
+Gli strumenti sono classificati in tre livelli:
+
+1. **Qualified** — identificativi risolti, valuta/venue note, prezzo e storico sufficienti, qualità compatibile con la strategia; utilizzabili dall'automazione paper;
+2. **Observable** — ricercabili e consultabili, ma con dati delayed/EOD o storico insufficiente; utilizzabili per watchlist, analisi compatibili e completamento dati;
+3. **Reference only** — indici, FX, tassi, macro o strumenti non mappati in modo univoco; mai passati al paper broker.
+
+L'ingestione include azioni, ETF, obbligazioni e strumenti quotati presenti nell'universo Trade Republic Italia, oltre a cripto supportate, riferimenti valutari e prodotti ETC/ETN con identificativi validi. Duplicati fra ticker, venue e classi dello stesso emittente vengono risolti tramite ISIN/FIGI/venue; non vengono fusi strumenti economicamente diversi.
+
+La copertura è misurata e visibile, non dichiarata genericamente. Il Data Center mostra:
+
+- numero di strumenti catalogati per asset class e mercato;
+- percentuale con ISIN/FIGI/venue risolti;
+- percentuale Qualified, Observable e Reference only;
+- percentuale verificata Trade Republic e data dell'ultimo catalogo;
+- strumenti scartati o ambigui con motivazione;
+- copertura intraday, delayed ed EOD per provider.
+
+Non viene fissato un numero statico di titoli: il catalogo è dinamico e versionato. L'obiettivo è importare tutto ciò che le fonti autorizzate rendono disponibile, mantenendo qualità e provenienza verificabili.
+
 ### 4.2 Market data layer
 
 Ogni osservazione conserva almeno:
@@ -105,6 +130,16 @@ Gerarchia iniziale gratuita:
 | News | Finnhub | Alpha Vantage come fallback limitato |
 
 Yahoo Finance non è il backend automatico principale perché non offre una API pubblica supportata con SLA e autorizzazione generale alla raccolta automatizzata.
+
+Le quote gratuite vengono assegnate in modo prioritario e lazy:
+
+1. posizioni reali e demo;
+2. ordini aperti e candidati delle strategie attive;
+3. watchlist dell'utente;
+4. strumenti visualizzati o richiesti;
+5. aggiornamenti bulk/EOD del resto del catalogo.
+
+Un budget manager per provider applica batching, cache, deduplicazione, backoff e quote giornaliere/mensili. L'ampiezza del catalogo non deve provocare refresh indiscriminati né bloccare i titoli già posseduti.
 
 ### 4.3 Portafogli e ledger
 
@@ -243,7 +278,21 @@ La navigazione globale passa da 15 destinazioni concorrenti a cinque hub:
 
 Le vecchie URL vengono mantenute tramite redirect finché necessario.
 
-### 7.1 Home Oggi
+### 7.1 Ricerca e discovery dell'universo
+
+Mercati offre una ricerca globale per nome, ticker, ISIN e FIGI, con filtri combinabili per:
+
+- asset class e sottotipo;
+- Paese, mercato, venue e valuta;
+- stato Trade Republic e data di verifica;
+- qualità/freschezza disponibile;
+- capitalizzazione, liquidità, volatilità e volume quando forniti;
+- rendimento, rischio, score e compatibilità con il profilo demo;
+- distribuente/accumulazione e TER per ETF quando disponibili.
+
+I risultati separano chiaramente “disponibile nel catalogo”, “dati sufficienti” e “idoneo all'automazione”. Watchlist e screener salvati permettono di restringere migliaia di strumenti senza trasformare la home in un elenco ingestibile.
+
+### 7.2 Home Oggi
 
 Ordine dei contenuti:
 
@@ -255,7 +304,7 @@ Ordine dei contenuti:
 6. guardrail e kill switch;
 7. massimo tre news rilevanti per le posizioni.
 
-### 7.2 Scheda strumento e grafici
+### 7.3 Scheda strumento e grafici
 
 Ogni scheda mostra:
 
@@ -328,6 +377,9 @@ Principio generale: fail-closed per ordini e fail-soft per consultazione.
 - fixture registrate senza chiamate reali in CI;
 - rate limit, timeout, retry e fallback;
 - mapping ISIN/ticker/venue ambiguo;
+- import catalogo su larga scala, deduplicazione e versionamento;
+- promozione/declassamento fra Qualified, Observable e Reference only;
+- prioritizzazione quote per posizioni, ordini, strategie e watchlist;
 - quote delayed/EOD incompatibili con intraday;
 - contratti API e migrazioni compatibili.
 
@@ -354,7 +406,7 @@ Principio generale: fail-closed per ordini e fail-soft per consultazione.
 Il programma è troppo ampio per un'unica modifica. Il lavoro procede in sei fasi autonome, ciascuna con piano e gate propri:
 
 1. **Fondamenta affidabili** — correzioni audit, sicurezza, migrazioni e test;
-2. **Strumenti e dati reali** — instrument master, fonti gratuite, FX e qualità;
+2. **Strumenti e dati reali** — catalogo più ampio possibile, instrument master, fonti gratuite, FX, quality tier e budget provider;
 3. **Portafogli multipli** — reale vuoto, demo, ledger, paper orders e P/L;
 4. **Automazione locale** — scheduler, strategie, risk engine, recovery e shadow mode;
 5. **Calm Intelligence** — cinque hub, grafici, responsive e accessibilità;
@@ -371,6 +423,7 @@ Una fase è completa solo quando:
 - non restano problemi critici/alti noti nell'area modificata;
 - backup e rollback pertinenti sono stati provati;
 - dati validi, mancanti, stale e corrotti sono gestiti;
+- copertura catalogo e quota di strumenti Qualified/Observable sono misurate e visibili;
 - segreti e dati personali non compaiono nei log;
 - documentazione e avvio locale sono aggiornati;
 - il risultato è verificabile dall'interfaccia o da un test riproducibile.
