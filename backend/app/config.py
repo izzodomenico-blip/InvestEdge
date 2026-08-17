@@ -53,6 +53,13 @@ class Settings:
     openfigi_daily_limit: int = 100
     openfigi_monthly_limit: int = 1000
     ecb_fx_max_age_days: int = 7
+    market_data_quote_max_age_minutes: int = 5
+    market_data_delayed_max_age_minutes: int = 30
+    market_data_eod_max_age_hours: int = 96
+    market_data_reference_max_age_days: int = 7
+    market_data_qualified_history_bars: int = 60
+    market_data_divergence_bps: int = 500
+    trade_republic_verified_max_age_days: int = 30
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
@@ -132,6 +139,27 @@ class Settings:
             openfigi_daily_limit=int(os.getenv("OPENFIGI_DAILY_LIMIT", "100")),
             openfigi_monthly_limit=int(os.getenv("OPENFIGI_MONTHLY_LIMIT", "1000")),
             ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
+            market_data_quote_max_age_minutes=int(
+                os.getenv("MARKET_DATA_QUOTE_MAX_AGE_MINUTES", "5")
+            ),
+            market_data_delayed_max_age_minutes=int(
+                os.getenv("MARKET_DATA_DELAYED_MAX_AGE_MINUTES", "30")
+            ),
+            market_data_eod_max_age_hours=int(
+                os.getenv("MARKET_DATA_EOD_MAX_AGE_HOURS", "96")
+            ),
+            market_data_reference_max_age_days=int(
+                os.getenv("MARKET_DATA_REFERENCE_MAX_AGE_DAYS", "7")
+            ),
+            market_data_qualified_history_bars=int(
+                os.getenv("MARKET_DATA_QUALIFIED_HISTORY_BARS", "60")
+            ),
+            market_data_divergence_bps=int(
+                os.getenv("MARKET_DATA_DIVERGENCE_BPS", "500")
+            ),
+            trade_republic_verified_max_age_days=int(
+                os.getenv("TRADE_REPUBLIC_VERIFIED_MAX_AGE_DAYS", "30")
+            ),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),

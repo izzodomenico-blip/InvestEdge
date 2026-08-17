@@ -773,6 +773,22 @@ def test_latest_compatible_marks_stale_last_good_without_mutating_observation(
     assert event["fallback_reason"] == "LAST_GOOD_STALE"
 
 
+def test_quality_tier_freshness_policy_uses_configured_eod_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MARKET_DATA_EOD_MAX_AGE_HOURS", "2")
+    get_settings.cache_clear()
+    try:
+        assert MarketObservationService.effective_quality_for(
+            "EOD",
+            "eod",
+            NOW - timedelta(hours=3),
+            NOW,
+        ) == "stale"
+    finally:
+        get_settings.cache_clear()
+
+
 def test_price_history_projection_exposes_provenance_and_fallback_fields(
     market_connection: sqlite3.Connection,
 ) -> None:

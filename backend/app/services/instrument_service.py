@@ -45,6 +45,159 @@ class AmbiguousInstrumentError(ValueError):
 
 class InstrumentService:
     @staticmethod
+    def _attested_identifier_value_count(
+        connection: sqlite3.Connection,
+        instrument_id: int,
+        scheme: str,
+    ) -> int:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT identifier.normalized_value) AS value_count
+            FROM instrument_identifiers AS identifier
+            LEFT JOIN instrument_listings AS listing
+              ON listing.id = identifier.listing_id
+            WHERE identifier.scheme = ?
+              AND COALESCE(identifier.instrument_id, listing.instrument_id) = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM instrument_identifier_attestations AS attestation
+                  WHERE attestation.identifier_id = identifier.id
+              )
+            """,
+            (scheme, instrument_id),
+        ).fetchone()
+        return int(row["value_count"])
+
+    @staticmethod
+    def has_ambiguous_identity(
+        connection: sqlite3.Connection,
+        instrument_id: int,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM instrument_resolution_cases AS resolution
+            JOIN catalog_entries AS entry
+              ON entry.id = resolution.catalog_entry_id
+            WHERE entry.instrument_id = ?
+              AND resolution.status = 'AMBIGUOUS'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM instrument_resolution_cases AS newer
+                  WHERE newer.catalog_entry_id = resolution.catalog_entry_id
+                    AND newer.id > resolution.id
+              )
+            LIMIT 1
+            """,
+            (instrument_id,),
+        ).fetchone()
+        if row is not None:
+            return True
+        instrument = connection.execute(
+            "SELECT instrument_type FROM instruments WHERE id = ?",
+            (instrument_id,),
+        ).fetchone()
+        if (
+            instrument is not None
+            and instrument["instrument_type"] == "CRYPTO"
+            and InstrumentService._attested_identifier_value_count(
+                connection,
+                instrument_id,
+                "COINGECKO_ID",
+            )
+            > 1
+        ):
+            return True
+        duplicate_primary = connection.execute(
+            """
+            SELECT 1
+            FROM instrument_identifiers AS current_identifier
+            LEFT JOIN instrument_listings AS current_listing
+              ON current_listing.id = current_identifier.listing_id
+            JOIN instrument_identifiers AS other_identifier
+              ON other_identifier.id != current_identifier.id
+             AND other_identifier.scheme = current_identifier.scheme
+             AND other_identifier.normalized_value = current_identifier.normalized_value
+            LEFT JOIN instrument_listings AS other_listing
+              ON other_listing.id = other_identifier.listing_id
+            WHERE current_identifier.scheme IN ('ISIN', 'FIGI', 'COINGECKO_ID')
+              AND COALESCE(
+                    current_identifier.instrument_id,
+                    current_listing.instrument_id
+                  ) = ?
+              AND COALESCE(
+                    other_identifier.instrument_id,
+                    other_listing.instrument_id
+                  ) != ?
+            LIMIT 1
+            """,
+            (instrument_id, instrument_id),
+        ).fetchone()
+        return duplicate_primary is not None
+
+    @staticmethod
+    def verified_primary_identifier(
+        connection: sqlite3.Connection,
+        instrument_id: int,
+        instrument_type: str,
+    ) -> sqlite3.Row | None:
+        schemes = ("COINGECKO_ID",) if instrument_type == "CRYPTO" else ("ISIN", "FIGI")
+        if (
+            instrument_type == "CRYPTO"
+            and InstrumentService._attested_identifier_value_count(
+                connection,
+                instrument_id,
+                "COINGECKO_ID",
+            )
+            != 1
+        ):
+            return None
+        placeholders = ",".join("?" for _ in schemes)
+        return connection.execute(
+            f"""
+            SELECT identifier.*
+            FROM instrument_identifiers AS identifier
+            WHERE identifier.scheme IN ({placeholders})
+              AND (
+                  (identifier.scope = 'INSTRUMENT' AND identifier.instrument_id = ?)
+                  OR
+                  (
+                      identifier.scope = 'LISTING'
+                      AND identifier.listing_id IN (
+                          SELECT id FROM instrument_listings WHERE instrument_id = ?
+                      )
+                  )
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM instrument_identifier_attestations AS attestation
+                  WHERE attestation.identifier_id = identifier.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM instrument_identifiers AS other_identifier
+                  LEFT JOIN instrument_listings AS other_listing
+                    ON other_listing.id = other_identifier.listing_id
+                  WHERE other_identifier.id != identifier.id
+                    AND other_identifier.scheme = identifier.scheme
+                    AND other_identifier.normalized_value = identifier.normalized_value
+                    AND COALESCE(
+                          other_identifier.instrument_id,
+                          other_listing.instrument_id
+                        ) != ?
+              )
+            ORDER BY CASE identifier.scheme
+                         WHEN 'ISIN' THEN 1
+                         WHEN 'FIGI' THEN 2
+                         ELSE 3
+                     END,
+                     identifier.id
+            LIMIT 1
+            """,
+            (*schemes, instrument_id, instrument_id, instrument_id),
+        ).fetchone()
+
+    @staticmethod
     def backfill_active_assets(connection: sqlite3.Connection) -> int:
         owns_transaction = not connection.in_transaction
         if owns_transaction:

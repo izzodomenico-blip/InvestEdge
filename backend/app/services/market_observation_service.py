@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from typing import cast, get_args
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from backend.app.config import Settings, get_settings
 from backend.app.models.market_data import (
     ADAPTER_VALIDATION_REASONS,
     EffectiveObservationQuality,
@@ -67,6 +68,9 @@ def _decimal_text(value: Decimal | None) -> str | None:
 
 
 class MarketObservationService:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings
+
     def validate(
         self,
         listing: sqlite3.Row | Mapping[str, object],
@@ -378,8 +382,8 @@ class MarketObservationService:
         )
         return observation
 
-    @staticmethod
     def effective_quality(
+        self,
         observation: MarketObservation,
         now: datetime,
     ) -> EffectiveObservationQuality:
@@ -388,6 +392,7 @@ class MarketObservationService:
             observation.source_quality,
             observation.provider_observed_at,
             now,
+            settings=self.settings,
         )
 
     @staticmethod
@@ -396,16 +401,19 @@ class MarketObservationService:
         source_quality: str,
         provider_observed_at: datetime,
         now: datetime,
+        *,
+        settings: Settings | None = None,
     ) -> EffectiveObservationQuality:
+        policy = settings or get_settings()
         age = now.astimezone(UTC) - provider_observed_at.astimezone(UTC)
         if capability in {"REFERENCE", "FX"}:
-            maximum_age = timedelta(days=7)
+            maximum_age = timedelta(days=policy.market_data_reference_max_age_days)
         elif source_quality == "eod" or capability == "EOD":
-            maximum_age = timedelta(hours=96)
+            maximum_age = timedelta(hours=policy.market_data_eod_max_age_hours)
         elif source_quality == "delayed":
-            maximum_age = timedelta(minutes=30)
+            maximum_age = timedelta(minutes=policy.market_data_delayed_max_age_minutes)
         else:
-            maximum_age = timedelta(minutes=5)
+            maximum_age = timedelta(minutes=policy.market_data_quote_max_age_minutes)
         if age > maximum_age:
             return "stale"
         return cast(EffectiveObservationQuality, source_quality)

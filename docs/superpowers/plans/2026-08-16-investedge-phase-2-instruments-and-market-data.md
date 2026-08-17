@@ -896,11 +896,11 @@ class InstrumentQualityService:
 
 Nuova tabella append-only `quality_assessments`; `instruments.quality_tier`, `quality_reason_code`, `quality_assessed_at` sono la projection corrente.
 
-- [ ] **Step 1: Scrivere la matrice di test RED**
+- [x] **Step 1: Scrivere la matrice di test RED**
 
 Copertura: macro/rate/index/FX sempre `REFERENCE_ONLY`; mapping ambiguo; ISIN/FIGI mancante; crypto con `COINGECKO_ID` valido senza ISIN inventato; listing senza valuta/timezone/MIC per mercati regolamentati; nessun dato; dato stale; storia sotto/sopra soglia; promozione; declassamento; due provider divergenti; rejection critica aperta nello scope EOD selezionato; payload corrotto senza timestamp seguito da observation valida dello stesso scope, resolution persistita e tier nuovamente recuperabile; reassessment idempotente con stesso evidence hash. Aggiungere tre casi espliciti: rejection Finnhub QUOTE opzionale + 60 BAR EOD valide non declassa; rejection EOD aperta dell'actual provider selezionato declassa; primary EOD fallito ma fallback EOD compatibile/valido selezionato mantiene il tier possibile e aggiunge `COMPATIBLE_FALLBACK_IN_USE`.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_quality.py tests\test_market_data_observations.py -k "quality_tier or promote or demote or divergence" -q
@@ -908,7 +908,7 @@ Copertura: macro/rate/index/FX sempre `REFERENCE_ONLY`; mapping ambiguo; ISIN/FI
 
 Expected: failure per servizio/schema assenti.
 
-- [ ] **Step 3: Implementare regole di tier complete**
+- [x] **Step 3: Implementare regole di tier complete**
 
 `select_evidence_scopes()` rende deterministico ciò che può bloccare il tier. Per `QUALIFIED`, la capability richiesta è soltanto EOD e lo scope rilevante è `(listing_id, EOD, actual_provider, operation)` selezionato da `latest_compatible()` per le 60 BAR e l'ultima barra; QUOTE, NEWS e REFERENCE opzionali non entrano nel gate. Per `OBSERVABLE`, lo scope rilevante è quello dell'observation compatibile effettivamente selezionata, EOD oppure QUOTE. Se un selection event sceglie un fallback compatibile, conta lo scope dell'`actual_provider`: una rejection aperta del requested provider resta visibile nell'evento/Data Center ma non blocca; una rejection aperta dell'actual provider usato come evidenza produce `UNRESOLVED_CRITICAL_REJECTION`. Gli ID observation, lo scope actual e l'eventuale fallback entrano nell'evidence hash.
 
@@ -916,11 +916,11 @@ Ordine fail-closed: reference types -> ambiguità/rejection rilevante/divergenza
 
 `eligible_for_strategy()` richiede sempre `QUALIFIED`, identity non ambigua e osservazione non stale. Se `require_trade_republic=True`, richiede inoltre `trade_republic_status="VERIFIED"` e `trade_republic_verified_at` non più vecchio di 30 giorni; un semplice `CATALOGED` restituisce `False`. Questa è soltanto una guardia dati riusabile: non crea strategie, ordini o scheduler.
 
-- [ ] **Step 4: Implementare divergenza e storico**
+- [x] **Step 4: Implementare divergenza e storico**
 
 Confrontare soltanto osservazioni `last`/`close` non stale, stessa currency e timestamp entro 10 minuti. Se `abs(a-b)/min(a,b) * 10_000 > 500`, registrare `PROVIDER_DIVERGENCE` e declassare a `REFERENCE_ONLY`; non mediare. Ogni cambio di tier crea assessment; stesso evidence hash e stesso tier non duplica la storia.
 
-- [ ] **Step 5: Eseguire GREEN**
+- [x] **Step 5: Eseguire GREEN**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_quality.py tests\test_market_data_observations.py tests\test_portfolio_accounting.py -q
@@ -929,7 +929,7 @@ Confrontare soltanto osservazioni `last`/`close` non stale, stessa currency e ti
 
 Expected: matrice tier e regressione EUR verdi; Ruff verde.
 
-- [ ] **Step 6: Review, commit e gate remoto**
+- [x] **Step 6: Review, commit e gate remoto**
 
 Review indipendente su ordine delle regole, falsi Qualified, declassamento, crypto senza ISIN, soglia divergenza e idempotenza. Correggere Critical/Important e ripetere Step 5.
 

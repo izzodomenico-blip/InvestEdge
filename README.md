@@ -200,6 +200,18 @@ Una candidate univoca non basta: lo stato diventa `RESOLVED` solo quando esiste 
 
 Configurazione conservativa: `OPENFIGI_CACHE_TTL_HOURS`, `OPENFIGI_MINUTE_LIMIT`, `OPENFIGI_DAILY_LIMIT` e `OPENFIGI_MONTHLY_LIMIT`. OpenFIGI non è fonte canonica per MIC, valuta o timezone e i suoi simboli vengono salvati soltanto dopo la risoluzione completa.
 
+### Tier di qualità degli strumenti
+
+La qualità è valutata separatamente dalla negoziabilità e viene versionata in `quality_assessments`; `instruments.quality_tier`, `quality_reason_code` e `quality_assessed_at` sono soltanto la projection corrente. I nomi API sono `QUALIFIED`, `OBSERVABLE` e `REFERENCE_ONLY`; la label UI dell'ultimo è “Reference only”. Una promozione non crea asset, strategie o ordini e non rende automaticamente tradabile lo strumento.
+
+- `QUALIFIED`: identità primaria verificata, listing completo, almeno 60 barre EOD su date distinte nello scope provider effettivamente selezionato e ultima barra non più vecchia di 96 ore.
+- `OBSERVABLE`: mapping univoco e almeno un'osservazione EOD o QUOTE valida e non stale, ma requisiti di qualificazione incompleti.
+- `REFERENCE_ONLY`: reference type, identità ambigua, rejection critica aperta nello scope selezionato, provider divergenti oltre soglia, oppure nessuna osservazione compatibile non stale.
+
+QUOTE, NEWS e REFERENCE opzionali non bloccano una qualificazione basata su EOD. Se viene usato un fallback compatibile, l'evidence conserva l'actual provider e aggiunge `COMPATIBLE_FALLBACK_IN_USE`; una rejection del provider richiesto non nasconde né declassa il fallback valido, mentre una rejection aperta del provider effettivamente usato è bloccante. Due prezzi `last`/`close` non stale, nella stessa valuta e distanti al massimo dieci minuti, causano `PROVIDER_DIVERGENCE` quando lo scarto supera 500 bps; i valori non vengono mediati.
+
+Le soglie sono configurabili tramite `MARKET_DATA_QUOTE_MAX_AGE_MINUTES` (default 5), `MARKET_DATA_DELAYED_MAX_AGE_MINUTES` (30), `MARKET_DATA_EOD_MAX_AGE_HOURS` (96), `MARKET_DATA_REFERENCE_MAX_AGE_DAYS` (7), `MARKET_DATA_QUALIFIED_HISTORY_BARS` (60), `MARKET_DATA_DIVERGENCE_BPS` (500) e `TRADE_REPUBLIC_VERIFIED_MAX_AGE_DAYS` (30). La guardia strategia richiede un tier `QUALIFIED` già registrato e dati ancora validi; quando è richiesta Trade Republic, accetta solo `VERIFIED` recente, mai il solo stato `CATALOGED`.
+
 ## Dati reali con cache
 
 ### Attivazione rapida

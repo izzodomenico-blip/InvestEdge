@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS instruments (
         )),
     quality_tier TEXT NOT NULL DEFAULT 'REFERENCE_ONLY'
         CHECK(quality_tier IN ('QUALIFIED', 'OBSERVABLE', 'REFERENCE_ONLY')),
+    quality_reason_code TEXT CHECK(
+        quality_reason_code IS NULL OR quality_reason_code IN (
+            'REFERENCE_INSTRUMENT', 'AMBIGUOUS_IDENTITY', 'MISSING_PRIMARY_ID',
+            'MISSING_LISTING_METADATA', 'UNRESOLVED_CRITICAL_REJECTION',
+            'NO_VALID_OBSERVATION', 'STALE_OBSERVATION', 'INSUFFICIENT_HISTORY',
+            'PROVIDER_DIVERGENCE', 'COMPATIBLE_FALLBACK_IN_USE',
+            'VALIDATED_OBSERVABLE', 'QUALIFICATION_RULES_MET'
+        )
+    ),
+    quality_assessed_at TEXT,
     source TEXT NOT NULL,
     source_date TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -350,6 +360,19 @@ CREATE TABLE IF NOT EXISTS market_data_selection_events (
     fallback_reason TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(selected_observation_id) REFERENCES market_observations(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS quality_assessments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_id INTEGER NOT NULL,
+    tier TEXT NOT NULL
+        CHECK(tier IN ('QUALIFIED', 'OBSERVABLE', 'REFERENCE_ONLY')),
+    reason_codes_json TEXT NOT NULL CHECK(length(trim(reason_codes_json)) > 0),
+    assessed_at TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    evidence_scopes_json TEXT NOT NULL CHECK(length(trim(evidence_scopes_json)) > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(instrument_id) REFERENCES instruments(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS assets (
@@ -930,6 +953,8 @@ CREATE INDEX IF NOT EXISTS idx_market_data_rejections_scope
 ON market_data_rejections(listing_id, provider, capability, operation, received_at);
 CREATE INDEX IF NOT EXISTS idx_market_data_selection_observation
 ON market_data_selection_events(selected_observation_id, selected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quality_assessments_instrument_latest
+ON quality_assessments(instrument_id, assessed_at DESC, id DESC);
 CREATE TRIGGER IF NOT EXISTS trg_market_observations_no_update
 BEFORE UPDATE ON market_observations
 BEGIN
@@ -970,6 +995,16 @@ BEFORE DELETE ON market_data_selection_events
 BEGIN
     SELECT RAISE(ABORT, 'market data selection events are append-only');
 END;
+CREATE TRIGGER IF NOT EXISTS trg_quality_assessments_no_update
+BEFORE UPDATE ON quality_assessments
+BEGIN
+    SELECT RAISE(ABORT, 'quality assessments are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_quality_assessments_no_delete
+BEFORE DELETE ON quality_assessments
+BEGIN
+    SELECT RAISE(ABORT, 'quality assessments are append-only');
+END;
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
@@ -1001,6 +1036,22 @@ SCHEMA = BASE_SCHEMA + INDEX_SCHEMA
 
 
 MIGRATIONS = {
+    "instruments": [
+        (
+            "quality_reason_code",
+            "ALTER TABLE instruments ADD COLUMN quality_reason_code TEXT "
+            "CHECK(quality_reason_code IS NULL OR quality_reason_code IN ("
+            "'REFERENCE_INSTRUMENT', 'AMBIGUOUS_IDENTITY', 'MISSING_PRIMARY_ID', "
+            "'MISSING_LISTING_METADATA', 'UNRESOLVED_CRITICAL_REJECTION', "
+            "'NO_VALID_OBSERVATION', 'STALE_OBSERVATION', 'INSUFFICIENT_HISTORY', "
+            "'PROVIDER_DIVERGENCE', 'COMPATIBLE_FALLBACK_IN_USE', "
+            "'VALIDATED_OBSERVABLE', 'QUALIFICATION_RULES_MET'))",
+        ),
+        (
+            "quality_assessed_at",
+            "ALTER TABLE instruments ADD COLUMN quality_assessed_at TEXT",
+        ),
+    ],
     "assets": [
         ("sector", "ALTER TABLE assets ADD COLUMN sector TEXT"),
         ("country", "ALTER TABLE assets ADD COLUMN country TEXT"),
