@@ -1082,11 +1082,11 @@ class FinnhubQuoteProvider(BaseMarketDataProvider):
 
 La risposta `c/h/l/o/pc/t` produce `kind="QUOTE"`, `last=c`, timestamp provider `t` e session del listing. Poiché il payload/free plan non offre metadata stabili sufficienti a provare realtime, l'adapter assegna sempre la classe conservativa stabile `source_quality="delayed"`; la differenza col clock calcola soltanto `delay_seconds` ed `effective_quality`/stale. `h/l/o/pc` restano metadata di quote e non sono salvati come BAR giornaliera. Lo stesso payload a due clock diversi deve deduplicare senza creare revisioni.
 
-- [ ] **Step 1: Scrivere test RED**
+- [x] **Step 1: Scrivere test RED**
 
 Testare header token, assenza key, key sentinella assente da log/fingerprint, MIC USA/non-USA, mapping mancante, `t=0`, `c=0`, timestamp futuro, 429/cooldown, budget 55/min, quote valida e mancata scrittura in `price_history`. Verificare che `fetch_quote(listing, now, bypass_cache=true)` inoltri il flag soltanto al transport e mantenga fingerprint, in-flight dedupe, quota e validation.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_finnhub_provider.py tests\test_provider_budget.py -k "finnhub or us_quote" -q
@@ -1094,15 +1094,15 @@ Testare header token, assenza key, key sentinella assente da log/fingerprint, MI
 
 Expected: failure per adapter/capability mancanti.
 
-- [ ] **Step 3: Implementare adapter e policy di copertura**
+- [x] **Step 3: Implementare adapter e policy di copertura**
 
 Usare endpoint fisso `/api/v1/quote`, simbolo da `provider_symbols`, key solo header. Passare `bypass_cache` senza reinterpretazione soltanto a `SafeProviderTransport.request()`. Classificare no-data con `ValidationReason="PROVIDER_NO_DATA"`, persisterlo in `market_data_rejections` sullo scope Finnhub QUOTE e lasciare che soltanto una quote valida successiva lo risolva; rifiutare timestamp zero/futuro e prezzo non positivo attraverso lo stesso validator. Non chiamare l'endpoint candle.
 
-- [ ] **Step 4: Collegare registry, budget e fallback**
+- [x] **Step 4: Collegare registry, budget e fallback**
 
 Finnhub è candidate QUOTE solo per MIC allowlistati. In caso di key mancante, quota, timeout o no-data, `MarketDataService` cerca soltanto una quote non stale dello stesso listing; non usa EOD come realtime e non cambia provider symbol.
 
-- [ ] **Step 5: Eseguire GREEN**
+- [x] **Step 5: Eseguire GREEN**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_finnhub_provider.py tests\test_provider_budget.py tests\test_market_data_observations.py tests\test_api.py -q
@@ -1111,7 +1111,7 @@ Finnhub è candidate QUOTE solo per MIC allowlistati. In caso di key mancante, q
 
 Expected: test verdi, nessun URL/secret, Ruff verde.
 
-- [ ] **Step 6: Review, commit e gate remoto**
+- [x] **Step 6: Review, commit e gate remoto**
 
 Review indipendente su limiti del free tier, MIC, quote-vs-candle, timestamp, header token, fallback e budget. Correggere Critical/Important e ripetere Step 5.
 

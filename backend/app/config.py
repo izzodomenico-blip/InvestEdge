@@ -65,6 +65,8 @@ class Settings:
     stooq_minute_limit: int = 5
     stooq_daily_limit: int = 100
     stooq_monthly_limit: int = 1000
+    finnhub_quote_cache_ttl_seconds: int = 60
+    finnhub_quote_minute_limit: int = 55
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
@@ -170,6 +172,12 @@ class Settings:
             stooq_minute_limit=int(os.getenv("STOOQ_MINUTE_LIMIT", "5")),
             stooq_daily_limit=int(os.getenv("STOOQ_DAILY_LIMIT", "100")),
             stooq_monthly_limit=int(os.getenv("STOOQ_MONTHLY_LIMIT", "1000")),
+            finnhub_quote_cache_ttl_seconds=int(
+                os.getenv("FINNHUB_QUOTE_CACHE_TTL_SECONDS", "60")
+            ),
+            finnhub_quote_minute_limit=int(
+                os.getenv("FINNHUB_QUOTE_MINUTE_LIMIT", "55")
+            ),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
             fred_daily_limit=int(os.getenv("FRED_DAILY_LIMIT", "100")),

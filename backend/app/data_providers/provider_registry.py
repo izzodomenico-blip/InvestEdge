@@ -9,6 +9,7 @@ from backend.app.config import Settings
 from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.data_providers.coingecko import CoinGeckoProvider
+from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
 from backend.app.data_providers.fred import FredProvider
 from backend.app.data_providers.stooq import StooqProvider
 from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
@@ -34,6 +35,7 @@ class ProviderRegistry:
         self.connection = connection
         self.providers: list[BaseMarketDataProvider] = [
             StooqProvider(settings, connection),
+            FinnhubQuoteProvider(settings, connection),
             AlphaVantageProvider(settings, connection),
             YahooFinanceProvider(settings, connection),
             CoinGeckoProvider(settings, connection),
@@ -43,7 +45,12 @@ class ProviderRegistry:
     def provider_for_asset_type(self, asset_type: str) -> BaseMarketDataProvider | None:
         normalized = asset_type.lower()
         for provider in self.providers:
-            if provider.provider_name in {"stooq", "alpha_vantage", "yahoo_finance"}:
+            if provider.provider_name in {
+                "stooq",
+                "finnhub",
+                "alpha_vantage",
+                "yahoo_finance",
+            }:
                 continue
             if provider.supports_asset_type(normalized):
                 return provider
@@ -56,12 +63,12 @@ class ProviderRegistry:
         capability: ProviderCapability,
     ) -> tuple[ProviderCapabilityMatch, ...]:
         normalized_capability = str(capability).strip().upper()
-        if normalized_capability != "EOD":
+        if normalized_capability not in {"EOD", "QUOTE"}:
             return ()
         rows = connection.execute(
             """
             SELECT symbol.provider, symbol.capability, symbol.listing_id,
-                   symbol.provider_symbol, listing.currency,
+                   symbol.provider_symbol, listing.currency, listing.mic,
                    instrument.instrument_type
             FROM provider_symbols AS symbol
             JOIN instrument_listings AS listing ON listing.id = symbol.listing_id
@@ -78,12 +85,17 @@ class ProviderRegistry:
         seen: set[str] = set()
         for row in rows:
             provider_name = str(row["provider"]).strip().lower()
-            if provider_name != "stooq" or provider_name in seen:
+            expected_provider = "stooq" if normalized_capability == "EOD" else "finnhub"
+            if provider_name != expected_provider or provider_name in seen:
                 continue
             provider = self.provider_named(provider_name)
             asset_type = str(row["instrument_type"]).strip().lower()
             if provider is None or not provider.supports_asset_type(asset_type):
                 continue
+            if normalized_capability == "QUOTE":
+                mic = str(row["mic"] or "").strip().upper()
+                if mic not in FinnhubQuoteProvider.supported_mics:
+                    continue
             seen.add(provider_name)
             matches.append(
                 ProviderCapabilityMatch(

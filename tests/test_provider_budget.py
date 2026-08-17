@@ -1064,3 +1064,39 @@ def test_finnhub_news_sends_secret_only_in_header_via_safe_transport(
     )
     assert sentinel not in persisted_metadata
     get_settings.cache_clear()
+
+
+def test_finnhub_us_quote_local_policy_blocks_request_56_in_same_minute() -> None:
+    from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
+
+    connection = _initialize()
+    settings = replace(
+        get_settings(),
+        enable_real_data=True,
+        finnhub_api_key="TEST_FINNHUB_QUOTE_KEY_12345",
+        finnhub_quote_minute_limit=80,
+    )
+    provider = FinnhubQuoteProvider(
+        settings,
+        connection,
+        transport=_transport(
+            lambda _request: _json_response({"c": 1, "h": 1, "l": 1, "o": 1, "pc": 1, "t": 1}),
+            allowed_hosts={"finnhub.io"},
+        ),
+    )
+    manager = ProviderBudgetManager()
+
+    for index in range(55):
+        manager.reserve(
+            connection,
+            provider.policy,
+            "finnhub",
+            "QUOTE",
+            f"{index:064x}",
+            NOW,
+        )
+    with pytest.raises(ProviderBudgetExceeded) as exc_info:
+        manager.reserve(connection, provider.policy, "finnhub", "QUOTE", "f" * 64, NOW)
+
+    assert provider.policy == ProviderBudgetPolicy(55, None, None, 3)
+    assert exc_info.value.window_kind == "MINUTE"

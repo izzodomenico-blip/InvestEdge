@@ -217,7 +217,7 @@ Le soglie sono configurabili tramite `MARKET_DATA_QUOTE_MAX_AGE_MINUTES` (defaul
 ### Attivazione rapida
 
 1. Copia `backend/.env.example` in `backend/.env`.
-2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
+2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Per le quote snapshot USA configura `FINNHUB_API_KEY` e un simbolo Finnhub `QUOTE/VERIFIED` sul listing. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
 3. Riavvia `Avvia-InvestEdge.bat`.
 4. Apri la pagina **Dati** e clicca **Aggiorna tutti i dati** (e nella pagina **News**, **Aggiorna tutte**).
 
@@ -228,6 +228,7 @@ Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente a
 Provider predisposti:
 
 - `StooqProvider`: barre EOD per listing compatibili, soltanto in opt-in e con mapping verificato; non deriva suffissi o simboli dal ticker locale.
+- `FinnhubQuoteProvider`: quote snapshot soltanto per listing su MIC USA allowlistati e simbolo `QUOTE/VERIFIED`; usa `X-Finnhub-Token`, classifica conservativamente il feed come `delayed` e non crea barre in `price_history`.
 - `AlphaVantageProvider`: visibile ma disabilitato per i prezzi con reason code `SECRET_IN_QUERY_POLICY`; la key non viene inserita in URL o transport.
 - `YahooFinanceProvider`: mantenuto per compatibilita, ma disabilitato come provider prezzo primario o fallback di rete con reason code `NOT_PRIMARY_POLICY`.
 - `CoinGeckoProvider`: cripto mappate BTC, ETH, SOL, BNB, XRP.
@@ -243,6 +244,7 @@ Regole operative:
 
 - se `ENABLE_REAL_DATA=false`, il backend non chiama API esterne e usa seed/demo;
 - Stooq richiede anche `ENABLE_STOOQ=true` e un mapping `provider_symbols` esplicito e verificato;
+- Finnhub richiede una key solo header, un mapping esplicito e uno dei MIC `XNYS`, `XNAS`, `XASE`, `ARCX`, `BATS`; key assente, quota o timeout disabilitano/fanno fallire soltanto quel provider e il fallback accetta esclusivamente una QUOTE non stale dello stesso listing;
 - se la cache non e scaduta, il backend usa la cache;
 - se manca una API key, se il provider fallisce o se un budget e raggiunto, l'app seleziona l'ultima observation compatibile senza mutarne listing o valuta;
 - ogni chiamata reale incrementa `api_usage`;
@@ -257,6 +259,9 @@ STOOQ_CACHE_TTL_HOURS=24
 STOOQ_MINUTE_LIMIT=5
 STOOQ_DAILY_LIMIT=100
 STOOQ_MONTHLY_LIMIT=1000
+FINNHUB_API_KEY=
+FINNHUB_QUOTE_CACHE_TTL_SECONDS=60
+FINNHUB_QUOTE_MINUTE_LIMIT=55
 ALPHA_VANTAGE_API_KEY=
 COINGECKO_API_KEY=
 FRED_API_KEY=

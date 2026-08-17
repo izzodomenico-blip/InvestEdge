@@ -12,6 +12,7 @@ import pandas as pd
 
 from backend.app.config import get_settings
 from backend.app.data_providers import (
+    FinnhubQuoteProvider,
     MissingApiKey,
     ProviderError,
     ProviderRegistry,
@@ -58,11 +59,16 @@ class MarketDataService:
         provider: BaseMarketDataProvider | None = None
         provider_symbol: str | None = None
         listing_id = asset["instrument_listing_id"]
+        selected_capability = self._capability_for_asset(str(asset["asset_type"]))
         if (
             listing_id is not None
-            and self._capability_for_asset(str(asset["asset_type"])) == "EOD"
+            and selected_capability == "EOD"
         ):
             matches = registry.providers_for(connection, int(listing_id), "EOD")
+            if not matches:
+                matches = registry.providers_for(connection, int(listing_id), "QUOTE")
+                if matches:
+                    selected_capability = "QUOTE"
             if matches:
                 match = matches[0]
                 provider = registry.provider_named(match.provider)
@@ -76,6 +82,7 @@ class MarketDataService:
                 asset=asset,
                 provider=provider.provider_name if provider else None,
                 message="Dati reali disattivati. Stai usando dati seed/demo.",
+                capability=selected_capability,
             )
 
         if provider is None:
@@ -84,6 +91,7 @@ class MarketDataService:
                 asset=asset,
                 provider=None,
                 message="Nessun provider configurato per questa asset class, uso dati locali.",
+                capability=selected_capability,
             )
 
         if not provider.api_key_configured():
@@ -92,10 +100,20 @@ class MarketDataService:
                 asset=asset,
                 provider=provider.provider_name,
                 message="API key non configurata.",
+                capability=selected_capability,
             )
 
         if isinstance(provider, StooqProvider):
             return self._refresh_stooq_prices(
+                connection,
+                asset,
+                provider,
+                provider_symbol,
+                force,
+            )
+
+        if isinstance(provider, FinnhubQuoteProvider):
+            return self._refresh_finnhub_quote(
                 connection,
                 asset,
                 provider,
@@ -285,6 +303,89 @@ class MarketDataService:
                 "Prezzi aggiornati da cache."
                 if provider.last_fetch_used_cache
                 else "Prezzi aggiornati da provider reale."
+            ),
+        }
+
+    def _refresh_finnhub_quote(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        provider: FinnhubQuoteProvider,
+        provider_symbol: str | None,
+        force: bool,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        listing = {
+            "id": int(asset["instrument_listing_id"]),
+            "mic": asset["listing_mic"],
+            "timezone": asset["listing_timezone"],
+            "currency": asset["listing_currency"],
+            "instrument_type": asset["instrument_type"],
+            "provider_symbol": provider_symbol,
+            "session": "REGULAR",
+        }
+        try:
+            envelope = provider.fetch_quote(
+                listing,
+                now,
+                bypass_cache=force,
+            )
+        except (RateLimitExceeded, MissingApiKey, RealDataDisabled) as exc:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                str(exc),
+                capability="QUOTE",
+            )
+        except ProviderError as exc:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                f"{exc} Uso dati locali.",
+                capability="QUOTE",
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider non disponibile, uso dati locali.",
+                capability="QUOTE",
+            )
+
+        ingest_result = self.observation_service.ingest_batch(connection, [envelope], now)
+        accepted = ingest_result.accepted > 0 or ingest_result.duplicates > 0
+        if not accepted:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza quote valide, conservo l'ultima quote compatibile.",
+                used_cache=provider.last_fetch_used_cache,
+                capability="QUOTE",
+            )
+
+        self.observation_service.latest_compatible(
+            connection,
+            int(asset["instrument_listing_id"]),
+            "QUOTE",
+            now,
+            requested_provider=provider.provider_name,
+        )
+        self._assess_quality(connection, asset, now)
+        return {
+            "symbol": asset["symbol"],
+            "provider": provider.provider_name,
+            "rows_inserted": 0,
+            "rows_updated": 0,
+            "used_cache": provider.last_fetch_used_cache,
+            "used_fallback": False,
+            "message": (
+                "Quote aggiornata da cache."
+                if provider.last_fetch_used_cache
+                else "Quote aggiornata da provider reale."
             ),
         }
 
@@ -531,6 +632,7 @@ class MarketDataService:
             """
             SELECT asset.id, asset.symbol, asset.asset_type, asset.risk_level,
                    asset.currency, asset.instrument_listing_id,
+                   listing.mic AS listing_mic,
                    listing.timezone AS listing_timezone,
                    listing.currency AS listing_currency,
                    instrument.id AS instrument_id,
@@ -553,15 +655,26 @@ class MarketDataService:
         provider: str | None,
         message: str,
         used_cache: bool = False,
+        capability: str | None = None,
     ) -> dict[str, Any]:
         if asset["instrument_listing_id"] is not None:
-            self.observation_service.latest_compatible(
+            selected_capability = capability or self._capability_for_asset(
+                str(asset["asset_type"])
+            )
+            now = datetime.now(UTC)
+            if selected_capability != "QUOTE" or self._has_fresh_observation(
                 connection,
                 int(asset["instrument_listing_id"]),
-                self._capability_for_asset(str(asset["asset_type"])),
-                datetime.now(UTC),
-                requested_provider=provider,
-            )
+                selected_capability,
+                now,
+            ):
+                self.observation_service.latest_compatible(
+                    connection,
+                    int(asset["instrument_listing_id"]),
+                    selected_capability,
+                    now,
+                    requested_provider=provider,
+                )
         if provider == "stooq":
             self._assess_quality(connection, asset, datetime.now(UTC))
         return {
@@ -573,6 +686,51 @@ class MarketDataService:
             "used_fallback": True,
             "message": message,
         }
+
+    @staticmethod
+    def _has_fresh_observation(
+        connection: sqlite3.Connection,
+        listing_id: int,
+        capability: str,
+        now: datetime,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT provider_observed_at, source_quality
+            FROM market_observations AS observation
+            WHERE observation.listing_id = ?
+              AND observation.capability = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM market_observations AS newer
+                  WHERE newer.supersedes_observation_id = observation.id
+              )
+            ORDER BY observation.provider_observed_at DESC,
+                     observation.ingested_at DESC,
+                     observation.id DESC
+            LIMIT 1
+            """,
+            (listing_id, capability.strip().upper()),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            observed_at = datetime.fromisoformat(
+                str(row["provider_observed_at"]).replace("Z", "+00:00")
+            )
+        except ValueError:
+            return False
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            return False
+        return (
+            MarketObservationService.effective_quality_for(
+                capability.strip().upper(),
+                str(row["source_quality"]),
+                observed_at,
+                now,
+            )
+            != "stale"
+        )
 
     def _record_provider_no_data(
         self,
