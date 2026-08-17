@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlencode
 
 from backend.app.data_providers.base import BaseMarketDataProvider, ProviderError
+from backend.app.services.provider_budget_service import ProviderAvailability
 
 # ETF europei non coperti dal piano free Alpha Vantage (solo mercati USA):
 # li mappiamo sull'equivalente USA, che traccia lo stesso indice.
@@ -30,33 +30,13 @@ class AlphaVantageProvider(BaseMarketDataProvider):
     def supports_asset_type(self, asset_type: str) -> bool:
         return asset_type.lower() in {"stock", "etf", "bond_etf"}
 
-    def _request_url(self, symbol: str) -> str:
-        upstream_symbol = PROXY_SYMBOLS.get(symbol.upper(), symbol.upper())
-        query = urlencode(
-            {
-                "function": self.endpoint,
-                "symbol": upstream_symbol,
-                # "compact" = ultimi 100 giorni (free). "full" è premium su TIME_SERIES_DAILY.
-                "outputsize": "compact",
-                "apikey": self.settings.alpha_vantage_api_key or "",
-            }
-        )
-        return f"{self.base_url}?{query}"
+    @staticmethod
+    def availability() -> ProviderAvailability:
+        return ProviderAvailability("DISABLED", "SECRET_IN_QUERY_POLICY", None)
 
     def get_daily_prices(self, symbol: str, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
-        request_url = self._request_url(symbol)
-        cached = self.get_from_cache(self.endpoint, symbol, request_url, force=force)
-        if cached is not None:
-            return self.normalize_prices(cached, symbol), True
-
-        raw_response = self.fetch_json(request_url)
-        if "Error Message" in raw_response:
-            raise ProviderError("Alpha Vantage non riconosce il simbolo richiesto.")
-        if "Note" in raw_response or "Information" in raw_response:
-            raise ProviderError("Alpha Vantage ha risposto con un limite o un avviso provider.")
-
-        self.save_to_cache(self.endpoint, symbol, request_url, raw_response)
-        return self.normalize_prices(raw_response, symbol), False
+        del symbol, force
+        raise ProviderError("alpha_vantage:EOD:SECRET_IN_QUERY_POLICY")
 
     def normalize_prices(self, raw_response: dict[str, Any], symbol: str) -> list[dict[str, Any]]:
         series = raw_response.get("Time Series (Daily)")

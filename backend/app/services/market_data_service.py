@@ -17,10 +17,12 @@ from backend.app.data_providers import (
     ProviderRegistry,
     RateLimitExceeded,
     RealDataDisabled,
+    StooqProvider,
 )
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.models.market_data import MarketObservationEnvelope
 from backend.app.services.common import now_utc as _now
+from backend.app.services.instrument_quality_service import InstrumentQualityService
 from backend.app.services.instrument_service import InstrumentService
 from backend.app.services.market_observation_service import MarketObservationService
 from backend.app.services.portfolio_engine import PortfolioEngine
@@ -52,7 +54,30 @@ class MarketDataService:
             raise ValueError(f"Asset {symbol.upper()} non trovato.")
 
         settings = get_settings()
-        provider = self.get_provider_for_asset(connection, asset["asset_type"])
+        registry = ProviderRegistry(settings, connection)
+        provider: BaseMarketDataProvider | None = None
+        provider_symbol: str | None = None
+        listing_id = asset["instrument_listing_id"]
+        if (
+            listing_id is not None
+            and self._capability_for_asset(str(asset["asset_type"])) == "EOD"
+        ):
+            matches = registry.providers_for(connection, int(listing_id), "EOD")
+            if matches:
+                match = matches[0]
+                provider = registry.provider_named(match.provider)
+                provider_symbol = match.provider_symbol
+        if provider is None:
+            provider = self.get_provider_for_asset(connection, str(asset["asset_type"]))
+
+        if not settings.enable_real_data:
+            return self._fallback_result(
+                connection=connection,
+                asset=asset,
+                provider=provider.provider_name if provider else None,
+                message="Dati reali disattivati. Stai usando dati seed/demo.",
+            )
+
         if provider is None:
             return self._fallback_result(
                 connection=connection,
@@ -61,20 +86,21 @@ class MarketDataService:
                 message="Nessun provider configurato per questa asset class, uso dati locali.",
             )
 
-        if not settings.enable_real_data:
-            return self._fallback_result(
-                connection=connection,
-                asset=asset,
-                provider=provider.provider_name,
-                message="Dati reali disattivati. Stai usando dati seed/demo.",
-            )
-
         if not provider.api_key_configured():
             return self._fallback_result(
                 connection=connection,
                 asset=asset,
                 provider=provider.provider_name,
                 message="API key non configurata.",
+            )
+
+        if isinstance(provider, StooqProvider):
+            return self._refresh_stooq_prices(
+                connection,
+                asset,
+                provider,
+                provider_symbol,
+                force,
             )
 
         try:
@@ -155,6 +181,111 @@ class MarketDataService:
             "used_cache": used_cache,
             "used_fallback": False,
             "message": "Prezzi aggiornati da cache." if used_cache else "Prezzi aggiornati da provider reale.",
+        }
+
+    def _refresh_stooq_prices(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        provider: StooqProvider,
+        provider_symbol: str | None,
+        force: bool,
+    ) -> dict[str, Any]:
+        listing = {
+            "id": int(asset["instrument_listing_id"]),
+            "timezone": asset["listing_timezone"],
+            "currency": asset["listing_currency"],
+            "instrument_type": asset["instrument_type"],
+            "provider_symbol": provider_symbol,
+        }
+        try:
+            envelopes = provider.fetch_observations(
+                listing,
+                None,
+                None,
+                bypass_cache=force,
+            )
+        except (RateLimitExceeded, MissingApiKey, RealDataDisabled) as exc:
+            return self._fallback_result(connection, asset, provider.provider_name, str(exc))
+        except ProviderError as exc:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                f"{exc} Uso dati locali.",
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider non disponibile, uso dati locali.",
+            )
+
+        now = datetime.now(UTC)
+        if not envelopes:
+            self._record_provider_no_data(
+                connection,
+                asset,
+                provider.provider_name,
+                now,
+                operation=provider.operation,
+            )
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza dati utilizzabili, uso dati locali.",
+                used_cache=provider.last_fetch_used_cache,
+            )
+
+        before_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        ingest_result = self.observation_service.ingest_batch(connection, envelopes, now)
+        accepted = ingest_result.accepted > 0 or ingest_result.duplicates > 0
+        if not accepted:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza dati validi, conservo l'ultimo dato locale.",
+                used_cache=provider.last_fetch_used_cache,
+            )
+        after_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        inserted = max(0, after_count - before_count)
+        updated = max(0, ingest_result.projected_price_rows - inserted)
+        if inserted or updated:
+            self._recalculate_signal(connection, int(asset["id"]))
+            self._refresh_portfolio_if_needed(connection, int(asset["id"]))
+        self.observation_service.latest_compatible(
+            connection,
+            int(asset["instrument_listing_id"]),
+            "EOD",
+            now,
+            requested_provider=provider.provider_name,
+        )
+        self._assess_quality(connection, asset, now)
+        return {
+            "symbol": asset["symbol"],
+            "provider": provider.provider_name,
+            "rows_inserted": inserted,
+            "rows_updated": updated,
+            "used_cache": provider.last_fetch_used_cache,
+            "used_fallback": False,
+            "message": (
+                "Prezzi aggiornati da cache."
+                if provider.last_fetch_used_cache
+                else "Prezzi aggiornati da provider reale."
+            ),
         }
 
     def refresh_all_watchlist(
@@ -334,10 +465,10 @@ class MarketDataService:
         provider = self.get_provider_for_asset(connection, asset["asset_type"])
         cache_status = self._cache_status(connection, provider.provider_name if provider else None, asset["symbol"])
 
-        if provider is None:
-            message = "Nessun provider configurato per questa asset class, uso dati locali."
-        elif not get_settings().enable_real_data:
+        if not get_settings().enable_real_data:
             message = "Dati reali disattivati. Stai usando dati seed/demo."
+        elif provider is None:
+            message = "Nessun provider configurato per questa asset class, uso dati locali."
         elif not provider.api_key_configured():
             message = "API key non configurata."
         elif cache_status == "HIT":
@@ -400,10 +531,15 @@ class MarketDataService:
             """
             SELECT asset.id, asset.symbol, asset.asset_type, asset.risk_level,
                    asset.currency, asset.instrument_listing_id,
-                   listing.timezone AS listing_timezone
+                   listing.timezone AS listing_timezone,
+                   listing.currency AS listing_currency,
+                   instrument.id AS instrument_id,
+                   instrument.instrument_type
             FROM assets AS asset
             LEFT JOIN instrument_listings AS listing
               ON listing.id = asset.instrument_listing_id
+            LEFT JOIN instruments AS instrument
+              ON instrument.id = listing.instrument_id
             WHERE UPPER(asset.symbol) = UPPER(?)
             LIMIT 1
             """,
@@ -426,6 +562,8 @@ class MarketDataService:
                 datetime.now(UTC),
                 requested_provider=provider,
             )
+        if provider == "stooq":
+            self._assess_quality(connection, asset, datetime.now(UTC))
         return {
             "symbol": str(asset["symbol"]).upper(),
             "provider": provider,
@@ -442,17 +580,18 @@ class MarketDataService:
         asset: sqlite3.Row,
         provider: str,
         now: datetime,
+        operation: str = "get_daily_prices",
     ) -> None:
         listing_id = asset["instrument_listing_id"]
         if listing_id is None:
             return
         capability = self._capability_for_asset(str(asset["asset_type"]))
-        stable_payload = f"{provider}|{capability}|get_daily_prices|PROVIDER_NO_DATA"
+        stable_payload = f"{provider}|{capability}|{operation}|PROVIDER_NO_DATA"
         envelope = MarketObservationEnvelope(
             listing_id=int(listing_id),
             provider=provider,
             capability=capability,
-            operation="get_daily_prices",
+            operation=operation,
             received_at=now,
             provider_observed_at=None,
             timezone=None,
@@ -464,6 +603,21 @@ class MarketDataService:
             raw_payload_sha256=hashlib.sha256(stable_payload.encode("utf-8")).hexdigest(),
         )
         self.observation_service.ingest_batch(connection, [envelope], now)
+
+    @staticmethod
+    def _assess_quality(
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        now: datetime,
+    ) -> None:
+        instrument_id = asset["instrument_id"]
+        if instrument_id is None:
+            return
+        InstrumentQualityService().assess_and_record(
+            connection,
+            int(instrument_id),
+            now,
+        )
 
     @staticmethod
     def _capability_for_asset(asset_type: str) -> str:

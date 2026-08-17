@@ -3339,18 +3339,30 @@ def test_catalog_resolve_route_sanitizes_provider_failures(
     assert secret not in response.text
 
 
-def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:
+def test_alpha_policy_is_fail_closed_before_url_or_transport(
+    client: TestClient,
+    monkeypatch,
+) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
+    from backend.app.data_providers.base import ProviderError
     from backend.app.database import db_session
 
-    with db_session() as connection:
-        provider = AlphaVantageProvider(get_settings(), connection)
-        assert "symbol=VT" in provider._request_url("VWCE")
-        assert "symbol=BNDW" in provider._request_url("AGGH")
-        assert "symbol=SHV" in provider._request_url("IB01")
-        # i simboli non mappati restano invariati
-        assert "symbol=AAPL" in provider._request_url("AAPL")
+    monkeypatch.setenv("ENABLE_REAL_DATA", "true")
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "TEST_ALPHA_API_SENTINEL")
+    get_settings.cache_clear()
+    try:
+        with db_session() as connection:
+            provider = AlphaVantageProvider(get_settings(), connection)
+            assert provider.availability().state == "DISABLED"
+            assert provider.availability().reason_code == "SECRET_IN_QUERY_POLICY"
+            with pytest.raises(
+                ProviderError,
+                match=r"alpha_vantage:EOD:SECRET_IN_QUERY_POLICY",
+            ):
+                provider.get_daily_prices("AAPL")
+    finally:
+        get_settings.cache_clear()
 
 
 def test_yahoo_ticker_mapping(client: TestClient) -> None:
@@ -3477,7 +3489,7 @@ def test_finnhub_news_provider_normalizes(client: TestClient) -> None:
     assert -1.0 <= items[0]["sentiment_score"] <= 1.0
 
 
-def test_provider_registry(client: TestClient) -> None:
+def test_eod_capability_registry_does_not_keep_yahoo_primary(client: TestClient) -> None:
     from backend.app.config import get_settings
     from backend.app.data_providers.provider_registry import ProviderRegistry
     from backend.app.database import db_session
@@ -3485,9 +3497,9 @@ def test_provider_registry(client: TestClient) -> None:
     with db_session() as connection:
         registry = ProviderRegistry(get_settings(), connection)
 
-        assert registry.provider_for_asset_type("stock").provider_name == "yahoo_finance"
-        assert registry.provider_for_asset_type("etf").provider_name == "yahoo_finance"
-        assert registry.provider_for_asset_type("bond_etf").provider_name == "yahoo_finance"
+        assert registry.provider_for_asset_type("stock") is None
+        assert registry.provider_for_asset_type("etf") is None
+        assert registry.provider_for_asset_type("bond_etf") is None
         assert registry.provider_for_asset_type("crypto").provider_name == "coingecko"
         assert registry.provider_for_asset_type("macro").provider_name == "fred"
 
@@ -3502,26 +3514,29 @@ def test_refresh_asset_with_real_data_disabled(client: TestClient) -> None:
     assert "Dati reali disattivati" in data["message"]
 
 
-def test_refresh_asset_falls_back_on_provider_error(client: TestClient, monkeypatch) -> None:
+def test_alpha_policy_and_yahoo_are_never_called_without_stooq_mapping(
+    client: TestClient,
+    monkeypatch,
+) -> None:
     from backend.app.config import get_settings
-    from backend.app.data_providers.base import ProviderError
+    from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
     from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
 
     monkeypatch.setenv("ENABLE_REAL_DATA", "true")
+    monkeypatch.setenv("ENABLE_STOOQ", "true")
     get_settings.cache_clear()
 
-    # Forza un errore del provider per restare deterministici e non dipendere
-    # dalla rete: Yahoo non richiede API key, quindi simuliamo l'indisponibilita'.
-    def _raise(self, symbol: str, force: bool = False):  # noqa: ANN001, ANN202
-        raise ProviderError("Yahoo non raggiungibile nei test.")
+    def _forbidden(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("Yahoo/Alpha non devono essere chiamati")
 
-    monkeypatch.setattr(YahooFinanceProvider, "get_daily_prices", _raise)
+    monkeypatch.setattr(YahooFinanceProvider, "get_daily_prices", _forbidden)
+    monkeypatch.setattr(AlphaVantageProvider, "get_daily_prices", _forbidden)
 
     response = client.post("/data/refresh/AAPL")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["provider"] == "yahoo_finance"
+    assert data["provider"] is None
     assert data["used_fallback"] is True
     assert data["rows_inserted"] == 0
 
@@ -3536,7 +3551,14 @@ def test_data_status_endpoint(client: TestClient) -> None:
     data = response.json()
     assert data["enable_real_data"] is False
     assert data["data_mode"] == "SEED"
-    assert {provider["provider"] for provider in data["provider_status"]} >= {"yahoo_finance", "coingecko", "fred"}
+    assert {provider["provider"] for provider in data["provider_status"]} >= {
+        "stooq",
+        "alpha_vantage",
+        "yahoo_finance",
+        "coingecko",
+        "fred",
+    }
+    assert all(provider["enabled"] is False for provider in data["provider_status"])
     assert data["cache_stats"]["entries"] >= 0
 
 

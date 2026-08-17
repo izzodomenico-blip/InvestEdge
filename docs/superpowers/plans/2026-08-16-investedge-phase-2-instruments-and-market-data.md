@@ -997,11 +997,11 @@ class StooqProvider(BaseMarketDataProvider):
     ) -> list[MarketObservationEnvelope]
 ```
 
-- [ ] **Step 1: Scrivere test RED su capability e fallback**
+- [x] **Step 1: Scrivere test RED su capability e fallback**
 
 Testare parsing CSV, date/decimal/volume, risposta vuota, colonne mancanti, HTML al posto del CSV, valuta divergente, ticker senza mapping, host/path fisso, opt-in disabilitato, limiti 5/minuto-100/giorno-1.000/mese, budget esaurito e fallback all'ultima observation compatibile. Verificare che `fetch_observations(listing, start, end, bypass_cache=true)` inoltri il flag esclusivamente al transport: cache preesistente ignorata, una richiesta fisica governata, stessa validation/fingerprint/deduplica e cache aggiornata. Provare che Yahoo/Alpha non vengono chiamati e che il fallback crea un selection event con `fallback_reason` senza cambiare currency, listing o observation originale.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_eod_providers.py tests\test_api.py -k "stooq or eod_capability or alpha_policy or compatible_fallback" -q
@@ -1009,19 +1009,19 @@ Testare parsing CSV, date/decimal/volume, risposta vuota, colonne mancanti, HTML
 
 Expected: failure perché provider capability e adapter Stooq non esistono e registry è ancora first-match per asset type.
 
-- [ ] **Step 3: Implementare registry per capability**
+- [x] **Step 3: Implementare registry per capability**
 
 Il registry interroga `provider_symbols` e restituisce una catena ordinata, non un singolo provider per asset type. Un match richiede stesso listing, capability, currency e tipo supportato. Per EOD: Stooq opt-in se mapping presente; poi cache/ultima observation valida dello stesso listing. Yahoo e Alpha non entrano nella catena di rete.
 
-- [ ] **Step 4: Implementare adapter Stooq fixture-first**
+- [x] **Step 4: Implementare adapter Stooq fixture-first**
 
 Consentire soltanto endpoint HTTPS/host noto e `ENABLE_STOOQ=false` di default. Non derivare il simbolo dal ticker con suffissi euristici: deve esistere `provider_symbols`. `bypass_cache` viene passato senza reinterpretazione soltanto a `SafeProviderTransport.request()`. Convertire ogni riga in `MarketObservationEnvelope` EOD con scope, timezone/session del listing e hash payload; il validator decide validità e costruisce la `MarketObservation` accettata.
 
-- [ ] **Step 5: Rendere esplicita la policy Alpha/Yahoo**
+- [x] **Step 5: Rendere esplicita la policy Alpha/Yahoo**
 
 `AlphaVantageProvider` restituisce stato `DISABLED/SECRET_IN_QUERY_POLICY` prima del transport anche con key configurata. Yahoo restituisce `DISABLED/NOT_PRIMARY_POLICY`. Nessun URL con key viene costruito. Il Data Center consumerà questi reason code nel Task 17.
 
-- [ ] **Step 6: Eseguire GREEN e regressione refresh**
+- [x] **Step 6: Eseguire GREEN e regressione refresh**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_eod_providers.py tests\test_market_data_observations.py tests\test_api.py -q
@@ -1030,7 +1030,7 @@ Consentire soltanto endpoint HTTPS/host noto e `ENABLE_STOOQ=false` di default. 
 
 Expected: adapter e fallback verdi, nessuna rete, Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su assenza API/SLA Stooq, opt-in, simboli espliciti, HTML/error parsing, Yahoo/Alpha disabilitati, fallback e ultimo dato valido. Correggere Critical/Important e ripetere Step 6.
 

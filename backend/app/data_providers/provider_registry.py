@@ -1,24 +1,40 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from backend.app.config import Settings
+from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.data_providers.coingecko import CoinGeckoProvider
 from backend.app.data_providers.fred import FredProvider
+from backend.app.data_providers.stooq import StooqProvider
 from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
+from backend.app.services.provider_budget_service import (
+    ProviderAvailability,
+    ProviderCapability,
+)
+
+
+@dataclass(frozen=True)
+class ProviderCapabilityMatch:
+    provider: str
+    capability: ProviderCapability
+    listing_id: int
+    provider_symbol: str
+    currency: str
+    priority: int
 
 
 class ProviderRegistry:
     def __init__(self, settings: Settings, connection: sqlite3.Connection):
         self.settings = settings
         self.connection = connection
-        # Yahoo Finance e' la fonte prezzi per azioni/ETF/bond ETF: copre i ticker
-        # europei nella valuta nativa e fornisce lo storico completo. (Alpha Vantage
-        # free, sostituito, dava solo USA, proxy USD e 100 giorni.)
         self.providers: list[BaseMarketDataProvider] = [
+            StooqProvider(settings, connection),
+            AlphaVantageProvider(settings, connection),
             YahooFinanceProvider(settings, connection),
             CoinGeckoProvider(settings, connection),
             FredProvider(settings, connection),
@@ -27,16 +43,88 @@ class ProviderRegistry:
     def provider_for_asset_type(self, asset_type: str) -> BaseMarketDataProvider | None:
         normalized = asset_type.lower()
         for provider in self.providers:
+            if provider.provider_name in {"stooq", "alpha_vantage", "yahoo_finance"}:
+                continue
             if provider.supports_asset_type(normalized):
                 return provider
         return None
+
+    def providers_for(
+        self,
+        connection: sqlite3.Connection,
+        listing_id: int,
+        capability: ProviderCapability,
+    ) -> tuple[ProviderCapabilityMatch, ...]:
+        normalized_capability = str(capability).strip().upper()
+        if normalized_capability != "EOD":
+            return ()
+        rows = connection.execute(
+            """
+            SELECT symbol.provider, symbol.capability, symbol.listing_id,
+                   symbol.provider_symbol, listing.currency,
+                   instrument.instrument_type
+            FROM provider_symbols AS symbol
+            JOIN instrument_listings AS listing ON listing.id = symbol.listing_id
+            JOIN instruments AS instrument ON instrument.id = listing.instrument_id
+            WHERE symbol.listing_id = ?
+              AND symbol.capability = ?
+              AND symbol.status = 'VERIFIED'
+              AND listing.listing_status = 'ACTIVE'
+            ORDER BY symbol.provider, symbol.version DESC
+            """,
+            (listing_id, normalized_capability),
+        ).fetchall()
+        matches: list[ProviderCapabilityMatch] = []
+        seen: set[str] = set()
+        for row in rows:
+            provider_name = str(row["provider"]).strip().lower()
+            if provider_name != "stooq" or provider_name in seen:
+                continue
+            provider = self.provider_named(provider_name)
+            asset_type = str(row["instrument_type"]).strip().lower()
+            if provider is None or not provider.supports_asset_type(asset_type):
+                continue
+            seen.add(provider_name)
+            matches.append(
+                ProviderCapabilityMatch(
+                    provider=provider_name,
+                    capability=cast(ProviderCapability, normalized_capability),
+                    listing_id=int(row["listing_id"]),
+                    provider_symbol=str(row["provider_symbol"]).strip(),
+                    currency=str(row["currency"]).strip().upper(),
+                    priority=10,
+                )
+            )
+        return tuple(matches)
+
+    def provider_named(self, provider_name: str) -> BaseMarketDataProvider | None:
+        normalized = provider_name.strip().lower()
+        return next(
+            (provider for provider in self.providers if provider.provider_name == normalized),
+            None,
+        )
+
+    def availability_for(self, provider_name: str) -> ProviderAvailability:
+        normalized = provider_name.strip().lower()
+        if normalized == "yahoo_finance":
+            return ProviderAvailability("DISABLED", "NOT_PRIMARY_POLICY", None)
+        provider = self.provider_named(normalized)
+        availability = getattr(provider, "availability", None)
+        if callable(availability):
+            return availability()
+        if provider is None:
+            return ProviderAvailability("DISABLED", "UNSUPPORTED_CAPABILITY", None)
+        return ProviderAvailability("AVAILABLE", None, None)
 
     def statuses(self) -> list[dict[str, Any]]:
         usage = self.usage_by_provider()
         return [
             {
                 "provider": provider.provider_name,
-                "enabled": self.settings.enable_real_data,
+                "enabled": (
+                    self.settings.enable_real_data
+                    and self.availability_for(provider.provider_name).state == "AVAILABLE"
+                ),
                 "api_key_configured": provider.api_key_configured(),
                 "daily_limit": provider.daily_limit,
                 "calls_today": usage.get(provider.provider_name, {}).get("calls_count", 0),

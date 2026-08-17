@@ -217,7 +217,7 @@ Le soglie sono configurabili tramite `MARKET_DATA_QUOTE_MAX_AGE_MINUTES` (defaul
 ### Attivazione rapida
 
 1. Copia `backend/.env.example` in `backend/.env`.
-2. Inserisci almeno la chiave Alpha Vantage (gratuita: https://www.alphavantage.co/support/#api-key) e imposta `ENABLE_REAL_DATA=true` (e `ENABLE_REAL_NEWS=true` per le news).
+2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
 3. Riavvia `Avvia-InvestEdge.bat`.
 4. Apri la pagina **Dati** e clicca **Aggiorna tutti i dati** (e nella pagina **News**, **Aggiorna tutte**).
 
@@ -227,7 +227,9 @@ Lo Step 6 aggiunge provider esterni autorizzati, ma non li usa automaticamente a
 
 Provider predisposti:
 
-- `AlphaVantageProvider`: azioni, ETF ed ETF obbligazionari quotati.
+- `StooqProvider`: barre EOD per listing compatibili, soltanto in opt-in e con mapping verificato; non deriva suffissi o simboli dal ticker locale.
+- `AlphaVantageProvider`: visibile ma disabilitato per i prezzi con reason code `SECRET_IN_QUERY_POLICY`; la key non viene inserita in URL o transport.
+- `YahooFinanceProvider`: mantenuto per compatibilita, ma disabilitato come provider prezzo primario o fallback di rete con reason code `NOT_PRIMARY_POLICY`.
 - `CoinGeckoProvider`: cripto mappate BTC, ETH, SOL, BNB, XRP.
 - `FredProvider`: serie macro/tassi e bond proxy, tra cui DGS10, DGS2 e FEDFUNDS.
 
@@ -240,8 +242,9 @@ Modalita dati:
 Regole operative:
 
 - se `ENABLE_REAL_DATA=false`, il backend non chiama API esterne e usa seed/demo;
+- Stooq richiede anche `ENABLE_STOOQ=true` e un mapping `provider_symbols` esplicito e verificato;
 - se la cache non e scaduta, il backend usa la cache;
-- se manca una API key, se il provider fallisce o se il limite giornaliero e raggiunto, l'app usa i dati locali;
+- se manca una API key, se il provider fallisce o se un budget e raggiunto, l'app seleziona l'ultima observation compatibile senza mutarne listing o valuta;
 - ogni chiamata reale incrementa `api_usage`;
 - le API key non vengono stampate nei log, nel frontend, nei test o in questa documentazione.
 
@@ -249,6 +252,11 @@ Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backen
 
 ```env
 ENABLE_REAL_DATA=false
+ENABLE_STOOQ=false
+STOOQ_CACHE_TTL_HOURS=24
+STOOQ_MINUTE_LIMIT=5
+STOOQ_DAILY_LIMIT=100
+STOOQ_MONTHLY_LIMIT=1000
 ALPHA_VANTAGE_API_KEY=
 COINGECKO_API_KEY=
 FRED_API_KEY=
@@ -408,7 +416,7 @@ Risposta sintetica:
 ```json
 {
   "symbol": "AAPL",
-  "provider": "alpha_vantage",
+  "provider": "stooq",
   "rows_inserted": 0,
   "rows_updated": 730,
   "used_cache": false,
