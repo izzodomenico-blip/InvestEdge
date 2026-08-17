@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -52,6 +53,23 @@ CatalogFailureReason = Literal[
     "PAYLOAD_TOO_LARGE",
     "PARSER_ERROR",
     "EMPTY_CATALOG",
+]
+ResolutionStatus = Literal["RESOLVED", "AMBIGUOUS", "UNMATCHED", "REJECTED"]
+ResolutionReason = Literal[
+    "EXACT_ISIN_TYPE_CURRENCY_MIC_TIMEZONE",
+    "MULTIPLE_COMPATIBLE_CANDIDATES",
+    "NO_PROVIDER_MATCH",
+    "TYPE_MISMATCH",
+    "CURRENCY_MISMATCH",
+    "MISSING_CURRENCY",
+    "MISSING_VENUE",
+    "MISSING_TIMEZONE",
+    "INVALID_PROVIDER_PAYLOAD",
+]
+ListingMetadataSource = Literal[
+    "OFFICIAL_VENUE",
+    "ISSUER_FACTSHEET",
+    "LEGACY_ACTIVE_ASSET",
 ]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
@@ -1066,3 +1084,39 @@ class CatalogIngestResultOut(BaseModel):
     rejected: int = Field(..., ge=0)
     ambiguous: int = Field(..., ge=0)
     unchanged: bool
+
+
+class ResolutionResultOut(BaseModel):
+    catalog_entry_id: int
+    status: ResolutionStatus
+    reason_code: ResolutionReason
+    instrument_id: int | None = None
+    listing_id: int | None = None
+    candidate_count: int = Field(..., ge=0)
+    evidence_hash: str = Field(..., min_length=64, max_length=64)
+
+
+class ListingMetadataPreviewIn(BaseModel):
+    ticker: str = Field(..., min_length=1, max_length=64)
+    mic: str = Field(..., min_length=1, max_length=16)
+    venue_name: str = Field(..., min_length=1, max_length=160)
+    currency: str = Field(..., min_length=1, max_length=8)
+    timezone: str = Field(..., min_length=1, max_length=128)
+    instrument_type: InstrumentType
+    source: ListingMetadataSource
+    observed_at: datetime
+    evidence_hash: str = Field(..., min_length=1, max_length=256)
+
+
+class ListingMetadataApplyIn(ListingMetadataPreviewIn):
+    confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+class ListingMetadataPreviewOut(BaseModel):
+    catalog_entry_id: int
+    normalized_ticker: str
+    normalized_mic: str
+    normalized_currency: str
+    normalized_timezone: str
+    current_version: int | None = None
+    confirmation_token: str = Field(..., min_length=64, max_length=64)

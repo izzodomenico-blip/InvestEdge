@@ -192,6 +192,14 @@ Ogni payload completo diverso crea uno snapshot versionato tramite SHA-256; lo s
 
 Le soglie locali sono configurabili con `TRADE_REPUBLIC_CATALOG_CACHE_TTL_HOURS`, `TRADE_REPUBLIC_CATALOG_MINUTE_LIMIT`, `TRADE_REPUBLIC_CATALOG_DAILY_LIMIT` e `TRADE_REPUBLIC_CATALOG_MONTHLY_LIMIT`.
 
+### Risoluzione identificativi e metadata listing
+
+`POST /data/catalog/{snapshot_id}/resolve?offset=0&limit=5` risolve manualmente una pagina immutabile di entry `ACCEPTED`, ordinate per riga e ID. Ogni richiesta OpenFIGI usa al massimo cinque job `ID_ISIN` in una sola POST; `OPENFIGI_API_KEY` è opzionale e, se configurata, viaggia soltanto nell'header `X-OPENFIGI-APIKEY`. Nessun exchange code non verificato viene inviato e nessun candidate viene scelto per posizione nell'array.
+
+Una candidate univoca non basta: lo stato diventa `RESOLVED` solo quando esiste una versione metadata locale `VERIFIED` con ticker, MIC/venue, valuta ISO 4217, timezone IANA e tipo coerenti. I metadata si confermano con il ciclo locale `POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/preview` e `/apply`; il token SHA-256 lega payload, evidence hash e versione corrente. Apply non contatta provider. Le versioni precedenti e le attestazioni per snapshot restano append-only; il catalogo non crea righe `assets` e non modifica import o allocation.
+
+Configurazione conservativa: `OPENFIGI_CACHE_TTL_HOURS`, `OPENFIGI_MINUTE_LIMIT`, `OPENFIGI_DAILY_LIMIT` e `OPENFIGI_MONTHLY_LIMIT`. OpenFIGI non è fonte canonica per MIC, valuta o timezone e i suoi simboli vengono salvati soltanto dopo la risoluzione completa.
+
 ## Dati reali con cache
 
 ### Attivazione rapida
@@ -311,6 +319,9 @@ Endpoint iniziali:
 - `GET /data/status`
 - `GET /data/status/{symbol}`
 - `POST /data/catalog/refresh?force=false`
+- `POST /data/catalog/{snapshot_id}/resolve?offset=0&limit=5`
+- `POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/preview`
+- `POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/apply`
 - `POST /data/refresh/{symbol}?force=false`
 - `POST /data/refresh-all?limit=5&force=false`
 - `GET /data/usage`

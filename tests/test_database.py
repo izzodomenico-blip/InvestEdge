@@ -516,11 +516,22 @@ def test_instrument_master_does_not_promote_legacy_symbol_inferred_isin(
         ).fetchone()[0] == 0
 
 
-def test_instrument_listing_market_identity_allows_distinct_mics_and_blocks_collision(
+def test_instrument_listing_market_identity_includes_instrument_and_migrates_legacy_index(
     tmp_path,
     monkeypatch,
 ) -> None:
     database_path = tmp_path / "listing-identity.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP INDEX uq_instrument_listings_market_identity")
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX uq_instrument_listings_market_identity
+            ON instrument_listings(UPPER(ticker), UPPER(mic), UPPER(currency))
+            WHERE mic IS NOT NULL
+            """
+        )
     _initialize_database(database_path, monkeypatch)
 
     with sqlite3.connect(database_path) as connection:
@@ -529,8 +540,16 @@ def test_instrument_listing_market_identity_allows_distinct_mics_and_blocks_coll
         third = _insert_instrument(connection, "Collision listing")
         _insert_listing(connection, first, "ABC", "XNAS", "USD")
         _insert_listing(connection, second, "abc", "XNYS", "usd")
+        _insert_listing(connection, third, "aBc", "xnas", "Usd")
         with pytest.raises(sqlite3.IntegrityError):
-            _insert_listing(connection, third, "aBc", "xnas", "Usd")
+            _insert_listing(connection, third, "ABC", "XNAS", "USD")
+        index_sql = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND name = 'uq_instrument_listings_market_identity'
+            """
+        ).fetchone()[0]
+        assert "instrument_id" in index_sql
 
 
 def test_instrument_listing_provider_symbol_lifecycle_requires_retirement_before_reuse(

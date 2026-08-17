@@ -1,0 +1,15 @@
+[
+  {
+    "data": [
+      {
+        "figi": "BBG000B9XRY4",
+        "name": "APPLE INC",
+        "ticker": "AAPL",
+        "exchCode": "XNAS",
+        "marketSector": "Equity",
+        "securityType": "Common Stock",
+        "currency": "USD"
+      }
+    ]
+  }
+]

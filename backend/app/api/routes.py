@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
+from backend.app.data_providers.transport import SafeProviderTransportError
 from backend.app.database import db_session
 from backend.app.models import (
     ActionBoardOut,
@@ -32,6 +33,9 @@ from backend.app.models import (
     ImportInputIn,
     ImportPreviewOut,
     ImportStatusOut,
+    ListingMetadataApplyIn,
+    ListingMetadataPreviewIn,
+    ListingMetadataPreviewOut,
     MLModelSummaryOut,
     MLPredictAllOut,
     MLPredictIn,
@@ -53,6 +57,7 @@ from backend.app.models import (
     RebalanceOut,
     RebalanceTradeOut,
     ReportSummaryOut,
+    ResolutionResultOut,
     ScenarioRunIn,
     ScenarioRunOut,
     SignalOut,
@@ -85,12 +90,18 @@ from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
 from backend.app.services.catalog_service import CatalogRefreshError, CatalogService
 from backend.app.services.dashboard_service import get_dashboard
+from backend.app.services.instrument_resolution_service import (
+    CatalogResolutionError,
+    InstrumentResolutionService,
+    ResolutionConflictError,
+)
 from backend.app.services.instrument_service import AmbiguousInstrumentError
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
+from backend.app.services.provider_budget_service import ProviderBudgetExceeded
 from backend.app.services.report_service import orders_csv, portfolio_csv, report_summary, tax_csv
 from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
@@ -105,6 +116,7 @@ market_data_service = MarketDataService()
 news_engine = NewsEngine()
 ml_engine = MLEngine()
 catalog_service = CatalogService()
+instrument_resolution_service = InstrumentResolutionService()
 
 
 def _get_unique_asset(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
@@ -855,6 +867,146 @@ async def refresh_trade_republic_catalog(
             detail={"reason_code": exc.reason_code},
         ) from None
     return CatalogIngestResultOut(**result.__dict__)
+
+
+@router.post(
+    "/data/catalog/{snapshot_id}/resolve",
+    response_model=list[ResolutionResultOut],
+)
+def resolve_catalog_snapshot(
+    snapshot_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5, ge=1, le=5),
+) -> list[ResolutionResultOut]:
+    try:
+        with db_session() as connection:
+            snapshot = connection.execute(
+                "SELECT status FROM catalog_snapshots WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()
+            if snapshot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"reason_code": "CATALOG_SNAPSHOT_NOT_FOUND"},
+                )
+            if snapshot["status"] != "COMPLETE":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"reason_code": "CATALOG_SNAPSHOT_NOT_COMPLETE"},
+                )
+            entry_ids = [
+                int(row["id"])
+                for row in connection.execute(
+                    """
+                    SELECT id
+                    FROM catalog_entries
+                    WHERE snapshot_id = ? AND parse_status = 'ACCEPTED'
+                    ORDER BY row_number, id
+                    LIMIT ? OFFSET ?
+                    """,
+                    (snapshot_id, limit, offset),
+                ).fetchall()
+            ]
+            results = instrument_resolution_service.resolve_catalog_entries(
+                connection,
+                entry_ids,
+            )
+    except CatalogResolutionError as exc:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.reason_code in {"CATALOG_ENTRY_NOT_FOUND"}
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(
+            status_code=code,
+            detail={"reason_code": exc.reason_code},
+        ) from None
+    except ProviderBudgetExceeded:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"reason_code": "OPENFIGI_RATE_LIMITED"},
+        ) from None
+    except SafeProviderTransportError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"reason_code": "OPENFIGI_PROVIDER_UNAVAILABLE"},
+        ) from None
+    return [ResolutionResultOut(**result.__dict__) for result in results]
+
+
+@router.post(
+    "/data/catalog/entries/{catalog_entry_id}/listing-metadata/preview",
+    response_model=ListingMetadataPreviewOut,
+)
+def preview_catalog_listing_metadata(
+    catalog_entry_id: int,
+    payload: ListingMetadataPreviewIn,
+) -> ListingMetadataPreviewOut:
+    try:
+        with db_session() as connection:
+            return instrument_resolution_service.preview_listing_metadata(
+                connection,
+                catalog_entry_id,
+                payload,
+            )
+    except CatalogResolutionError as exc:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.reason_code == "CATALOG_ENTRY_NOT_FOUND"
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(
+            status_code=code,
+            detail={"reason_code": exc.reason_code},
+        ) from None
+    except ResolutionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from None
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason_code": "INVALID_LISTING_METADATA"},
+        ) from None
+
+
+@router.post(
+    "/data/catalog/entries/{catalog_entry_id}/listing-metadata/apply",
+    response_model=ResolutionResultOut,
+)
+def apply_catalog_listing_metadata(
+    catalog_entry_id: int,
+    payload: ListingMetadataApplyIn,
+) -> ResolutionResultOut:
+    try:
+        with db_session() as connection:
+            result = instrument_resolution_service.apply_listing_metadata(
+                connection,
+                catalog_entry_id,
+                payload,
+            )
+    except CatalogResolutionError as exc:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.reason_code == "CATALOG_ENTRY_NOT_FOUND"
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(
+            status_code=code,
+            detail={"reason_code": exc.reason_code},
+        ) from None
+    except ResolutionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from None
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason_code": "INVALID_LISTING_METADATA"},
+        ) from None
+    return ResolutionResultOut(**result.__dict__)
 
 
 @router.get("/data/status/{symbol}", response_model=AssetDataStatusOut)

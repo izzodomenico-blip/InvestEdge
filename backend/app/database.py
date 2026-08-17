@@ -165,6 +165,91 @@ CREATE TABLE IF NOT EXISTS catalog_entries (
     UNIQUE(snapshot_id, row_number)
 );
 
+CREATE TABLE IF NOT EXISTS instrument_resolution_cases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    catalog_entry_id INTEGER NOT NULL,
+    provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    request_fingerprint TEXT NOT NULL CHECK(length(request_fingerprint) = 64),
+    status TEXT NOT NULL CHECK(status IN ('RESOLVED', 'AMBIGUOUS', 'UNMATCHED', 'REJECTED')),
+    reason_code TEXT NOT NULL CHECK(reason_code IN (
+        'EXACT_ISIN_TYPE_CURRENCY_MIC_TIMEZONE',
+        'MULTIPLE_COMPATIBLE_CANDIDATES',
+        'NO_PROVIDER_MATCH',
+        'TYPE_MISMATCH',
+        'CURRENCY_MISMATCH',
+        'MISSING_CURRENCY',
+        'MISSING_VENUE',
+        'MISSING_TIMEZONE',
+        'INVALID_PROVIDER_PAYLOAD'
+    )),
+    candidate_count INTEGER NOT NULL CHECK(candidate_count >= 0),
+    candidate_hash TEXT NOT NULL CHECK(length(candidate_hash) = 64),
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    selected_instrument_id INTEGER,
+    selected_listing_id INTEGER,
+    candidate_figi TEXT,
+    candidate_ticker TEXT,
+    candidate_exchange_code TEXT,
+    candidate_market_sector TEXT,
+    candidate_security_type TEXT,
+    candidate_name TEXT,
+    candidate_currency_hint TEXT,
+    created_at TEXT NOT NULL,
+    CHECK(
+        status != 'RESOLVED'
+        OR (selected_instrument_id IS NOT NULL AND selected_listing_id IS NOT NULL)
+    ),
+    CHECK(status != 'RESOLVED' OR candidate_count = 1),
+    CHECK(status = 'RESOLVED' OR selected_listing_id IS NULL),
+    FOREIGN KEY(catalog_entry_id) REFERENCES catalog_entries(id) ON DELETE RESTRICT,
+    FOREIGN KEY(selected_instrument_id) REFERENCES instruments(id) ON DELETE RESTRICT,
+    FOREIGN KEY(selected_listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS listing_metadata_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_listing_id INTEGER NOT NULL,
+    venue_name TEXT NOT NULL CHECK(length(trim(venue_name)) > 0),
+    timezone TEXT NOT NULL CHECK(length(trim(timezone)) > 0),
+    instrument_type TEXT NOT NULL CHECK(instrument_type IN (
+        'STOCK', 'ETF', 'BOND', 'ETC', 'ETN', 'CRYPTO', 'FX',
+        'INDEX', 'RATE', 'MACRO', 'UNKNOWN'
+    )),
+    source_code TEXT NOT NULL CHECK(source_code IN (
+        'OFFICIAL_VENUE', 'ISSUER_FACTSHEET', 'LEGACY_ACTIVE_ASSET'
+    )),
+    observed_at TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    status TEXT NOT NULL CHECK(status IN ('VERIFIED', 'RETIRED')),
+    version INTEGER NOT NULL CHECK(version > 0),
+    supersedes_listing_metadata_version_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(instrument_listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    FOREIGN KEY(supersedes_listing_metadata_version_id)
+        REFERENCES listing_metadata_versions(id) ON DELETE RESTRICT,
+    UNIQUE(instrument_listing_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS catalog_listing_attestations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    catalog_entry_id INTEGER NOT NULL,
+    instrument_listing_id INTEGER NOT NULL,
+    listing_metadata_version_id INTEGER NOT NULL,
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    attested_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(catalog_entry_id) REFERENCES catalog_entries(id) ON DELETE RESTRICT,
+    FOREIGN KEY(instrument_listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    FOREIGN KEY(listing_metadata_version_id)
+        REFERENCES listing_metadata_versions(id) ON DELETE RESTRICT,
+    UNIQUE(
+        catalog_entry_id,
+        instrument_listing_id,
+        listing_metadata_version_id,
+        evidence_hash
+    )
+);
+
 CREATE TABLE IF NOT EXISTS provider_symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
@@ -555,8 +640,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_identifiers_listing_owner
 ON instrument_identifiers(scheme, normalized_value, listing_id)
 WHERE scope = 'LISTING' AND scheme NOT IN ('ISIN', 'FIGI');
 CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_listings_market_identity
-ON instrument_listings(UPPER(ticker), UPPER(mic), UPPER(currency))
-WHERE mic IS NOT NULL;
+ON instrument_listings(instrument_id, UPPER(ticker), UPPER(mic), UPPER(currency));
 CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_snapshots_complete_source_sha
 ON catalog_snapshots(source, content_sha256)
 WHERE status = 'COMPLETE';
@@ -566,6 +650,58 @@ CREATE INDEX IF NOT EXISTS idx_catalog_entries_snapshot_row
 ON catalog_entries(snapshot_id, row_number);
 CREATE INDEX IF NOT EXISTS idx_catalog_entries_isin
 ON catalog_entries(isin);
+CREATE INDEX IF NOT EXISTS idx_instrument_resolution_cases_entry_latest
+ON instrument_resolution_cases(catalog_entry_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_instrument_resolution_cases_fingerprint
+ON instrument_resolution_cases(request_fingerprint, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_listing_metadata_versions_verified_current
+ON listing_metadata_versions(instrument_listing_id)
+WHERE status = 'VERIFIED';
+CREATE INDEX IF NOT EXISTS idx_catalog_listing_attestations_entry
+ON catalog_listing_attestations(catalog_entry_id, instrument_listing_id);
+CREATE TRIGGER IF NOT EXISTS trg_instrument_resolution_cases_no_update
+BEFORE UPDATE ON instrument_resolution_cases
+BEGIN
+    SELECT RAISE(ABORT, 'instrument resolution cases are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_instrument_resolution_cases_no_delete
+BEFORE DELETE ON instrument_resolution_cases
+BEGIN
+    SELECT RAISE(ABORT, 'instrument resolution cases are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_listing_metadata_versions_retirement_only
+BEFORE UPDATE ON listing_metadata_versions
+WHEN OLD.status != 'VERIFIED'
+OR NEW.status != 'RETIRED'
+OR NEW.id IS NOT OLD.id
+OR NEW.instrument_listing_id IS NOT OLD.instrument_listing_id
+OR NEW.venue_name IS NOT OLD.venue_name
+OR NEW.timezone IS NOT OLD.timezone
+OR NEW.instrument_type IS NOT OLD.instrument_type
+OR NEW.source_code IS NOT OLD.source_code
+OR NEW.observed_at IS NOT OLD.observed_at
+OR NEW.evidence_hash IS NOT OLD.evidence_hash
+OR NEW.version IS NOT OLD.version
+OR NEW.supersedes_listing_metadata_version_id IS NOT OLD.supersedes_listing_metadata_version_id
+OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+    SELECT RAISE(ABORT, 'verified listing metadata may only be retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_listing_metadata_versions_no_delete
+BEFORE DELETE ON listing_metadata_versions
+BEGIN
+    SELECT RAISE(ABORT, 'listing metadata versions are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_catalog_listing_attestations_no_update
+BEFORE UPDATE ON catalog_listing_attestations
+BEGIN
+    SELECT RAISE(ABORT, 'catalog listing attestations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_catalog_listing_attestations_no_delete
+BEFORE DELETE ON catalog_listing_attestations
+BEGIN
+    SELECT RAISE(ABORT, 'catalog listing attestations are append-only');
+END;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_symbols_verified_listing_capability
 ON provider_symbols(UPPER(provider), listing_id, UPPER(capability))
 WHERE status = 'VERIFIED';
@@ -911,6 +1047,19 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     order_currency_added = "currency" not in order_columns_before
     order_base_columns_added = "fx_rate_to_base" not in order_columns_before
     tax_category_added = "tax_category" not in asset_columns_before
+
+    listing_identity_index = connection.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'index' AND name = 'uq_instrument_listings_market_identity'
+        """
+    ).fetchone()
+    if (
+        listing_identity_index is not None
+        and "instrument_id" not in str(listing_identity_index["sql"])
+    ):
+        connection.execute("DROP INDEX uq_instrument_listings_market_identity")
 
     for table_name, migrations in MIGRATIONS.items():
         columns = _table_columns(connection, table_name)

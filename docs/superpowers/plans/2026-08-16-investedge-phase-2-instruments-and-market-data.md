@@ -521,11 +521,11 @@ POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/apply -> Resoluti
 
 Nuova tabella `instrument_resolution_cases` con entry, provider, request fingerprint, status/reason, candidate count, `candidate_hash`, `evidence_hash`, selected instrument/listing nullable e timestamp. `instrument_listings` rappresenta l'identità stabile cross-snapshot ed è univoca per `(instrument_id, UPPER(ticker), UPPER(mic), UPPER(currency))`. La nuova tabella append-only `listing_metadata_versions` è collegata a `instrument_listing_id` (non a una singola catalog entry) e contiene venue, timezone, instrument type, source code, observed_at, evidence hash, status `VERIFIED|RETIRED`, version e supersedes; un indice parziale ammette una sola versione VERIFIED corrente per listing stabile. La nuova `catalog_listing_attestations` ha FK non nullable verso `catalog_entries`, `instrument_listings` e `listing_metadata_versions`, più `evidence_hash` e `attested_at`; `UNIQUE(catalog_entry_id, instrument_listing_id, listing_metadata_version_id, evidence_hash)` è il conflict target dell'upsert e impedisce duplicati concorrenti senza impedire una nuova attestazione per una metadata version successiva. Gli array candidati raw, URL fonte e documenti originali non sono persistiti.
 
-- [ ] **Step 1: Scrivere i test RED di mapping e batch limitato**
+- [x] **Step 1: Scrivere i test RED di mapping e batch limitato**
 
 Testare batch massimo 5 per ogni chiamata Phase 2 anche con key, header opzionale, ordine risposta per job, payload malformato, retry 429/500/503 via transport, exact match, multipli compatibili, mismatch tipo/valuta, venue mancante e zero risultati. Provare che una candidate OpenFIGI unica senza metadata verificati non diventa RESOLVED e produce `MISSING_CURRENCY`, `MISSING_VENUE` o `MISSING_TIMEZONE`. Per listing metadata coprire normalizzazione ticker/MIC/valuta/timezone/tipo, source allowlist, evidence SHA-256, preview/apply stale, `hmac.compare_digest`, version/supersedes, collisione e zero rete da apply. Aggiungere due snapshot COMPLETE con lo stesso ISIN: il secondo riusa instrument, listing e metadata version verificata, aggiunge soltanto l'attestazione entry e un nuovo resolution case; repeat e due apply concorrenti sulla stessa entry/version/evidence producono una sola attestazione; una metadata version successiva ammette una nuova attestazione; un metadata confliggente sulla stessa chiave stabile è bloccato. Testare route su snapshot inesistente/non COMPLETE, offset >=0 e limit 1..5. La pagina è sempre ricavata dall'insieme immutabile di tutte le entry ACCEPTED ordinate per `row_number, id`; coprire pagina 1, ripetizione pagina 1 e pagina 2 senza skip, anche quando la prima pagina è già stata risolta.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_resolution.py tests\test_api.py -k "openfigi or instrument_resolution or catalog_resolve or listing_metadata" -q
@@ -533,23 +533,23 @@ Testare batch massimo 5 per ogni chiamata Phase 2 anche con key, header opzional
 
 Expected: failure per adapter, servizio e route bounded mancanti.
 
-- [ ] **Step 3: Implementare adapter e normalizzazione provider**
+- [x] **Step 3: Implementare adapter e normalizzazione provider**
 
 Inviare job per `idType=ID_ISIN` e `idValue` valido; non includere un exchange code non verificato. Normalizzare FIGI, ticker, exchange code, market sector, security type e nome. OpenFIGI non viene trattato come fonte di currency, MIC o timezone canonici. Rifiutare candidate senza FIGI o con valori non stringa. Il provider symbol non diventa automaticamente ticker canonico.
 
-- [ ] **Step 4: Implementare selezione fail-closed**
+- [x] **Step 4: Implementare selezione fail-closed**
 
 Una candidate è selezionabile solo se identificativo e tipo sono compatibili e ogni campo locale già noto coincide. `RESOLVED` richiede sempre candidate univoca più una `listing_metadata_versions` VERIFIED corrente con ticker, MIC/venue, currency, timezone e tipo completi e coerenti; in assenza registra status `REJECTED` con il reason `MISSING_*` specifico e non crea `instrument_listings`. Se lo stesso instrument di un nuovo snapshot ha già un listing stabile/current metadata compatibile con ticker/exchange/type della candidate, il resolver riusa quel `listing_id` e aggiunge idempotentemente la nuova `catalog_listing_attestations`, senza richiedere una seconda apply. Zero candidate produce `UNMATCHED`; più di una `AMBIGUOUS`. Per un record PDF privo di venue/valuta, anche una candidate OpenFIGI unica resta non risolta finché i metadata non sono attestati localmente. Salvare FIGI e provider symbol soltanto dopo risoluzione completa. Quando la fonte è un catalog entry Trade Republic, il listing risolto diventa `CATALOGED` con `trade_republic_cataloged_at=snapshot.retrieved_at`; `trade_republic_verified_at` resta `NULL` e lo stato non diventa `VERIFIED`.
 
-- [ ] **Step 5: Implementare preview/apply locale dei metadata listing**
+- [x] **Step 5: Implementare preview/apply locale dei metadata listing**
 
 Preview accetta soltanto entry ACCEPTED e campi completi, risolve l'instrument stabile tramite ISIN e normalizza/valida ticker, MIC ISO 10383, valuta ISO 4217 uppercase, timezone IANA e tipo coerente con instrument/OpenFIGI; `source` è un codice allowlistato e `evidence_hash` è SHA-256, non un URL. La chiave listing stabile è `(instrument_id, normalized_ticker, normalized_mic, normalized_currency)` e il token SHA-256 canonico include entry, chiave stabile, venue/timezone/tipo, source, `observed_at` UTC, evidence e current metadata version. Apply usa `BEGIN IMMEDIATE`, ricostruisce lo stato locale, usa `hmac.compare_digest`, non chiama provider, crea o riusa l'unico `instrument_listings` della chiave, ritira/inserisce la metadata version e upserta l'attestazione sul conflict target esplicito prima di rieseguire la selezione. Stessi metadata/evidence su una nuova entry sono idempotenti sulla versione e aggiungono soltanto l'attestazione; repeat/concorrenza sulla stessa entry non duplicano; payload, conflitto o versione cambiati restituiscono 409 senza mutazioni.
 
-- [ ] **Step 6: Collegare gli entrypoint manuali e limitati**
+- [x] **Step 6: Collegare gli entrypoint manuali e limitati**
 
 La route pagina tutte le entry ACCEPTED dello snapshot `COMPLETE` con `ORDER BY row_number, id LIMIT ? OFFSET ?`, senza filtrare quelle già processate prima di applicare l'offset. Per ogni entry della pagina già processata restituisce il latest case/cache; crea job soltanto per le restanti, al massimo 5, li invia in un'unica POST JSON OpenFIGI e ricompone un risultato per entry nello stesso ordine. Nessun endpoint “resolve all” esiste. Ripetere pagina 1 è idempotente e pagina 2 non salta righe; un evidence hash invariato non consuma nuova quota.
 
-- [ ] **Step 7: Eseguire GREEN e regressione import**
+- [x] **Step 7: Eseguire GREEN e regressione import**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_resolution.py tests\test_api.py -q
@@ -558,7 +558,7 @@ La route pagina tutte le entry ACCEPTED dello snapshot `COMPLETE` con `ORDER BY 
 
 Expected: tutti i casi di mapping passano, nessun matching arbitrario, Ruff verde.
 
-- [ ] **Step 8: Review, commit e gate remoto**
+- [x] **Step 8: Review, commit e gate remoto**
 
 Review indipendente su POST/fingerprint, batching massimo 5, conservazione dell'ordine, false merge, ISIN/FIGI, completezza venue/currency/timezone/type, evidence/token metadata, pagination e redazione della key. Correggere Critical/Important e rieseguire Step 7.
 

@@ -24,6 +24,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("COINGECKO_API_KEY", "")
     monkeypatch.setenv("FRED_API_KEY", "")
     monkeypatch.setenv("FINNHUB_API_KEY", "")
+    monkeypatch.setenv("OPENFIGI_API_KEY", "")
     monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
     monkeypatch.setenv("NEWS_DAILY_LIMIT", "20")
     monkeypatch.setenv("NEWS_CACHE_TTL_HOURS", "6")
@@ -2565,6 +2566,165 @@ def test_catalog_refresh_failure_response_contains_only_stable_reason(
     assert response.status_code == 502
     assert response.json() == {"detail": {"reason_code": "DOWNLOAD_FAILED"}}
     assert "SENTINEL" not in response.text
+
+
+def test_catalog_resolve_route_pages_immutable_accepted_entries_and_validates_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    from backend.app.api import routes
+    from backend.app.database import db_session
+    from backend.app.services.instrument_resolution_service import ResolutionResult
+
+    with db_session() as connection:
+        snapshot_id = int(
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, source_date,
+                    row_count, status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', ?,
+                        '2026-08-17T12:00:00Z', NULL, 6, 'COMPLETE', 'test-v1', NULL)
+                """,
+                (hashlib.sha256(b"api-resolution-snapshot").hexdigest(),),
+            ).lastrowid
+        )
+        entry_ids: list[int] = []
+        for row_number in range(1, 7):
+            entry_ids.append(
+                int(
+                    connection.execute(
+                        """
+                        INSERT INTO catalog_entries (
+                            snapshot_id, row_number, isin, name, parse_status,
+                            reason_code, raw_row_sha256, instrument_id, listing_id
+                        )
+                        VALUES (?, ?, ?, ?, 'ACCEPTED', 'VALID_ISIN', ?, NULL, NULL)
+                        """,
+                        (
+                            snapshot_id,
+                            row_number,
+                            f"US00000000{row_number:02d}",
+                            f"Synthetic {row_number}",
+                            hashlib.sha256(f"row-{row_number}".encode()).hexdigest(),
+                        ),
+                    ).lastrowid
+                )
+            )
+        failed_snapshot_id = int(
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, source_date,
+                    row_count, status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', NULL,
+                        '2026-08-17T12:01:00Z', NULL, 0, 'FAILED', 'test-v1', 'DOWNLOAD_FAILED')
+                """
+            ).lastrowid
+        )
+
+    calls: list[list[int]] = []
+
+    class FakeResolutionService:
+        def resolve_catalog_entries(self, _connection, selected_entry_ids):  # noqa: ANN001, ANN202
+            selected = list(selected_entry_ids)
+            calls.append(selected)
+            return [
+                ResolutionResult(
+                    catalog_entry_id=entry_id,
+                    status="UNMATCHED",
+                    reason_code="NO_PROVIDER_MATCH",
+                    instrument_id=None,
+                    listing_id=None,
+                    candidate_count=0,
+                    evidence_hash="d" * 64,
+                )
+                for entry_id in selected
+            ]
+
+    monkeypatch.setattr(routes, "instrument_resolution_service", FakeResolutionService())
+
+    first = client.post(f"/data/catalog/{snapshot_id}/resolve?offset=0&limit=5")
+    repeated = client.post(f"/data/catalog/{snapshot_id}/resolve?offset=0&limit=5")
+    second = client.post(f"/data/catalog/{snapshot_id}/resolve?offset=5&limit=1")
+
+    assert first.status_code == repeated.status_code == second.status_code == 200
+    assert [item["catalog_entry_id"] for item in first.json()] == entry_ids[:5]
+    assert [item["catalog_entry_id"] for item in repeated.json()] == entry_ids[:5]
+    assert [item["catalog_entry_id"] for item in second.json()] == entry_ids[5:]
+    assert calls == [entry_ids[:5], entry_ids[:5], entry_ids[5:]]
+    assert client.post("/data/catalog/999999/resolve").status_code == 404
+    assert client.post(f"/data/catalog/{failed_snapshot_id}/resolve").status_code == 409
+    assert client.post(f"/data/catalog/{snapshot_id}/resolve?offset=-1").status_code == 422
+    assert client.post(f"/data/catalog/{snapshot_id}/resolve?limit=0").status_code == 422
+    assert client.post(f"/data/catalog/{snapshot_id}/resolve?limit=6").status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_status", "expected_reason"),
+    [
+        ("budget", 429, "OPENFIGI_RATE_LIMITED"),
+        ("transport", 502, "OPENFIGI_PROVIDER_UNAVAILABLE"),
+    ],
+)
+def test_catalog_resolve_route_sanitizes_provider_failures(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_error: str,
+    expected_status: int,
+    expected_reason: str,
+) -> None:
+    import hashlib
+
+    from backend.app.api import routes
+    from backend.app.data_providers.transport import SafeProviderTransportError
+    from backend.app.database import db_session
+    from backend.app.services.provider_budget_service import ProviderBudgetExceeded
+
+    secret = "SENTINEL_OPENFIGI_SECRET"
+
+    class FailingResolutionService:
+        def resolve_catalog_entries(self, _connection, _selected_entry_ids):  # noqa: ANN001, ANN202
+            if provider_error == "budget":
+                raise ProviderBudgetExceeded(secret, "IDENTITY", "DAY")
+            raise SafeProviderTransportError(secret, "IDENTITY", secret)
+
+    monkeypatch.setattr(routes, "instrument_resolution_service", FailingResolutionService())
+    with db_session() as connection:
+        snapshot_id = int(
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, source_date,
+                    row_count, status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', ?,
+                        '2026-08-17T12:00:00Z', NULL, 1, 'COMPLETE', 'test-v1', NULL)
+                """,
+                (hashlib.sha256(provider_error.encode()).hexdigest(),),
+            ).lastrowid
+        )
+        connection.execute(
+            """
+            INSERT INTO catalog_entries (
+                snapshot_id, row_number, isin, name, parse_status,
+                reason_code, raw_row_sha256, instrument_id, listing_id
+            )
+            VALUES (?, 1, 'US0378331005', 'Synthetic', 'ACCEPTED',
+                    'VALID_ISIN', ?, NULL, NULL)
+            """,
+            (snapshot_id, hashlib.sha256(b"provider-failure-row").hexdigest()),
+        )
+
+    response = client.post(f"/data/catalog/{snapshot_id}/resolve")
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": {"reason_code": expected_reason}}
+    assert secret not in response.text
 
 
 def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:

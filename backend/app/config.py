@@ -47,6 +47,11 @@ class Settings:
     trade_republic_catalog_minute_limit: int = 2
     trade_republic_catalog_daily_limit: int = 4
     trade_republic_catalog_monthly_limit: int = 31
+    openfigi_api_key: str | None = None
+    openfigi_cache_ttl_hours: int = 168
+    openfigi_minute_limit: int = 5
+    openfigi_daily_limit: int = 100
+    openfigi_monthly_limit: int = 1000
     ecb_fx_max_age_days: int = 7
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
@@ -121,6 +126,11 @@ class Settings:
             trade_republic_catalog_monthly_limit=int(
                 os.getenv("TRADE_REPUBLIC_CATALOG_MONTHLY_LIMIT", "31")
             ),
+            openfigi_api_key=os.getenv("OPENFIGI_API_KEY") or None,
+            openfigi_cache_ttl_hours=int(os.getenv("OPENFIGI_CACHE_TTL_HOURS", "168")),
+            openfigi_minute_limit=int(os.getenv("OPENFIGI_MINUTE_LIMIT", "5")),
+            openfigi_daily_limit=int(os.getenv("OPENFIGI_DAILY_LIMIT", "100")),
+            openfigi_monthly_limit=int(os.getenv("OPENFIGI_MONTHLY_LIMIT", "1000")),
             ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
