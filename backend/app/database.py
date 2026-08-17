@@ -121,6 +121,50 @@ CREATE TABLE IF NOT EXISTS instrument_identifier_attestations (
     UNIQUE(identifier_id, source, observed_at, evidence_hash)
 );
 
+CREATE TABLE IF NOT EXISTS catalog_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL CHECK(length(trim(source)) > 0),
+    source_url TEXT NOT NULL CHECK(length(trim(source_url)) > 0),
+    content_sha256 TEXT CHECK(content_sha256 IS NULL OR length(content_sha256) = 64),
+    retrieved_at TEXT NOT NULL,
+    source_date TEXT,
+    row_count INTEGER NOT NULL CHECK(row_count >= 0),
+    status TEXT NOT NULL CHECK(status IN ('COMPLETE', 'FAILED')),
+    parser_version TEXT NOT NULL CHECK(length(trim(parser_version)) > 0),
+    failure_reason_code TEXT CHECK(
+        failure_reason_code IS NULL OR failure_reason_code IN (
+            'DOWNLOAD_FAILED', 'PAYLOAD_TOO_LARGE', 'PARSER_ERROR', 'EMPTY_CATALOG'
+        )
+    ),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (status = 'COMPLETE' AND content_sha256 IS NOT NULL AND failure_reason_code IS NULL)
+        OR
+        (status = 'FAILED' AND failure_reason_code IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS catalog_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    row_number INTEGER NOT NULL CHECK(row_number > 0),
+    isin TEXT,
+    name TEXT,
+    parse_status TEXT NOT NULL CHECK(parse_status IN ('ACCEPTED', 'REJECTED', 'AMBIGUOUS')),
+    reason_code TEXT NOT NULL CHECK(reason_code IN (
+        'VALID_ISIN', 'INVALID_ISIN', 'MISSING_ISIN', 'MISSING_NAME',
+        'DUPLICATE_IN_SNAPSHOT', 'UNSUPPORTED_ROW'
+    )),
+    raw_row_sha256 TEXT NOT NULL CHECK(length(raw_row_sha256) = 64),
+    instrument_id INTEGER,
+    listing_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(snapshot_id) REFERENCES catalog_snapshots(id) ON DELETE RESTRICT,
+    FOREIGN KEY(instrument_id) REFERENCES instruments(id) ON DELETE RESTRICT,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    UNIQUE(snapshot_id, row_number)
+);
+
 CREATE TABLE IF NOT EXISTS provider_symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
@@ -513,6 +557,15 @@ WHERE scope = 'LISTING' AND scheme NOT IN ('ISIN', 'FIGI');
 CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_listings_market_identity
 ON instrument_listings(UPPER(ticker), UPPER(mic), UPPER(currency))
 WHERE mic IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_snapshots_complete_source_sha
+ON catalog_snapshots(source, content_sha256)
+WHERE status = 'COMPLETE';
+CREATE INDEX IF NOT EXISTS idx_catalog_snapshots_source_retrieved
+ON catalog_snapshots(source, retrieved_at, id);
+CREATE INDEX IF NOT EXISTS idx_catalog_entries_snapshot_row
+ON catalog_entries(snapshot_id, row_number);
+CREATE INDEX IF NOT EXISTS idx_catalog_entries_isin
+ON catalog_entries(isin);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_symbols_verified_listing_capability
 ON provider_symbols(UPPER(provider), listing_id, UPPER(capability))
 WHERE status = 'VERIFIED';

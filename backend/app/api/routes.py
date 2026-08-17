@@ -4,7 +4,7 @@ import hmac
 import sqlite3
 from collections.abc import Iterable
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
 from backend.app.database import db_session
@@ -63,7 +63,7 @@ from backend.app.models import (
     WalkForwardIn,
     WalkForwardOut,
 )
-from backend.app.models.schemas import AssetDeleteOut
+from backend.app.models.schemas import AssetDeleteOut, CatalogIngestResultOut
 from backend.app.services import google_sheets_import_service
 from backend.app.services.action_board_service import get_action_board
 from backend.app.services.alert_service import (
@@ -83,6 +83,7 @@ from backend.app.services.assets_service import (
 )
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
+from backend.app.services.catalog_service import CatalogRefreshError, CatalogService
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.instrument_service import AmbiguousInstrumentError
 from backend.app.services.market_data_service import MarketDataService
@@ -103,6 +104,7 @@ allocation_engine = AllocationEngine()
 market_data_service = MarketDataService()
 news_engine = NewsEngine()
 ml_engine = MLEngine()
+catalog_service = CatalogService()
 
 
 def _get_unique_asset(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
@@ -827,6 +829,32 @@ def get_symbol_news(symbol: str, limit: int = Query(default=50, ge=1, le=200)) -
 def data_status() -> DataStatusOut:
     with db_session() as connection:
         return DataStatusOut(**market_data_service.get_global_status(connection))
+
+
+@router.post("/data/catalog/refresh", response_model=CatalogIngestResultOut)
+async def refresh_trade_republic_catalog(
+    request: Request,
+    force: bool = Query(default=False),
+) -> CatalogIngestResultOut:
+    if set(request.query_params) - {"force"} or await request.body():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"reason_code": "INVALID_CATALOG_REFRESH_REQUEST"},
+        )
+    try:
+        with db_session() as connection:
+            result = catalog_service.refresh(connection, force=force)
+    except CatalogRefreshError as exc:
+        status_code = (
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+            if exc.reason_code == "PAYLOAD_TOO_LARGE"
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason_code": exc.reason_code},
+        ) from None
+    return CatalogIngestResultOut(**result.__dict__)
 
 
 @router.get("/data/status/{symbol}", response_model=AssetDataStatusOut)

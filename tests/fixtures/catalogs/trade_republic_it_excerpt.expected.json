@@ -1,0 +1,34 @@
+[
+  {
+    "row_number": 1,
+    "isin": "DE0000000009",
+    "name": "Synthetic Alpha Equity",
+    "status": "ACCEPTED",
+    "reason_code": "VALID_ISIN",
+    "raw_row_sha256": "a5aa583a76ca6a6e4b72ae9840a4efa513103fe520f7d6125ad2ddda0ecb59a3"
+  },
+  {
+    "row_number": 2,
+    "isin": "FR0000000002",
+    "name": "Synthetic Beta Fund",
+    "status": "ACCEPTED",
+    "reason_code": "VALID_ISIN",
+    "raw_row_sha256": "98a26d9c19d2c544b175704fdccd1fe8308644c47bd0d4eb038a1bd314feb77b"
+  },
+  {
+    "row_number": 3,
+    "isin": "DE0000000009",
+    "name": "Synthetic Alpha Duplicate",
+    "status": "REJECTED",
+    "reason_code": "DUPLICATE_IN_SNAPSHOT",
+    "raw_row_sha256": "b0ce828b32d8031181ab2e71b766e3d36f82dfda87f15be6a57069d742373235"
+  },
+  {
+    "row_number": 4,
+    "isin": null,
+    "name": "Synthetic Missing Identifier",
+    "status": "REJECTED",
+    "reason_code": "MISSING_ISIN",
+    "raw_row_sha256": "5f38f83339091e28ddbb9b723e1437ddd1ee69d61b3024fd746675c7ac5079be"
+  }
+]

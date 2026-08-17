@@ -385,11 +385,11 @@ POST /data/catalog/refresh?force=false -> CatalogIngestResult
 
 Nuove tabelle: `catalog_snapshots(source, source_url, content_sha256, retrieved_at, source_date, row_count, status, parser_version, failure_reason_code)` e `catalog_entries(snapshot_id, row_number, isin, name, parse_status, reason_code, raw_row_sha256, instrument_id, listing_id)`. `failure_reason_code` accetta soltanto `CatalogFailureReason`, è `NULL` per COMPLETE e non contiene testo provider/eccezioni. `content_sha256` è obbligatorio e unico per source sugli snapshot COMPLETE, ma può essere `NULL` su FAILED quando download/size falliscono prima di ottenere un payload completo; gli snapshot precedenti non vengono cancellati.
 
-- [ ] **Step 1: Preparare fixture minima e test RED**
+- [x] **Step 1: Preparare fixture minima e test RED**
 
 La fixture PDF contiene esclusivamente righe sintetiche rappresentative della struttura ufficiale: due ISIN validi, un duplicato, una riga senza ISIN e una pagina intestazione. L'expected JSON elenca valori e reason code senza copiare il catalogo completo. Testare limite byte, PDF malformato, zero righe, parsing multipagina, checksum, idempotenza dello stesso payload, nuova versione per payload diverso e route manuale con transport fixture. Con cache preesistente, `force=false` produce cache hit; `force=true` propaga `bypass_cache=true`, produce una sola richiesta fisica governata e aggiorna la cache. Due refresh force concorrenti dello stesso URL/fingerprint vengono deduplicati in-flight. Verificare i reason code FAILED `DOWNLOAD_FAILED`, `PAYLOAD_TOO_LARGE`, `PARSER_ERROR`, `EMPTY_CATALOG`; un failure di backup/pre-migration non scrive alcuno snapshot. La route non accetta URL/body, usa soltanto l'URL ufficiale fisso e non è chiamata all'avvio.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_catalog.py tests\test_database.py tests\test_api.py -k "catalog or trade_republic" -q
@@ -397,19 +397,19 @@ La fixture PDF contiene esclusivamente righe sintetiche rappresentative della st
 
 Expected: import/module o assert falliscono perché parser e tabelle non esistono.
 
-- [ ] **Step 3: Implementare parser limitato e deterministico**
+- [x] **Step 3: Implementare parser limitato e deterministico**
 
 Fissare host/path ufficiale, timeout tramite transport e dimensione massima 32 MiB. Il parser accetta solo righe con ISIN verificato anche nel check digit ISO 6166 e nome non vuoto; normalizza spazi Unicode, preserva il nome leggibile, calcola hash della riga normalizzata. `source_date` resta `NULL` quando il PDF non la dichiara; non derivarla dal nome file o dagli header HTTP.
 
-- [ ] **Step 4: Implementare ingest versionato**
+- [x] **Step 4: Implementare ingest versionato**
 
 La transazione inserisce snapshot COMPLETE+entries solo dopo parsing completo. In caso di download/size/parser/empty failure, dopo il rollback registra al massimo uno snapshot FAILED con checksum nullable, retrieved_at e `CatalogFailureReason` sanitizzato, senza entries e senza sostituire il latest COMPLETE. Un failure del backup/pre-migration resta invece fail-closed e non apre alcuna transazione applicativa né registra FAILED. Lo stesso SHA COMPLETE restituisce `unchanged=True`; un nuovo SHA crea una versione e conserva la precedente. Duplicati intra-snapshot sono `REJECTED/DUPLICATE_IN_SNAPSHOT`; nessuna scelta arbitraria tra omonimi. Associare o creare soltanto l'entità instrument per ISIN univoco, lasciando listing/MIC/currency irrisolti.
 
-- [ ] **Step 5: Collegare l'entrypoint manuale senza scheduler**
+- [x] **Step 5: Collegare l'entrypoint manuale senza scheduler**
 
 `POST /data/catalog/refresh` chiama transport e ingest una sola volta, applica timeout/32 MiB/budget e restituisce 200 anche per snapshot invariato. Propaga `force` esclusivamente come argomento `bypass_cache=force` di `SafeProviderTransport.request()`: anche con force restano invariati quota/cooldown, fingerprint, deduplica in-flight e validazione. Errori download/parser/backup sono sanitizzati e non lasciano snapshot `COMPLETE`; nessun caller automatico o refresh-all invoca questa route.
 
-- [ ] **Step 6: Eseguire GREEN, audit dipendenze e regressione DB**
+- [x] **Step 6: Eseguire GREEN, audit dipendenze e regressione DB**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pip install -r backend\requirements.txt
@@ -420,7 +420,7 @@ La transazione inserisce snapshot COMPLETE+entries solo dopo parsing completo. I
 
 Expected: test verdi, Ruff verde, `No broken requirements found.`; nessuna richiesta di rete durante pytest.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su parser non fidato, decompression/size limit, check digit, idempotenza, rollback, copyright della fixture e assenza di mutazioni `assets`. Correggere Critical/Important e ripetere Step 5.
 

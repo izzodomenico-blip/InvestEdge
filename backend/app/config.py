@@ -43,6 +43,10 @@ class Settings:
     provider_http_read_timeout_seconds: float = 20.0
     provider_retry_after_cap_seconds: int = 60
     provider_default_max_attempts: int = 3
+    trade_republic_catalog_cache_ttl_hours: int = 24
+    trade_republic_catalog_minute_limit: int = 2
+    trade_republic_catalog_daily_limit: int = 4
+    trade_republic_catalog_monthly_limit: int = 31
     ecb_fx_max_age_days: int = 7
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
@@ -104,6 +108,18 @@ class Settings:
             ),
             provider_default_max_attempts=int(
                 os.getenv("PROVIDER_DEFAULT_MAX_ATTEMPTS", "3")
+            ),
+            trade_republic_catalog_cache_ttl_hours=int(
+                os.getenv("TRADE_REPUBLIC_CATALOG_CACHE_TTL_HOURS", "24")
+            ),
+            trade_republic_catalog_minute_limit=int(
+                os.getenv("TRADE_REPUBLIC_CATALOG_MINUTE_LIMIT", "2")
+            ),
+            trade_republic_catalog_daily_limit=int(
+                os.getenv("TRADE_REPUBLIC_CATALOG_DAILY_LIMIT", "4")
+            ),
+            trade_republic_catalog_monthly_limit=int(
+                os.getenv("TRADE_REPUBLIC_CATALOG_MONTHLY_LIMIT", "31")
             ),
             ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),

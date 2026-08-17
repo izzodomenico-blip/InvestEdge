@@ -145,11 +145,19 @@ def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> Non
     assert events == ["prepare", "yield"]
 
 
-def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
+def test_lifespan_does_not_initialize_or_write_catalog_snapshot_when_backup_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
     from backend.app import main
+    from backend.app.config import get_settings
+    from backend.app.database import db_session, init_db
 
     events: list[str] = []
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "backup-failure.db"))
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    get_settings.cache_clear()
+    init_db()
 
     def fail_prepare(**kwargs) -> None:  # noqa: ANN003
         assert kwargs == {"reason": "pre-migration", "backup_existing": True}
@@ -172,6 +180,9 @@ def test_lifespan_does_not_initialize_when_backup_fails(monkeypatch) -> None:
         asyncio.run(run_lifespan())
 
     assert events == ["prepare"]
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM catalog_snapshots").fetchone()[0] == 0
+    get_settings.cache_clear()
 
 
 def test_admin_seed_route_is_not_exposed(client: TestClient) -> None:
@@ -2431,6 +2442,129 @@ def test_data_usage_compat_reads_budget_projection(client: TestClient) -> None:
     usage = {item["provider"]: item for item in response.json()}
     assert usage["yahoo_finance"]["calls_count"] == 1
     assert usage["yahoo_finance"]["daily_limit"] == 0
+
+
+def test_manual_catalog_refresh_uses_fixed_transport_and_does_not_mutate_assets_or_prices(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from backend.app.api import routes
+    from backend.app.data_providers.transport import SafeProviderTransport
+    from backend.app.database import db_session
+    from backend.app.services.catalog_service import CatalogService
+
+    payload = (
+        Path(__file__).parent
+        / "fixtures"
+        / "catalogs"
+        / "trade_republic_it_excerpt.pdf"
+    ).read_bytes()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(payload),
+            headers={"content-type": "application/pdf"},
+        )
+
+    transport = SafeProviderTransport(
+        allowed_hosts={"assets.traderepublic.com"}
+    ).with_client(httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(
+        routes,
+        "catalog_service",
+        CatalogService(
+            transport=transport,
+            clock=lambda: datetime(2026, 8, 17, 10, 30, tzinfo=UTC),
+            sleeper=lambda _delay: None,
+        ),
+    )
+    with db_session() as connection:
+        before = dict(
+            connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM assets) AS assets,
+                    (SELECT COUNT(*) FROM price_history) AS prices
+                """
+            ).fetchone()
+        )
+
+    response = client.post("/data/catalog/refresh?force=true")
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 2
+    assert response.json()["rejected"] == 2
+    assert response.json()["ambiguous"] == 0
+    assert response.json()["unchanged"] is False
+    assert len(response.json()["content_sha256"]) == 64
+    assert len(requests) == 1
+    assert str(requests[0].url) == (
+        "https://assets.traderepublic.com/assets/files/IT/Instrument_Universe_IT_en.pdf"
+    )
+    with db_session() as connection:
+        after = dict(
+            connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM assets) AS assets,
+                    (SELECT COUNT(*) FROM price_history) AS prices
+                """
+            ).fetchone()
+        )
+    assert after == before
+
+
+def test_catalog_refresh_rejects_body_and_url_parameters_without_calling_provider(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.api import routes
+
+    calls = 0
+
+    class ForbiddenCatalogService:
+        def refresh(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            nonlocal calls
+            calls += 1
+            raise AssertionError("catalog service must not be called")
+
+    monkeypatch.setattr(routes, "catalog_service", ForbiddenCatalogService())
+
+    body_response = client.post("/data/catalog/refresh", json={"url": "https://example.test"})
+    url_response = client.post("/data/catalog/refresh?url=https://example.test")
+
+    assert body_response.status_code == 422
+    assert url_response.status_code == 422
+    assert calls == 0
+
+
+def test_catalog_refresh_failure_response_contains_only_stable_reason(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.api import routes
+    from backend.app.services.catalog_service import CatalogRefreshError
+
+    class FailingCatalogService:
+        def refresh(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            try:
+                raise RuntimeError("SENTINEL_PROVIDER_INTERNAL_DETAIL")
+            except RuntimeError:
+                raise CatalogRefreshError("DOWNLOAD_FAILED") from None
+
+    monkeypatch.setattr(routes, "catalog_service", FailingCatalogService())
+
+    response = client.post("/data/catalog/refresh")
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": {"reason_code": "DOWNLOAD_FAILED"}}
+    assert "SENTINEL" not in response.text
 
 
 def test_alpha_vantage_proxy_symbols(client: TestClient) -> None:

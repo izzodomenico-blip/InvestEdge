@@ -37,6 +37,22 @@ IdentifierScheme = Literal[
     "FRED_SERIES_ID",
     "ECB_SERIES_KEY",
 ]
+CatalogEntryStatus = Literal["ACCEPTED", "REJECTED", "AMBIGUOUS"]
+CatalogReason = Literal[
+    "VALID_ISIN",
+    "INVALID_ISIN",
+    "MISSING_ISIN",
+    "MISSING_NAME",
+    "DUPLICATE_IN_SNAPSHOT",
+    "UNSUPPORTED_ROW",
+]
+CatalogSnapshotStatus = Literal["COMPLETE", "FAILED"]
+CatalogFailureReason = Literal[
+    "DOWNLOAD_FAILED",
+    "PAYLOAD_TOO_LARGE",
+    "PARSER_ERROR",
+    "EMPTY_CATALOG",
+]
 SignalType = Literal["STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"]
 RiskLevel = Literal["low", "medium", "high", "very_high"]
 OrderType = Literal["BUY", "SELL"]
@@ -1041,3 +1057,12 @@ class DataRefreshResultOut(BaseModel):
 class DataRefreshAllOut(BaseModel):
     summary: dict[str, int]
     results: list[DataRefreshResultOut]
+
+
+class CatalogIngestResultOut(BaseModel):
+    snapshot_id: int
+    content_sha256: str = Field(..., min_length=64, max_length=64)
+    accepted: int = Field(..., ge=0)
+    rejected: int = Field(..., ge=0)
+    ambiguous: int = Field(..., ge=0)
+    unchanged: bool

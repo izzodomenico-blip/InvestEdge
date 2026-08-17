@@ -109,6 +109,104 @@ def test_instrument_master_schema_is_additive_for_new_database(tmp_path, monkeyp
         ].replace(" ", "")
 
 
+def test_catalog_schema_is_additive_and_enforces_snapshot_failure_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "catalog-schema.db"
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert {"catalog_snapshots", "catalog_entries"} <= tables
+
+        snapshot_columns = table_columns(connection, "catalog_snapshots")
+        assert {
+            "source",
+            "source_url",
+            "content_sha256",
+            "retrieved_at",
+            "source_date",
+            "row_count",
+            "status",
+            "parser_version",
+            "failure_reason_code",
+        } <= snapshot_columns
+        entry_columns = table_columns(connection, "catalog_entries")
+        assert {
+            "snapshot_id",
+            "row_number",
+            "isin",
+            "name",
+            "parse_status",
+            "reason_code",
+            "raw_row_sha256",
+            "instrument_id",
+            "listing_id",
+        } <= entry_columns
+
+        connection.execute(
+            """
+            INSERT INTO catalog_snapshots (
+                source, source_url, content_sha256, retrieved_at, source_date,
+                row_count, status, parser_version, failure_reason_code
+            )
+            VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', NULL,
+                    '2026-08-17T10:30:00Z', NULL, 0, 'FAILED', '1', 'DOWNLOAD_FAILED')
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, row_count,
+                    status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', NULL,
+                        '2026-08-17T10:31:00Z', 0, 'COMPLETE', '1', NULL)
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, row_count,
+                    status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', ?,
+                        '2026-08-17T10:32:00Z', 0, 'COMPLETE', '1', 'PARSER_ERROR')
+                """,
+                ("a" * 64,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, row_count,
+                    status, parser_version, failure_reason_code
+                )
+                VALUES ('TRADE_REPUBLIC_IT', 'https://example.test/catalog.pdf', NULL,
+                        '2026-08-17T10:33:00Z', 0, 'FAILED', '1', 'RAW_EXCEPTION_TEXT')
+                """
+            )
+
+        indexes = {
+            row["name"]: row["sql"]
+            for row in connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
+            )
+        }
+        unique_sql = indexes["uq_catalog_snapshots_complete_source_sha"].replace(" ", "")
+        assert "ONcatalog_snapshots(source,content_sha256)" in unique_sql
+        assert "WHEREstatus='COMPLETE'" in unique_sql
+
+
 def test_instrument_master_legacy_backfill_is_idempotent_and_preserves_assets(
     tmp_path,
     monkeypatch,

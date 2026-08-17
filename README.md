@@ -184,6 +184,14 @@ Opzioni: `max_weight` (cap per singolo asset con redistribuzione), `target_volat
 
 L'endpoint `POST /portfolio/allocation/apply` sostituisce direttamente le posizioni con quelle del piano; prima di invocarlo la UI richiede una conferma che mostra capitale totale e liquidita risultante. `POST /portfolio/allocation/rebalance` confronta invece il piano con il portafoglio attuale e restituisce i trade (BUY/SELL) necessari per allinearlo (ottimizzatore/ribilanciamento).
 
+## Catalogo strumenti Trade Republic
+
+`POST /data/catalog/refresh?force=false` importa manualmente il PDF pubblico dell'universo strumenti italiano da un URL ufficiale fisso. L'endpoint non accetta URL o body forniti dal client, non viene chiamato all'avvio o dai refresh aggregati e limita il download a 32 MiB. `force=true` ignora soltanto la cache valida: quota, cooldown, fingerprint, deduplica delle richieste concorrenti e validazione del trasporto restano attivi.
+
+Ogni payload completo diverso crea uno snapshot versionato tramite SHA-256; lo stesso payload restituisce lo snapshot esistente con `unchanged=true`. Gli errori sono registrati con soli codici stabili e sanitizzati, senza sostituire l'ultimo snapshot completo. Il PDF attesta esclusivamente l'appartenenza storica al catalogo: non dimostra che uno strumento sia negoziabile oggi. L'import crea o associa soltanto l'identita instrument per un ISIN valido; non crea listing o righe `assets` e non aggiorna i prezzi.
+
+Le soglie locali sono configurabili con `TRADE_REPUBLIC_CATALOG_CACHE_TTL_HOURS`, `TRADE_REPUBLIC_CATALOG_MINUTE_LIMIT`, `TRADE_REPUBLIC_CATALOG_DAILY_LIMIT` e `TRADE_REPUBLIC_CATALOG_MONTHLY_LIMIT`.
+
 ## Dati reali con cache
 
 ### Attivazione rapida
@@ -302,6 +310,7 @@ Endpoint iniziali:
 - `DELETE /backtests/{backtest_id}`
 - `GET /data/status`
 - `GET /data/status/{symbol}`
+- `POST /data/catalog/refresh?force=false`
 - `POST /data/refresh/{symbol}?force=false`
 - `POST /data/refresh-all?limit=5&force=false`
 - `GET /data/usage`
