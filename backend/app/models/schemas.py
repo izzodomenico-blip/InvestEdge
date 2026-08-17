@@ -5,6 +5,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from backend.app.models.market_data import (
+    EffectiveObservationQuality,
+    SourceObservationQuality,
+)
+
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
 InstrumentType = Literal[
     "STOCK",
@@ -157,6 +162,17 @@ class PricePointOut(BaseModel):
     provider: str | None = None
     is_real_data: bool = False
     fetched_at: str | None = None
+    listing_id: int | None = None
+    observation_id: int | None = None
+    provider_observed_at: str | None = None
+    ingested_at: str | None = None
+    timezone: str | None = None
+    session: str | None = None
+    currency: str | None = None
+    delay_seconds: int | None = None
+    source_quality: SourceObservationQuality | None = None
+    effective_quality: EffectiveObservationQuality | None = None
+    fallback_reason: str | None = None
     sma_20: float | None = None
     sma_50: float | None = None
     sma_200: float | None = None

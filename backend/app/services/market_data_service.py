@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import pandas as pd
@@ -17,7 +19,10 @@ from backend.app.data_providers import (
     RealDataDisabled,
 )
 from backend.app.data_providers.base import BaseMarketDataProvider
+from backend.app.models.market_data import MarketObservationEnvelope
 from backend.app.services.common import now_utc as _now
+from backend.app.services.instrument_service import InstrumentService
+from backend.app.services.market_observation_service import MarketObservationService
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
 from backend.app.services.sentiment_engine import aggregate_news_sentiment
@@ -27,6 +32,7 @@ class MarketDataService:
     def __init__(self) -> None:
         self.scoring_engine = ScoringEngine()
         self.portfolio_engine = PortfolioEngine()
+        self.observation_service = MarketObservationService()
 
     def get_provider_for_asset(
         self,
@@ -49,21 +55,24 @@ class MarketDataService:
         provider = self.get_provider_for_asset(connection, asset["asset_type"])
         if provider is None:
             return self._fallback_result(
-                symbol=asset["symbol"],
+                connection=connection,
+                asset=asset,
                 provider=None,
                 message="Nessun provider configurato per questa asset class, uso dati locali.",
             )
 
         if not settings.enable_real_data:
             return self._fallback_result(
-                symbol=asset["symbol"],
+                connection=connection,
+                asset=asset,
                 provider=provider.provider_name,
                 message="Dati reali disattivati. Stai usando dati seed/demo.",
             )
 
         if not provider.api_key_configured():
             return self._fallback_result(
-                symbol=asset["symbol"],
+                connection=connection,
+                asset=asset,
                 provider=provider.provider_name,
                 message="API key non configurata.",
             )
@@ -71,37 +80,73 @@ class MarketDataService:
         try:
             prices, used_cache = provider.get_daily_prices(asset["symbol"], force=force)
         except RateLimitExceeded as exc:
-            return self._fallback_result(asset["symbol"], provider.provider_name, str(exc))
+            return self._fallback_result(connection, asset, provider.provider_name, str(exc))
         except MissingApiKey as exc:
-            return self._fallback_result(asset["symbol"], provider.provider_name, str(exc))
+            return self._fallback_result(connection, asset, provider.provider_name, str(exc))
         except RealDataDisabled as exc:
-            return self._fallback_result(asset["symbol"], provider.provider_name, str(exc))
+            return self._fallback_result(connection, asset, provider.provider_name, str(exc))
         except ProviderError as exc:
-            return self._fallback_result(asset["symbol"], provider.provider_name, f"{exc} Uso dati locali.")
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                f"{exc} Uso dati locali.",
+            )
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
             return self._fallback_result(
-                asset["symbol"],
+                connection,
+                asset,
                 provider.provider_name,
                 "Provider non disponibile, uso dati locali.",
             )
 
         if not prices:
+            now = datetime.now(UTC)
+            self._record_provider_no_data(
+                connection,
+                asset,
+                provider.provider_name,
+                now,
+            )
             return self._fallback_result(
-                asset["symbol"],
+                connection,
+                asset,
                 provider.provider_name,
                 "Provider senza dati utilizzabili, uso dati locali.",
                 used_cache=used_cache,
             )
 
-        # I provider a storico completo (es. Yahoo) sostituiscono l'intera serie:
-        # cosi' lo storico seed/proxy precedente viene rimosso e non resta nessun
-        # punto "Frankenstein" misto reale+simulato.
-        if getattr(provider, "full_history", False):
-            connection.execute("DELETE FROM price_history WHERE asset_id = ?", (asset["id"],))
-
-        inserted, updated = self.save_prices_to_db(connection, asset["symbol"], prices, provider.provider_name)
-        self._recalculate_signal(connection, asset["id"])
-        self._refresh_portfolio_if_needed(connection, asset["id"])
+        before_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        inserted, updated, accepted = self._ingest_legacy_prices(
+            connection,
+            asset,
+            prices,
+            provider.provider_name,
+        )
+        if not accepted:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza dati validi, conservo l'ultimo dato locale.",
+                used_cache=used_cache,
+            )
+        after_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        inserted = max(0, after_count - before_count)
+        updated = max(0, updated - inserted)
+        if inserted or updated:
+            self._recalculate_signal(connection, asset["id"])
+            self._refresh_portfolio_if_needed(connection, asset["id"])
         return {
             "symbol": asset["symbol"],
             "provider": provider.provider_name,
@@ -148,67 +193,128 @@ class MarketDataService:
         asset = self._asset(connection, symbol)
         if asset is None:
             raise ValueError(f"Asset {symbol.upper()} non trovato.")
+        inserted, projected, _accepted = self._ingest_legacy_prices(
+            connection,
+            asset,
+            prices,
+            provider,
+        )
+        return inserted, max(0, projected - inserted)
 
-        inserted = 0
-        updated = 0
-        now = _now()
-        for price in prices:
-            date_value = str(price.get("date") or "")
-            if not date_value:
-                continue
+    def _ingest_legacy_prices(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        prices: list[dict[str, Any]],
+        provider: str,
+    ) -> tuple[int, int, bool]:
+        if asset["instrument_listing_id"] is None:
+            InstrumentService.backfill_active_assets(connection)
+            refreshed_asset = self._asset(connection, asset["symbol"])
+            if refreshed_asset is None or refreshed_asset["instrument_listing_id"] is None:
+                raise ValueError(f"Listing per {asset['symbol']} non risolto.")
+            asset = refreshed_asset
 
-            existing_rows = connection.execute(
-                """
-                SELECT id
-                FROM price_history
-                WHERE asset_id = ? AND date = ?
-                ORDER BY is_real_data DESC, id ASC
-                """,
-                (asset["id"], date_value),
-            ).fetchall()
-            params = (
-                float(price["open"]),
-                float(price["high"]),
-                float(price["low"]),
-                float(price["close"]),
-                float(price.get("adjusted_close", price["close"])),
-                float(price.get("volume", 0) or 0),
-                "real",
-                provider,
-                1,
-                now,
-            )
-            if not existing_rows:
-                connection.execute(
-                    """
-                    INSERT INTO price_history (
-                        asset_id, date, open, high, low, close, adjusted_close, volume,
-                        source, provider, is_real_data, fetched_at, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (asset["id"], date_value, *params, now),
-                )
-                inserted += 1
-                continue
-
-            primary_id = existing_rows[0]["id"]
+        now = datetime.now(UTC)
+        before_count = int(
             connection.execute(
-                """
-                UPDATE price_history
-                SET open = ?, high = ?, low = ?, close = ?, adjusted_close = ?, volume = ?,
-                    source = ?, provider = ?, is_real_data = ?, fetched_at = ?
-                WHERE id = ?
-                """,
-                (*params, primary_id),
-            )
-            updated += 1
-            duplicate_ids = [row["id"] for row in existing_rows[1:]]
-            if duplicate_ids:
-                placeholders = ",".join("?" for _ in duplicate_ids)
-                connection.execute(f"DELETE FROM price_history WHERE id IN ({placeholders})", duplicate_ids)
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        envelopes = [
+            self._legacy_price_envelope(asset, price, provider, now)
+            for price in prices
+        ]
+        result = self.observation_service.ingest_batch(connection, envelopes, now)
+        after_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        inserted = max(0, after_count - before_count)
+        accepted = result.accepted > 0 or result.duplicates > 0
+        return inserted, result.projected_price_rows, accepted
 
-        return inserted, updated
+    @staticmethod
+    def _legacy_price_envelope(
+        asset: sqlite3.Row,
+        price: dict[str, Any],
+        provider: str,
+        now: datetime,
+    ) -> MarketObservationEnvelope:
+        timezone = (
+            str(asset["listing_timezone"]).strip()
+            if asset["listing_timezone"] is not None
+            else None
+        )
+        observed_at = MarketDataService._legacy_observed_at(
+            price.get("provider_observed_at") or price.get("date"),
+            timezone,
+        )
+        asset_type = str(asset["asset_type"]).lower()
+        capability = MarketDataService._capability_for_asset(asset_type)
+        source_quality = "reference" if capability in {"REFERENCE", "FX"} else "eod"
+        raw_fields = {
+            key: price.get(key)
+            for key in (
+                "bid",
+                "ask",
+                "last",
+                "open",
+                "high",
+                "low",
+                "close",
+                "adjusted_close",
+                "volume",
+            )
+            if key in price
+        }
+        canonical_payload = json.dumps(
+            price,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return MarketObservationEnvelope(
+            listing_id=int(asset["instrument_listing_id"]),
+            provider=provider,
+            capability=capability,
+            operation="get_daily_prices",
+            received_at=now,
+            provider_observed_at=observed_at,
+            timezone=timezone,
+            session="24X7" if asset_type == "crypto" else "REGULAR",
+            currency=str(price.get("currency") or asset["currency"]).strip().upper(),
+            source_quality=source_quality,
+            kind="BAR",
+            raw_fields=raw_fields,
+            raw_payload_sha256=hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
+        )
+
+    @staticmethod
+    def _legacy_observed_at(value: object, timezone: str | None) -> datetime | None:
+        if value is None or not str(value).strip():
+            return None
+        if not timezone:
+            return None
+        try:
+            zone = ZoneInfo(timezone)
+        except (ValueError, ZoneInfoNotFoundError):
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, date):
+            parsed = datetime.combine(value, time.min)
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=zone)
+        return parsed.astimezone(UTC)
 
     def get_data_status(self, connection: sqlite3.Connection, symbol: str) -> dict[str, Any]:
         asset = self._asset(connection, symbol)
@@ -292,9 +398,13 @@ class MarketDataService:
     def _asset(self, connection: sqlite3.Connection, symbol: str) -> sqlite3.Row | None:
         return connection.execute(
             """
-            SELECT id, symbol, asset_type, risk_level
-            FROM assets
-            WHERE UPPER(symbol) = UPPER(?)
+            SELECT asset.id, asset.symbol, asset.asset_type, asset.risk_level,
+                   asset.currency, asset.instrument_listing_id,
+                   listing.timezone AS listing_timezone
+            FROM assets AS asset
+            LEFT JOIN instrument_listings AS listing
+              ON listing.id = asset.instrument_listing_id
+            WHERE UPPER(asset.symbol) = UPPER(?)
             LIMIT 1
             """,
             (symbol,),
@@ -302,13 +412,22 @@ class MarketDataService:
 
     def _fallback_result(
         self,
-        symbol: str,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
         provider: str | None,
         message: str,
         used_cache: bool = False,
     ) -> dict[str, Any]:
+        if asset["instrument_listing_id"] is not None:
+            self.observation_service.latest_compatible(
+                connection,
+                int(asset["instrument_listing_id"]),
+                self._capability_for_asset(str(asset["asset_type"])),
+                datetime.now(UTC),
+                requested_provider=provider,
+            )
         return {
-            "symbol": symbol.upper(),
+            "symbol": str(asset["symbol"]).upper(),
             "provider": provider,
             "rows_inserted": 0,
             "rows_updated": 0,
@@ -316,6 +435,44 @@ class MarketDataService:
             "used_fallback": True,
             "message": message,
         }
+
+    def _record_provider_no_data(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        provider: str,
+        now: datetime,
+    ) -> None:
+        listing_id = asset["instrument_listing_id"]
+        if listing_id is None:
+            return
+        capability = self._capability_for_asset(str(asset["asset_type"]))
+        stable_payload = f"{provider}|{capability}|get_daily_prices|PROVIDER_NO_DATA"
+        envelope = MarketObservationEnvelope(
+            listing_id=int(listing_id),
+            provider=provider,
+            capability=capability,
+            operation="get_daily_prices",
+            received_at=now,
+            provider_observed_at=None,
+            timezone=None,
+            session=None,
+            currency=None,
+            source_quality=None,
+            kind=None,
+            raw_fields={"reason_code": "PROVIDER_NO_DATA"},
+            raw_payload_sha256=hashlib.sha256(stable_payload.encode("utf-8")).hexdigest(),
+        )
+        self.observation_service.ingest_batch(connection, [envelope], now)
+
+    @staticmethod
+    def _capability_for_asset(asset_type: str) -> str:
+        normalized = asset_type.strip().lower()
+        if normalized == "fx":
+            return "FX"
+        if normalized in {"macro", "bond_proxy"}:
+            return "REFERENCE"
+        return "EOD"
 
     def _recalculate_signal(self, connection: sqlite3.Connection, asset_id: int) -> None:
         asset = connection.execute(

@@ -463,3 +463,80 @@ def test_order_history_rejects_legacy_usd_amounts_without_frozen_fx(connection) 
 
     with pytest.raises(FXRateUnavailable, match="Cambio storico USD/EUR"):
         PortfolioEngine().list_orders(connection)
+
+
+def test_invalid_market_observation_keeps_portfolio_on_last_good_projection(
+    connection: sqlite3.Connection,
+) -> None:
+    from backend.app.models.market_data import MarketObservationEnvelope
+    from backend.app.services.instrument_service import InstrumentService
+    from backend.app.services.market_observation_service import MarketObservationService
+
+    InstrumentService.backfill_active_assets(connection)
+    listing_id = connection.execute(
+        """
+        SELECT instrument_listing_id
+        FROM assets
+        WHERE symbol = 'AAPL'
+        """
+    ).fetchone()["instrument_listing_id"]
+    connection.execute(
+        """
+        UPDATE instrument_listings
+        SET mic = 'XNAS', venue_name = 'Nasdaq', timezone = 'America/New_York'
+        WHERE id = ?
+        """,
+        (listing_id,),
+    )
+    now = datetime(2026, 8, 17, 16, 0, tzinfo=UTC)
+    valid = MarketObservationEnvelope(
+        listing_id=listing_id,
+        provider="portfolio_fixture",
+        capability="EOD",
+        operation="daily_prices",
+        received_at=now,
+        provider_observed_at=now - timedelta(hours=1),
+        timezone="America/New_York",
+        session="REGULAR",
+        currency="USD",
+        source_quality="eod",
+        kind="BAR",
+        raw_fields={"close": "125"},
+        raw_payload_sha256="a" * 64,
+    )
+    service = MarketObservationService()
+    accepted = service.ingest_batch(connection, [valid], now)
+    assert accepted.projected_price_rows == 1
+
+    _set_usd_rate(connection, 0.80)
+    _initialize(PortfolioEngine(), connection)
+    PortfolioEngine().simulate_order(
+        connection,
+        SimulatedOrderIn(symbol="AAPL", order_type="BUY", quantity=1, price=100, fees=0),
+    )
+
+    invalid = MarketObservationEnvelope(
+        listing_id=listing_id,
+        provider="portfolio_fixture",
+        capability="EOD",
+        operation="daily_prices",
+        received_at=now + timedelta(minutes=1),
+        provider_observed_at=now,
+        timezone="America/New_York",
+        session="REGULAR",
+        currency="USD",
+        source_quality="eod",
+        kind="BAR",
+        raw_fields={"close": "-999"},
+        raw_payload_sha256="b" * 64,
+    )
+    rejected = service.ingest_batch(
+        connection,
+        [invalid],
+        now + timedelta(minutes=1),
+    )
+    refreshed = PortfolioEngine().refresh_portfolio(connection, create_snapshot=False)
+
+    assert rejected.rejected == 1
+    assert rejected.projected_price_rows == 0
+    assert refreshed.positions[0].current_price == 125

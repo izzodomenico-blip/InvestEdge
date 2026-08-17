@@ -271,6 +271,87 @@ CREATE TABLE IF NOT EXISTS provider_symbols (
     UNIQUE(provider, listing_id, capability, version)
 );
 
+CREATE TABLE IF NOT EXISTS market_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    capability TEXT NOT NULL CHECK(capability IN (
+        'CATALOG', 'IDENTITY', 'EOD', 'QUOTE', 'FX', 'REFERENCE', 'NEWS'
+    )),
+    operation TEXT NOT NULL CHECK(length(trim(operation)) > 0),
+    provider_observed_at TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    timezone TEXT NOT NULL CHECK(length(trim(timezone)) > 0),
+    session TEXT NOT NULL CHECK(length(trim(session)) > 0),
+    currency TEXT NOT NULL CHECK(length(currency) = 3 AND currency = UPPER(currency)),
+    delay_seconds INTEGER NOT NULL CHECK(delay_seconds >= 0),
+    source_quality TEXT NOT NULL CHECK(source_quality IN (
+        'realtime', 'delayed', 'eod', 'reference'
+    )),
+    effective_quality TEXT NOT NULL CHECK(effective_quality IN (
+        'realtime', 'delayed', 'eod', 'reference', 'stale'
+    )),
+    kind TEXT NOT NULL CHECK(kind IN ('QUOTE', 'BAR')),
+    bid TEXT,
+    ask TEXT,
+    last TEXT,
+    open TEXT,
+    high TEXT,
+    low TEXT,
+    close TEXT,
+    adjusted_close TEXT,
+    volume TEXT,
+    observation_hash TEXT NOT NULL CHECK(length(observation_hash) = 64),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    supersedes_observation_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    FOREIGN KEY(supersedes_observation_id)
+        REFERENCES market_observations(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS market_data_rejections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    provider TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    capability TEXT NOT NULL CHECK(capability IN (
+        'CATALOG', 'IDENTITY', 'EOD', 'QUOTE', 'FX', 'REFERENCE', 'NEWS'
+    )),
+    operation TEXT NOT NULL CHECK(length(trim(operation)) > 0),
+    received_at TEXT NOT NULL,
+    reason_code TEXT NOT NULL CHECK(reason_code IN (
+        'MISSING_PRICE', 'NON_FINITE', 'NON_POSITIVE', 'CROSSED_QUOTE',
+        'INVALID_OHLC', 'NEGATIVE_VOLUME', 'CURRENCY_MISMATCH',
+        'INVALID_TIMESTAMP', 'FUTURE_TIMESTAMP', 'INVALID_TIMEZONE',
+        'INVALID_DELAY', 'MALFORMED_PAYLOAD', 'PROVIDER_NO_DATA',
+        'MISSING_VALUE'
+    )),
+    raw_payload_sha256 TEXT NOT NULL CHECK(length(raw_payload_sha256) = 64),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS market_data_rejection_resolutions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rejection_id INTEGER NOT NULL UNIQUE,
+    observation_id INTEGER NOT NULL,
+    resolved_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(rejection_id) REFERENCES market_data_rejections(id) ON DELETE RESTRICT,
+    FOREIGN KEY(observation_id) REFERENCES market_observations(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS market_data_selection_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    selected_observation_id INTEGER NOT NULL,
+    requested_provider TEXT NOT NULL CHECK(length(trim(requested_provider)) > 0),
+    actual_provider TEXT NOT NULL CHECK(length(trim(actual_provider)) > 0),
+    selected_at TEXT NOT NULL,
+    fallback_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(selected_observation_id) REFERENCES market_observations(id) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
@@ -304,8 +385,10 @@ CREATE TABLE IF NOT EXISTS price_history (
     provider TEXT,
     is_real_data INTEGER NOT NULL DEFAULT 0,
     fetched_at TEXT,
+    observation_id INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+    FOREIGN KEY(observation_id) REFERENCES market_observations(id) ON DELETE RESTRICT,
     UNIQUE(asset_id, date, source)
 );
 
@@ -831,6 +914,62 @@ AND NOT EXISTS (
 BEGIN
     SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
 END;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_market_observations_logical_revision
+ON market_observations(
+    listing_id, provider, capability, operation, kind,
+    provider_observed_at, session, revision
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_market_observations_logical_hash
+ON market_observations(
+    listing_id, provider, capability, operation, kind,
+    provider_observed_at, session, observation_hash
+);
+CREATE INDEX IF NOT EXISTS idx_market_observations_latest
+ON market_observations(listing_id, capability, provider_observed_at DESC, revision DESC);
+CREATE INDEX IF NOT EXISTS idx_market_data_rejections_scope
+ON market_data_rejections(listing_id, provider, capability, operation, received_at);
+CREATE INDEX IF NOT EXISTS idx_market_data_selection_observation
+ON market_data_selection_events(selected_observation_id, selected_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_market_observations_no_update
+BEFORE UPDATE ON market_observations
+BEGIN
+    SELECT RAISE(ABORT, 'market observations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_observations_no_delete
+BEFORE DELETE ON market_observations
+BEGIN
+    SELECT RAISE(ABORT, 'market observations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_rejections_no_update
+BEFORE UPDATE ON market_data_rejections
+BEGIN
+    SELECT RAISE(ABORT, 'market data rejections are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_rejections_no_delete
+BEFORE DELETE ON market_data_rejections
+BEGIN
+    SELECT RAISE(ABORT, 'market data rejections are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_rejection_resolutions_no_update
+BEFORE UPDATE ON market_data_rejection_resolutions
+BEGIN
+    SELECT RAISE(ABORT, 'market data rejection resolutions are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_rejection_resolutions_no_delete
+BEFORE DELETE ON market_data_rejection_resolutions
+BEGIN
+    SELECT RAISE(ABORT, 'market data rejection resolutions are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_selection_events_no_update
+BEFORE UPDATE ON market_data_selection_events
+BEGIN
+    SELECT RAISE(ABORT, 'market data selection events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_market_data_selection_events_no_delete
+BEFORE DELETE ON market_data_selection_events
+BEGIN
+    SELECT RAISE(ABORT, 'market data selection events are append-only');
+END;
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);
@@ -934,6 +1073,11 @@ MIGRATIONS = {
         ("provider", "ALTER TABLE price_history ADD COLUMN provider TEXT"),
         ("is_real_data", "ALTER TABLE price_history ADD COLUMN is_real_data INTEGER NOT NULL DEFAULT 0"),
         ("fetched_at", "ALTER TABLE price_history ADD COLUMN fetched_at TEXT"),
+        (
+            "observation_id",
+            "ALTER TABLE price_history ADD COLUMN observation_id INTEGER "
+            "REFERENCES market_observations(id) ON DELETE RESTRICT",
+        ),
     ],
     "news_items": [
         ("symbol", "ALTER TABLE news_items ADD COLUMN symbol TEXT"),

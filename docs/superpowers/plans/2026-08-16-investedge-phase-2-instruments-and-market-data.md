@@ -781,11 +781,11 @@ MarketDataSelection {
 
 `MarketObservationEnvelope` rappresenta anche payload non validabili: timestamp/sessione/currency/kind possono mancare e `raw_fields` resta soltanto in memoria. La rejection persiste reason code, hash e scope stabile `(listing_id, provider, capability, operation)`, mai il payload raw; `PROVIDER_NO_DATA` e `MISSING_VALUE` seguono lo stesso lifecycle e possono essere risolti soltanto da una successiva observation valida dello scope. `source_quality` è metadata stabile dell'adapter/feed (`realtime|delayed|eod|reference`) ricavato soltanto da capability o metadata documentati del payload, mai dall'età al clock di ingestione; se il feed non documenta realtime si usa la classe conservativa `delayed` o `eod`. `delay_seconds` ed `effective_quality` sono invece derivati da `now - provider_observed_at`. `ValidatedObservation` aggiunge `effective_quality`, uguale a `stale` quando la soglia è superata. Nuove tabelle append-only: `market_observations`, `market_data_rejections`, `market_data_rejection_resolutions` e `market_data_selection_events`; nuova colonna nullable `price_history.observation_id`. La chiave logica delle observation valide è `(listing_id, provider, capability, operation, kind, provider_observed_at, session)`: stesso `observation_hash` è duplicato, hash diverso crea `revision = max + 1` con `supersedes_observation_id`, senza cancellare la revisione precedente. L'hash canonico include scope, kind, timestamp/sessione provider, timezone, valuta, source quality stabile e valori normalizzati; esclude `received_at`/`ingested_at`, `delay_seconds` ed `effective_quality`, che dipendono dal clock. Una resolution collega una rejection aperta dello stesso scope a una successiva observation valida; un selection event registra fallback/last-good senza mutare o duplicare l'osservazione. `PricePointOut` riceve campi nullable/additivi `listing_id`, `observation_id`, `provider_observed_at`, `ingested_at`, `timezone`, `session`, `currency`, `delay_seconds`, `source_quality`, `effective_quality` e `fallback_reason`; le righe legacy li restituiscono null.
 
-- [ ] **Step 1: Scrivere i test RED del quality gate**
+- [x] **Step 1: Scrivere i test RED del quality gate**
 
 Testare dati validi; tutti i prezzi mancanti; NaN/Inf; prezzi <= 0; bid > ask; OHLC incoerente; volume negativo; valuta diversa dal listing; timestamp assente/naive; futuro oltre 5 minuti; timezone invalida; delay negativo; payload corrotto; `PROVIDER_NO_DATA`; `MISSING_VALUE`; duplicato stesso hash anche con ingest time diverso; stesso payload/timestamp/source metadata ingerito a due clock diversi produce lo stesso hash, `duplicates += 1` e zero revisioni anche se delay/effective quality cambiano; timezone diversa produce hash diverso; correzione provider stesso timestamp con hash diverso; stessa data da provider diversi; corrupt con timestamp mancante → observation valida successiva nello stesso scope → rejection risolta; fallback cache/last-good; stato stale; batch misto. Aggiungere un test di consistenza che enumera tutti i reason code prodotti dagli adapter pianificati e li confronta con `ValidationReason`. Verificare che ogni rifiuto abbia reason code stabile, nessun payload raw e nessuna perdita di righe/revisioni valide precedenti.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_market_data_observations.py tests\test_api.py tests\test_portfolio_accounting.py -k "observation or provenance or stale or price_projection or last_good" -q
@@ -793,19 +793,19 @@ Testare dati validi; tutti i prezzi mancanti; NaN/Inf; prezzi <= 0; bid > ask; O
 
 Expected: failure perché modello, tabelle, validator e projection non esistono.
 
-- [ ] **Step 3: Implementare validazione deterministica**
+- [x] **Step 3: Implementare validazione deterministica**
 
 Usare `Decimal(str(value))` e `math.isfinite` prima del cast DB. Regole: almeno un prezzo rilevante; valori prezzo strettamente positivi; `bid <= ask`; `low <= min(open, close, high)` e `high >= max(open, close, low)` per i campi presenti; volume >= 0; valuta ISO uppercase uguale al listing; timestamp timezone-aware; `provider_observed_at <= now + 5 minuti`; timezone IANA uguale a quella attestata per BAR/sessione; delay >= 0. I valori di `ValidationReason` sopra sono l'allowlist esatta e sono tutti critici finché restano senza resolution nello scope; nessun testo di eccezione/provider entra nel reason code.
 
-- [ ] **Step 4: Implementare freschezza e ingest append-only**
+- [x] **Step 4: Implementare freschezza e ingest append-only**
 
 Soglie default configurate per capability: quote 5 minuti, delayed 30 minuti, EOD 96 ore, reference/FX 7 giorni. La classificazione usa il clock iniettato e restituisce `effective_quality="stale"` senza riscrivere `source_quality`. Ogni batch è validato completamente prima della promozione; i rifiuti sono persistiti separatamente e un batch senza righe valide non tocca `price_history`. Una observation valida risolve tutte le rejection critiche aperte dello stesso `(listing_id, provider, capability, operation)` con `rejection.received_at <= observation.ingested_at`; una rejection già risolta resta storica ma non blocca il tier. La risoluzione non richiede timestamp/sessione nel payload rifiutato.
 
-- [ ] **Step 5: Implementare la projection compatibile**
+- [x] **Step 5: Implementare la projection compatibile**
 
 Solo l'ultima revisione valida di una BAR genera/upserta la riga `price_history` corrispondente con `source`, `provider`, `is_real_data`, `fetched_at` e `observation_id`. Non cancellare l'intera serie per provider `full_history`; promuovere per data dentro la stessa transazione. `latest_compatible()` registra `market_data_selection_events` quando actual provider differisce dal requested o viene riusato last-good; `prices_service` deriva `fallback_reason` da quell'evento e continua a leggere righe legacy senza link.
 
-- [ ] **Step 6: Eseguire GREEN e regressione caller prezzi**
+- [x] **Step 6: Eseguire GREEN e regressione caller prezzi**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_market_data_observations.py tests\test_api.py tests\test_portfolio_accounting.py tests\test_engines.py tests\test_ml_dataset.py -q
@@ -814,7 +814,7 @@ Solo l'ultima revisione valida di una BAR genera/upserta la riga `price_history`
 
 Expected: suite selezionata verde; read model Fase 1 invariato; Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su decimal precision, timezone/session, hash/revision/supersedes, lifecycle rejection, selection fallback, transazioni, batch parziali, projection e ultimo dato buono. Correggere Critical/Important e ripetere Step 6.
 

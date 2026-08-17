@@ -629,6 +629,30 @@ def test_prices_for_symbol(client: TestClient) -> None:
     assert {"date", "open", "high", "low", "close", "sma_50", "ema_50", "macd_line", "bollinger_upper"} <= set(data["prices"][-1])
 
 
+def test_legacy_prices_expose_nullable_observation_provenance(client: TestClient) -> None:
+    response = client.get("/prices/AAPL")
+
+    assert response.status_code == 200
+    point = response.json()["prices"][-1]
+    assert {
+        "listing_id",
+        "observation_id",
+        "provider_observed_at",
+        "ingested_at",
+        "timezone",
+        "session",
+        "currency",
+        "delay_seconds",
+        "source_quality",
+        "effective_quality",
+        "fallback_reason",
+    } <= set(point)
+    assert point["observation_id"] is None
+    assert point["provider_observed_at"] is None
+    assert point["effective_quality"] is None
+    assert point["fallback_reason"] is None
+
+
 def test_signals_after_seed(client: TestClient) -> None:
     response = client.get("/signals")
 
