@@ -5,11 +5,20 @@ import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from backend.app.models import AssetClass, InstrumentType
 
 _ISIN_PATTERN = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 _LEGACY_SOURCE = "LEGACY_ACTIVE_ASSET"
+_LEGACY_CURATED_SOURCE = "LEGACY_CURATED"
+_LEGACY_CURATED_CRYPTO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
+}
 
 _LEGACY_TYPE_MAPPING: dict[str, tuple[InstrumentType, AssetClass]] = {
     "stock": ("STOCK", "EQUITY"),
@@ -44,6 +53,142 @@ class AmbiguousInstrumentError(ValueError):
 
 
 class InstrumentService:
+    @staticmethod
+    def backfill_curated_crypto_ids(
+        connection: sqlite3.Connection,
+        observed_at: datetime,
+    ) -> int:
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("crypto identity migration timestamp must be timezone-aware")
+        observed_at_text = observed_at.astimezone(UTC).isoformat()
+        owns_transaction = not connection.in_transaction
+        if owns_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+
+        original_row_factory = connection.row_factory
+        connection.row_factory = sqlite3.Row
+        try:
+            placeholders = ",".join("?" for _ in _LEGACY_CURATED_CRYPTO_IDS)
+            rows = connection.execute(
+                f"""
+                SELECT asset.id AS asset_id, asset.symbol, listing.id AS listing_id,
+                       listing.instrument_id
+                FROM assets AS asset
+                JOIN instrument_listings AS listing
+                  ON listing.id = asset.instrument_listing_id
+                JOIN instruments AS instrument
+                  ON instrument.id = listing.instrument_id
+                WHERE LOWER(asset.asset_type) = 'crypto'
+                  AND instrument.instrument_type = 'CRYPTO'
+                  AND UPPER(asset.symbol) IN ({placeholders})
+                  AND (
+                      SELECT COUNT(*)
+                      FROM assets AS candidate
+                      WHERE UPPER(candidate.symbol) = UPPER(asset.symbol)
+                  ) = 1
+                ORDER BY asset.id
+                """,
+                tuple(_LEGACY_CURATED_CRYPTO_IDS),
+            ).fetchall()
+            inserted = 0
+            for row in rows:
+                symbol = str(row["symbol"]).strip().upper()
+                coingecko_id = _LEGACY_CURATED_CRYPTO_IDS[symbol]
+                conflicting = connection.execute(
+                    """
+                    SELECT 1
+                    FROM instrument_identifiers AS identifier
+                    LEFT JOIN instrument_listings AS owner_listing
+                      ON owner_listing.id = identifier.listing_id
+                    WHERE identifier.scheme = 'COINGECKO_ID'
+                      AND identifier.normalized_value = ?
+                      AND COALESCE(identifier.instrument_id, owner_listing.instrument_id) != ?
+                    LIMIT 1
+                    """,
+                    (coingecko_id, row["instrument_id"]),
+                ).fetchone()
+                if conflicting is not None:
+                    raise sqlite3.IntegrityError(
+                        "CoinGecko curated identity conflicts with another instrument."
+                    )
+
+                identifier = connection.execute(
+                    """
+                    SELECT id
+                    FROM instrument_identifiers
+                    WHERE scheme = 'COINGECKO_ID'
+                      AND normalized_value = ?
+                      AND scope = 'INSTRUMENT'
+                      AND instrument_id = ?
+                    """,
+                    (coingecko_id, row["instrument_id"]),
+                ).fetchone()
+                if identifier is None:
+                    identifier_id = int(
+                        connection.execute(
+                            """
+                            INSERT INTO instrument_identifiers (
+                                scheme, normalized_value, scope, instrument_id, listing_id
+                            )
+                            VALUES ('COINGECKO_ID', ?, 'INSTRUMENT', ?, NULL)
+                            """,
+                            (coingecko_id, row["instrument_id"]),
+                        ).lastrowid
+                    )
+                else:
+                    identifier_id = int(identifier["id"])
+
+                attestation = connection.execute(
+                    """
+                    SELECT 1
+                    FROM instrument_identifier_attestations
+                    WHERE identifier_id = ? AND source = ?
+                    LIMIT 1
+                    """,
+                    (identifier_id, _LEGACY_CURATED_SOURCE),
+                ).fetchone()
+                if attestation is not None:
+                    continue
+
+                evidence_hash = hashlib.sha256(
+                    (
+                        f"{_LEGACY_CURATED_SOURCE}|{row['asset_id']}|"
+                        f"COINGECKO_ID|{coingecko_id}"
+                    ).encode("utf-8")
+                ).hexdigest()
+                connection.execute(
+                    """
+                    INSERT INTO instrument_identifier_attestations (
+                        identifier_id, source, observed_at, evidence_hash
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        identifier_id,
+                        _LEGACY_CURATED_SOURCE,
+                        observed_at_text,
+                        evidence_hash,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE instrument_listings
+                    SET timezone = 'UTC'
+                    WHERE id = ? AND (timezone IS NULL OR TRIM(timezone) = '')
+                    """,
+                    (row["listing_id"],),
+                )
+                inserted += 1
+            if owns_transaction:
+                connection.commit()
+            return inserted
+        except Exception:
+            if owns_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.row_factory = original_row_factory
+
     @staticmethod
     def _attested_identifier_value_count(
         connection: sqlite3.Connection,

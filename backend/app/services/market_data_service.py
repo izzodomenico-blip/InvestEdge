@@ -12,6 +12,7 @@ import pandas as pd
 
 from backend.app.config import get_settings
 from backend.app.data_providers import (
+    CoinGeckoProvider,
     FinnhubQuoteProvider,
     MissingApiKey,
     ProviderError,
@@ -73,7 +74,7 @@ class MarketDataService:
                 match = matches[0]
                 provider = registry.provider_named(match.provider)
                 provider_symbol = match.provider_symbol
-        if provider is None:
+        if provider is None and str(asset["asset_type"]).strip().lower() != "crypto":
             provider = self.get_provider_for_asset(connection, str(asset["asset_type"]))
 
         if not settings.enable_real_data:
@@ -118,6 +119,16 @@ class MarketDataService:
                 asset,
                 provider,
                 provider_symbol,
+                force,
+            )
+
+        if isinstance(provider, CoinGeckoProvider):
+            return self._refresh_coingecko_data(
+                connection,
+                asset,
+                provider,
+                provider_symbol,
+                selected_capability,
                 force,
             )
 
@@ -199,6 +210,136 @@ class MarketDataService:
             "used_cache": used_cache,
             "used_fallback": False,
             "message": "Prezzi aggiornati da cache." if used_cache else "Prezzi aggiornati da provider reale.",
+        }
+
+    def _refresh_coingecko_data(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        provider: CoinGeckoProvider,
+        coingecko_id: str | None,
+        capability: str,
+        force: bool,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        listing = {
+            "id": int(asset["instrument_listing_id"]),
+            "timezone": asset["listing_timezone"],
+            "currency": asset["listing_currency"],
+            "instrument_type": asset["instrument_type"],
+            "coingecko_id": coingecko_id,
+            "session": "24X7",
+        }
+        try:
+            if capability == "QUOTE":
+                envelopes = [
+                    provider.fetch_quote(
+                        listing,
+                        now,
+                        bypass_cache=force,
+                    )
+                ]
+            else:
+                envelopes = provider.fetch_daily(
+                    listing,
+                    365,
+                    bypass_cache=force,
+                )
+        except (RateLimitExceeded, MissingApiKey, RealDataDisabled) as exc:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                str(exc),
+                capability=capability,
+            )
+        except ProviderError as exc:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                f"{exc} Uso dati locali.",
+                capability=capability,
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider non disponibile, uso dati locali.",
+                capability=capability,
+            )
+
+        if not envelopes:
+            self._record_provider_no_data(
+                connection,
+                asset,
+                provider.provider_name,
+                now,
+                operation=(
+                    provider.quote_operation
+                    if capability == "QUOTE"
+                    else provider.eod_operation
+                ),
+            )
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza dati utilizzabili, uso dati locali.",
+                used_cache=provider.last_fetch_used_cache,
+                capability=capability,
+            )
+
+        before_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        ingest_result = self.observation_service.ingest_batch(connection, envelopes, now)
+        accepted = ingest_result.accepted > 0 or ingest_result.duplicates > 0
+        if not accepted:
+            return self._fallback_result(
+                connection,
+                asset,
+                provider.provider_name,
+                "Provider senza dati validi, conservo l'ultimo dato compatibile.",
+                used_cache=provider.last_fetch_used_cache,
+                capability=capability,
+            )
+
+        after_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM price_history WHERE asset_id = ?",
+                (asset["id"],),
+            ).fetchone()[0]
+        )
+        inserted = max(0, after_count - before_count)
+        updated = max(0, ingest_result.projected_price_rows - inserted)
+        if inserted or updated:
+            self._recalculate_signal(connection, int(asset["id"]))
+            self._refresh_portfolio_if_needed(connection, int(asset["id"]))
+        self._select_coingecko_compatible(
+            connection,
+            int(asset["instrument_listing_id"]),
+            capability,
+            now,
+        )
+        self._assess_quality(connection, asset, now)
+        noun = "Quote" if capability == "QUOTE" else "Prezzi"
+        return {
+            "symbol": asset["symbol"],
+            "provider": provider.provider_name,
+            "rows_inserted": inserted,
+            "rows_updated": updated,
+            "used_cache": provider.last_fetch_used_cache,
+            "used_fallback": False,
+            "message": (
+                f"{noun} aggiornati da cache."
+                if provider.last_fetch_used_cache
+                else f"{noun} aggiornati da provider reale."
+            ),
         }
 
     def _refresh_stooq_prices(
@@ -662,7 +803,14 @@ class MarketDataService:
                 str(asset["asset_type"])
             )
             now = datetime.now(UTC)
-            if selected_capability != "QUOTE" or self._has_fresh_observation(
+            if provider == "coingecko":
+                self._select_coingecko_compatible(
+                    connection,
+                    int(asset["instrument_listing_id"]),
+                    selected_capability,
+                    now,
+                )
+            elif selected_capability != "QUOTE" or self._has_fresh_observation(
                 connection,
                 int(asset["instrument_listing_id"]),
                 selected_capability,
@@ -686,6 +834,68 @@ class MarketDataService:
             "used_fallback": True,
             "message": message,
         }
+
+    @staticmethod
+    def _select_coingecko_compatible(
+        connection: sqlite3.Connection,
+        listing_id: int,
+        capability: str,
+        now: datetime,
+    ) -> bool:
+        normalized_capability = capability.strip().upper()
+        row = connection.execute(
+            """
+            SELECT observation.id, observation.provider_observed_at,
+                   observation.source_quality
+            FROM market_observations AS observation
+            JOIN instrument_listings AS listing ON listing.id = observation.listing_id
+            WHERE observation.listing_id = ?
+              AND observation.provider = 'coingecko'
+              AND observation.capability = ?
+              AND observation.currency = listing.currency
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM market_observations AS newer
+                  WHERE newer.supersedes_observation_id = observation.id
+              )
+            ORDER BY observation.provider_observed_at DESC,
+                     observation.ingested_at DESC,
+                     observation.id DESC
+            LIMIT 1
+            """,
+            (listing_id, normalized_capability),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            observed_at = datetime.fromisoformat(
+                str(row["provider_observed_at"]).replace("Z", "+00:00")
+            )
+        except ValueError:
+            return False
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            return False
+        effective_quality = MarketObservationService.effective_quality_for(
+            normalized_capability,
+            str(row["source_quality"]),
+            observed_at,
+            now,
+        )
+        connection.execute(
+            """
+            INSERT INTO market_data_selection_events (
+                selected_observation_id, requested_provider, actual_provider,
+                selected_at, fallback_reason
+            )
+            VALUES (?, 'coingecko', 'coingecko', ?, ?)
+            """,
+            (
+                row["id"],
+                now.astimezone(UTC).isoformat(),
+                "LAST_GOOD_STALE" if effective_quality == "stale" else "LAST_GOOD",
+            ),
+        )
+        return True
 
     @staticmethod
     def _has_fresh_observation(

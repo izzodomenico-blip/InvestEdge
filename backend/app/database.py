@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 from backend.app.config import get_settings
 
@@ -1350,6 +1351,7 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         from backend.app.services.instrument_service import InstrumentService
 
         InstrumentService.backfill_active_assets(connection)
+        InstrumentService.backfill_curated_crypto_ids(connection, datetime.now(UTC))
     except Exception:
         connection.rollback()
         raise

@@ -85,16 +85,29 @@ class ProviderRegistry:
         seen: set[str] = set()
         for row in rows:
             provider_name = str(row["provider"]).strip().lower()
-            expected_provider = "stooq" if normalized_capability == "EOD" else "finnhub"
+            instrument_type = str(row["instrument_type"]).strip().upper()
+            if instrument_type == "CRYPTO":
+                expected_provider = "coingecko"
+            else:
+                expected_provider = "stooq" if normalized_capability == "EOD" else "finnhub"
             if provider_name != expected_provider or provider_name in seen:
                 continue
             provider = self.provider_named(provider_name)
-            asset_type = str(row["instrument_type"]).strip().lower()
+            asset_type = instrument_type.lower()
             if provider is None or not provider.supports_asset_type(asset_type):
+                continue
+            currency = str(row["currency"]).strip().upper()
+            if (
+                provider_name == "coingecko"
+                and currency not in CoinGeckoProvider.supported_quote_currencies
+            ):
                 continue
             if normalized_capability == "QUOTE":
                 mic = str(row["mic"] or "").strip().upper()
-                if mic not in FinnhubQuoteProvider.supported_mics:
+                if (
+                    provider_name == "finnhub"
+                    and mic not in FinnhubQuoteProvider.supported_mics
+                ):
                     continue
             seen.add(provider_name)
             matches.append(
@@ -103,10 +116,73 @@ class ProviderRegistry:
                     capability=cast(ProviderCapability, normalized_capability),
                     listing_id=int(row["listing_id"]),
                     provider_symbol=str(row["provider_symbol"]).strip(),
-                    currency=str(row["currency"]).strip().upper(),
+                    currency=currency,
                     priority=10,
                 )
             )
+        if "coingecko" in seen:
+            return tuple(matches)
+
+        listing = connection.execute(
+            """
+            SELECT listing.id, listing.instrument_id, listing.currency,
+                   instrument.instrument_type
+            FROM instrument_listings AS listing
+            JOIN instruments AS instrument ON instrument.id = listing.instrument_id
+            WHERE listing.id = ? AND listing.listing_status = 'ACTIVE'
+            """,
+            (listing_id,),
+        ).fetchone()
+        if (
+            listing is None
+            or str(listing["instrument_type"]).strip().upper() != "CRYPTO"
+            or str(listing["currency"]).strip().upper()
+            not in CoinGeckoProvider.supported_quote_currencies
+        ):
+            return tuple(matches)
+
+        identifiers = connection.execute(
+            """
+            SELECT DISTINCT identifier.normalized_value
+            FROM instrument_identifiers AS identifier
+            LEFT JOIN instrument_listings AS owner_listing
+              ON owner_listing.id = identifier.listing_id
+            WHERE identifier.scheme = 'COINGECKO_ID'
+              AND COALESCE(identifier.instrument_id, owner_listing.instrument_id) = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM instrument_identifier_attestations AS attestation
+                  WHERE attestation.identifier_id = identifier.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM instrument_identifiers AS other_identifier
+                  LEFT JOIN instrument_listings AS other_listing
+                    ON other_listing.id = other_identifier.listing_id
+                  WHERE other_identifier.id != identifier.id
+                    AND other_identifier.scheme = 'COINGECKO_ID'
+                    AND other_identifier.normalized_value = identifier.normalized_value
+                    AND COALESCE(
+                          other_identifier.instrument_id,
+                          other_listing.instrument_id
+                        ) != ?
+              )
+            ORDER BY identifier.normalized_value
+            """,
+            (listing["instrument_id"], listing["instrument_id"]),
+        ).fetchall()
+        if len(identifiers) != 1:
+            return tuple(matches)
+        matches.append(
+            ProviderCapabilityMatch(
+                provider="coingecko",
+                capability=cast(ProviderCapability, normalized_capability),
+                listing_id=listing_id,
+                provider_symbol=str(identifiers[0]["normalized_value"]).strip(),
+                currency=str(listing["currency"]).strip().upper(),
+                priority=10,
+            )
+        )
         return tuple(matches)
 
     def provider_named(self, provider_name: str) -> BaseMarketDataProvider | None:
@@ -184,4 +260,10 @@ class ProviderRegistry:
 
     def _supports(self, provider: BaseMarketDataProvider) -> list[str]:
         known_types = ["stock", "etf", "crypto", "macro", "bond_proxy", "bond", "bond_etf"]
-        return [asset_type for asset_type in known_types if provider.supports_asset_type(asset_type)]
+        supports = [
+            asset_type for asset_type in known_types if provider.supports_asset_type(asset_type)
+        ]
+        attribution = getattr(provider, "attribution", None)
+        if isinstance(attribution, str) and attribution:
+            supports.append(attribution)
+        return supports

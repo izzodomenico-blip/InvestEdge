@@ -231,7 +231,7 @@ Provider predisposti:
 - `FinnhubQuoteProvider`: quote snapshot soltanto per listing su MIC USA allowlistati e simbolo `QUOTE/VERIFIED`; usa `X-Finnhub-Token`, classifica conservativamente il feed come `delayed` e non crea barre in `price_history`.
 - `AlphaVantageProvider`: visibile ma disabilitato per i prezzi con reason code `SECRET_IN_QUERY_POLICY`; la key non viene inserita in URL o transport.
 - `YahooFinanceProvider`: mantenuto per compatibilita, ma disabilitato come provider prezzo primario o fallback di rete con reason code `NOT_PRIMARY_POLICY`.
-- `CoinGeckoProvider`: cripto mappate BTC, ETH, SOL, BNB, XRP.
+- `CoinGeckoProvider`: barre EOD e quote EUR/USD soltanto con un `COINGECKO_ID` verificato; i cinque asset crypto legacy ricevono esclusivamente il mapping curato BTC=`bitcoin`, ETH=`ethereum`, SOL=`solana`, BNB=`binancecoin`, XRP=`ripple`. Non deriva l'identita dal ticker, dal nome, da ISIN o da MIC. Powered by CoinGecko API.
 - `FredProvider`: serie macro/tassi e bond proxy, tra cui DGS10, DGS2 e FEDFUNDS.
 
 Modalita dati:
@@ -245,6 +245,7 @@ Regole operative:
 - se `ENABLE_REAL_DATA=false`, il backend non chiama API esterne e usa seed/demo;
 - Stooq richiede anche `ENABLE_STOOQ=true` e un mapping `provider_symbols` esplicito e verificato;
 - Finnhub richiede una key solo header, un mapping esplicito e uno dei MIC `XNYS`, `XNAS`, `XASE`, `ARCX`, `BATS`; key assente, quota o timeout disabilitano/fanno fallire soltanto quel provider e il fallback accetta esclusivamente una QUOTE non stale dello stesso listing;
+- CoinGecko usa la Demo key opzionale soltanto nell'header `x-cg-demo-api-key`; in modalita keyless non invia credenziali. Il fallback conserva esclusivamente l'ultima observation CoinGecko della valuta del listing, senza conversioni USD/EUR implicite;
 - se la cache non e scaduta, il backend usa la cache;
 - se manca una API key, se il provider fallisce o se un budget e raggiunto, l'app seleziona l'ultima observation compatibile senza mutarne listing o valuta;
 - ogni chiamata reale incrementa `api_usage`;
@@ -264,10 +265,15 @@ FINNHUB_QUOTE_CACHE_TTL_SECONDS=60
 FINNHUB_QUOTE_MINUTE_LIMIT=55
 ALPHA_VANTAGE_API_KEY=
 COINGECKO_API_KEY=
+COINGECKO_EOD_CACHE_TTL_HOURS=24
+COINGECKO_QUOTE_CACHE_TTL_SECONDS=60
+COINGECKO_DEMO_MINUTE_LIMIT=90
+COINGECKO_DEMO_MONTHLY_LIMIT=9000
+COINGECKO_KEYLESS_MINUTE_LIMIT=10
+COINGECKO_KEYLESS_MONTHLY_LIMIT=1000
 FRED_API_KEY=
 API_CACHE_TTL_HOURS=24
 ALPHA_VANTAGE_DAILY_LIMIT=20
-COINGECKO_DAILY_LIMIT=100
 FRED_DAILY_LIMIT=100
 ```
 

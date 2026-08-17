@@ -3002,7 +3002,8 @@ def test_api_cache_save_and_read(client: TestClient) -> None:
 
 
 def test_api_rate_limit_guard(client: TestClient) -> None:
-    from datetime import date
+    from dataclasses import replace
+    from datetime import UTC, datetime
 
     from backend.app.config import get_settings
     from backend.app.data_providers.base import RateLimitExceeded
@@ -3010,18 +3011,47 @@ def test_api_rate_limit_guard(client: TestClient) -> None:
     from backend.app.database import db_session
 
     with db_session() as connection:
-        provider = CoinGeckoProvider(get_settings(), connection)
-        today = date.today().isoformat()
+        provider = CoinGeckoProvider(
+            replace(get_settings(), enable_real_data=True, coingecko_api_key=None),
+            connection,
+        )
+        now = datetime.now(UTC)
+        reservation_id = provider.budget_manager.reserve(
+            connection,
+            provider.policy,
+            provider.provider_name,
+            "EOD",
+            "a" * 64,
+            now,
+        )
+        provider.budget_manager.complete(
+            connection,
+            reservation_id,
+            "SUCCEEDED",
+            200,
+            0,
+            None,
+        )
         connection.execute(
             """
-            INSERT INTO api_usage (provider, usage_date, calls_count, daily_limit)
-            VALUES (?, ?, ?, ?)
+            UPDATE provider_usage_windows
+            SET used_count = effective_limit
+            WHERE provider = ? AND window_kind = 'MONTH'
             """,
-            (provider.provider_name, today, provider.daily_limit, provider.daily_limit),
+            (provider.provider_name,),
         )
+        connection.commit()
 
-        with pytest.raises(RateLimitExceeded):
-            provider.check_rate_limit()
+        with pytest.raises(RateLimitExceeded, match=r"coingecko:EOD:BUDGET_EXHAUSTED"):
+            provider.fetch_daily(
+                {
+                    "id": 1,
+                    "currency": "EUR",
+                    "coingecko_id": "bitcoin",
+                },
+                1,
+                bypass_cache=True,
+            )
 
 
 def test_data_usage_compat_reads_budget_projection(client: TestClient) -> None:
@@ -3559,6 +3589,10 @@ def test_data_status_endpoint(client: TestClient) -> None:
         "fred",
     }
     assert all(provider["enabled"] is False for provider in data["provider_status"])
+    coingecko = next(
+        provider for provider in data["provider_status"] if provider["provider"] == "coingecko"
+    )
+    assert "Powered by CoinGecko API" in coingecko["supports"]
     assert data["cache_stats"]["entries"] >= 0
 
 
@@ -3581,6 +3615,42 @@ def test_data_refresh_endpoint_uses_fallback(client: TestClient) -> None:
     assert data["symbol"] == "BTC"
     assert data["provider"] == "coingecko"
     assert data["used_fallback"] is True
+
+
+def test_crypto_identity_backfill_preserves_legacy_symbols_and_curated_ids_only(
+    client: TestClient,
+) -> None:
+    from backend.app.database import db_session
+
+    response = client.get("/assets/BTC")
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "BTC"
+    with db_session() as connection:
+        rows = connection.execute(
+            """
+            SELECT asset.symbol, identifier.normalized_value, attestation.source,
+                   listing.timezone, listing.mic, asset.isin
+            FROM assets AS asset
+            JOIN instrument_listings AS listing
+              ON listing.id = asset.instrument_listing_id
+            JOIN instrument_identifiers AS identifier
+              ON identifier.instrument_id = listing.instrument_id
+             AND identifier.scheme = 'COINGECKO_ID'
+            JOIN instrument_identifier_attestations AS attestation
+              ON attestation.identifier_id = identifier.id
+             AND attestation.source = 'LEGACY_CURATED'
+            ORDER BY asset.symbol
+            """
+        ).fetchall()
+
+    assert [tuple(row) for row in rows] == [
+        ("BNB", "binancecoin", "LEGACY_CURATED", "UTC", None, None),
+        ("BTC", "bitcoin", "LEGACY_CURATED", "UTC", None, None),
+        ("ETH", "ethereum", "LEGACY_CURATED", "UTC", None, None),
+        ("SOL", "solana", "LEGACY_CURATED", "UTC", None, None),
+        ("XRP", "ripple", "LEGACY_CURATED", "UTC", None, None),
+    ]
 
 
 def test_repeated_refresh_does_not_duplicate_price_history(client: TestClient) -> None:

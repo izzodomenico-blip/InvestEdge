@@ -1100,3 +1100,111 @@ def test_finnhub_us_quote_local_policy_blocks_request_56_in_same_minute() -> Non
 
     assert provider.policy == ProviderBudgetPolicy(55, None, None, 3)
     assert exc_info.value.window_kind == "MINUTE"
+
+
+def test_crypto_budget_caps_demo_and_keyless_minute_and_month_policies() -> None:
+    from backend.app.data_providers.coingecko import CoinGeckoProvider
+
+    connection = _initialize()
+    configured = replace(
+        get_settings(),
+        enable_real_data=True,
+        coingecko_demo_minute_limit=120,
+        coingecko_demo_monthly_limit=12_000,
+        coingecko_keyless_minute_limit=20,
+        coingecko_keyless_monthly_limit=2_000,
+    )
+    demo = CoinGeckoProvider(
+        replace(configured, coingecko_api_key="TEST_COINGECKO_DEMO_KEY_12345"),
+        connection,
+    )
+    keyless = CoinGeckoProvider(
+        replace(configured, coingecko_api_key=None),
+        connection,
+    )
+
+    assert demo.policy == ProviderBudgetPolicy(90, None, 9_000, 3)
+    assert keyless.policy == ProviderBudgetPolicy(10, None, 1_000, 3)
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("demo_key", "used_count", "expected_limit"),
+    [
+        ("TEST_COINGECKO_DEMO_KEY_12345", 9_000, 9_000),
+        (None, 1_000, 1_000),
+    ],
+)
+def test_crypto_budget_monthly_window_blocks_at_local_cap(
+    demo_key: str | None,
+    used_count: int,
+    expected_limit: int,
+) -> None:
+    from backend.app.data_providers.coingecko import CoinGeckoProvider
+
+    connection = _initialize()
+    provider = CoinGeckoProvider(
+        replace(
+            get_settings(),
+            enable_real_data=True,
+            coingecko_api_key=demo_key,
+        ),
+        connection,
+    )
+    connection.execute(
+        """
+        INSERT INTO provider_usage_windows (
+            provider, window_kind, window_start, used_count,
+            configured_limit, effective_limit, created_at, updated_at
+        )
+        VALUES ('coingecko', 'MONTH', '2026-08', ?, ?, ?, ?, ?)
+        """,
+        (used_count, expected_limit, expected_limit, NOW.isoformat(), NOW.isoformat()),
+    )
+    connection.commit()
+
+    with pytest.raises(ProviderBudgetExceeded) as exc_info:
+        ProviderBudgetManager().reserve(
+            connection,
+            provider.policy,
+            "coingecko",
+            "EOD",
+            "c" * 64,
+            NOW,
+        )
+
+    assert exc_info.value.window_kind == "MONTH"
+    connection.close()
+
+
+def test_crypto_budget_keyless_blocks_request_11_in_same_minute() -> None:
+    from backend.app.data_providers.coingecko import CoinGeckoProvider
+
+    connection = _initialize()
+    provider = CoinGeckoProvider(
+        replace(get_settings(), enable_real_data=True, coingecko_api_key=None),
+        connection,
+    )
+    manager = ProviderBudgetManager()
+
+    for index in range(10):
+        manager.reserve(
+            connection,
+            provider.policy,
+            "coingecko",
+            "QUOTE",
+            f"{index:064x}",
+            NOW,
+        )
+    with pytest.raises(ProviderBudgetExceeded) as exc_info:
+        manager.reserve(
+            connection,
+            provider.policy,
+            "coingecko",
+            "QUOTE",
+            "d" * 64,
+            NOW,
+        )
+
+    assert exc_info.value.window_kind == "MINUTE"
+    connection.close()

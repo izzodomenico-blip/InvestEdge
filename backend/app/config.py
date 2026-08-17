@@ -67,6 +67,12 @@ class Settings:
     stooq_monthly_limit: int = 1000
     finnhub_quote_cache_ttl_seconds: int = 60
     finnhub_quote_minute_limit: int = 55
+    coingecko_eod_cache_ttl_hours: int = 24
+    coingecko_quote_cache_ttl_seconds: int = 60
+    coingecko_demo_minute_limit: int = 90
+    coingecko_demo_monthly_limit: int = 9000
+    coingecko_keyless_minute_limit: int = 10
+    coingecko_keyless_monthly_limit: int = 1000
     alpha_vantage_daily_limit: int = 20
     coingecko_daily_limit: int = 100
     fred_daily_limit: int = 100
@@ -177,6 +183,24 @@ class Settings:
             ),
             finnhub_quote_minute_limit=int(
                 os.getenv("FINNHUB_QUOTE_MINUTE_LIMIT", "55")
+            ),
+            coingecko_eod_cache_ttl_hours=int(
+                os.getenv("COINGECKO_EOD_CACHE_TTL_HOURS", "24")
+            ),
+            coingecko_quote_cache_ttl_seconds=int(
+                os.getenv("COINGECKO_QUOTE_CACHE_TTL_SECONDS", "60")
+            ),
+            coingecko_demo_minute_limit=int(
+                os.getenv("COINGECKO_DEMO_MINUTE_LIMIT", "90")
+            ),
+            coingecko_demo_monthly_limit=int(
+                os.getenv("COINGECKO_DEMO_MONTHLY_LIMIT", "9000")
+            ),
+            coingecko_keyless_minute_limit=int(
+                os.getenv("COINGECKO_KEYLESS_MINUTE_LIMIT", "10")
+            ),
+            coingecko_keyless_monthly_limit=int(
+                os.getenv("COINGECKO_KEYLESS_MONTHLY_LIMIT", "1000")
             ),
             alpha_vantage_daily_limit=int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "20")),
             coingecko_daily_limit=int(os.getenv("COINGECKO_DAILY_LIMIT", "100")),
