@@ -5,9 +5,10 @@ import hmac
 import json
 import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.app.data_providers.openfigi import (
@@ -24,6 +25,7 @@ from backend.app.models import (
     ResolutionReason,
     ResolutionStatus,
 )
+from backend.app.services.instrument_service import AmbiguousInstrumentError
 
 _TICKER_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9.\-/:]{0,63}$")
 _MIC_PATTERN = re.compile(r"^[A-Z0-9]{4}$")
@@ -63,6 +65,18 @@ _ASSET_CLASS_BY_TYPE = {
     "MACRO": "REFERENCE",
     "UNKNOWN": "UNKNOWN",
 }
+_INSTRUMENT_TYPE_BY_ASSET_TYPE = {
+    "stock": "STOCK",
+    "etf": "ETF",
+    "bond_etf": "ETF",
+    "bond": "BOND",
+    "crypto": "CRYPTO",
+    "fx": "FX",
+    "forex": "FX",
+    "macro": "MACRO",
+    "bond_proxy": "RATE",
+    "index": "INDEX",
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,16 @@ class ResolutionResult:
     reason_code: ResolutionReason
     instrument_id: int | None
     listing_id: int | None
+    candidate_count: int
+    evidence_hash: str
+
+
+@dataclass(frozen=True)
+class ResolutionSnapshot:
+    instrument_id: int | None
+    listing_id: int | None
+    resolution_case_id: int | None
+    status: Literal["RESOLVED", "UNMAPPED"]
     candidate_count: int
     evidence_hash: str
 
@@ -372,6 +396,233 @@ class InstrumentResolutionService:
         if row is None:
             raise ValueError("LISTING_NOT_RESOLVED")
         return row
+
+    def snapshot_for_reference(
+        self,
+        connection: sqlite3.Connection,
+        symbol: str,
+        explicit_metadata: Mapping[str, str],
+    ) -> ResolutionSnapshot:
+        normalized_symbol = "".join(symbol.split()).upper()
+        if not normalized_symbol:
+            raise ValueError("symbol is required")
+        normalized_metadata = self._normalize_reference_metadata(explicit_metadata)
+        rows = connection.execute(
+            """
+            WITH latest_cases AS (
+                SELECT irc.*
+                FROM instrument_resolution_cases AS irc
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM instrument_resolution_cases AS newer
+                    WHERE newer.catalog_entry_id = irc.catalog_entry_id
+                      AND newer.id > irc.id
+                )
+            )
+            SELECT latest_cases.*,
+                   ce.instrument_id AS catalog_instrument_id,
+                   ce.listing_id AS catalog_listing_id,
+                   COALESCE(selected_listing.ticker, entry_listing.ticker,
+                            latest_cases.candidate_ticker) AS reference_symbol,
+                   COALESCE(selected_listing.currency, entry_listing.currency,
+                            latest_cases.candidate_currency_hint) AS reference_currency,
+                   COALESCE(selected_listing.mic, entry_listing.mic) AS reference_mic,
+                   COALESCE(selected_listing.id, entry_listing.id) AS reference_listing_id,
+                   COALESCE(current_metadata.instrument_type, instrument.instrument_type)
+                       AS reference_instrument_type
+            FROM latest_cases
+            JOIN catalog_entries AS ce ON ce.id = latest_cases.catalog_entry_id
+            LEFT JOIN instrument_listings AS selected_listing
+              ON selected_listing.id = latest_cases.selected_listing_id
+            LEFT JOIN instrument_listings AS entry_listing
+              ON entry_listing.id = ce.listing_id
+            LEFT JOIN instruments AS instrument
+              ON instrument.id = COALESCE(
+                  latest_cases.selected_instrument_id,
+                  ce.instrument_id
+              )
+            LEFT JOIN listing_metadata_versions AS current_metadata
+              ON current_metadata.instrument_listing_id = COALESCE(
+                  selected_listing.id,
+                  entry_listing.id
+              )
+             AND current_metadata.status = 'VERIFIED'
+            WHERE UPPER(COALESCE(
+                selected_listing.ticker,
+                entry_listing.ticker,
+                latest_cases.candidate_ticker,
+                ''
+            )) = ?
+            ORDER BY latest_cases.id
+            """,
+            (normalized_symbol,),
+        ).fetchall()
+        rows = [
+            row
+            for row in rows
+            if self._reference_metadata_matches(row, normalized_metadata)
+        ]
+
+        states: dict[tuple[str, int], sqlite3.Row] = {}
+        for row in rows:
+            if int(row["candidate_count"]) > 1:
+                listing_ids = [
+                    int(candidate["reference_listing_id"])
+                    for candidate in rows
+                    if candidate["reference_listing_id"] is not None
+                ]
+                raise AmbiguousInstrumentError(normalized_symbol, sorted(set(listing_ids)))
+            if row["reference_listing_id"] is not None:
+                state_key = ("listing", int(row["reference_listing_id"]))
+            elif row["selected_instrument_id"] is not None:
+                state_key = ("instrument", int(row["selected_instrument_id"]))
+            elif row["catalog_instrument_id"] is not None:
+                state_key = ("instrument", int(row["catalog_instrument_id"]))
+            else:
+                state_key = ("case", int(row["id"]))
+            current = states.get(state_key)
+            if current is None or int(row["id"]) > int(current["id"]):
+                states[state_key] = row
+
+        if len(states) > 1:
+            listing_ids = [
+                int(row["reference_listing_id"])
+                for row in states.values()
+                if row["reference_listing_id"] is not None
+            ]
+            raise AmbiguousInstrumentError(normalized_symbol, sorted(set(listing_ids)))
+        if not states:
+            return ResolutionSnapshot(
+                instrument_id=None,
+                listing_id=None,
+                resolution_case_id=None,
+                status="UNMAPPED",
+                candidate_count=0,
+                evidence_hash=_canonical_hash(normalized_metadata),
+            )
+
+        row = next(iter(states.values()))
+        candidate_count = int(row["candidate_count"])
+        evidence_hash = str(row["evidence_hash"]).lower()
+        resolved = (
+            row["status"] == "RESOLVED"
+            and candidate_count == 1
+            and row["selected_instrument_id"] is not None
+            and row["selected_listing_id"] is not None
+            and _SHA256_PATTERN.fullmatch(evidence_hash) is not None
+        )
+        return ResolutionSnapshot(
+            instrument_id=(
+                int(row["selected_instrument_id"])
+                if row["selected_instrument_id"] is not None
+                else (
+                    int(row["catalog_instrument_id"])
+                    if row["catalog_instrument_id"] is not None
+                    else None
+                )
+            ),
+            listing_id=int(row["selected_listing_id"]) if resolved else None,
+            resolution_case_id=int(row["id"]),
+            status="RESOLVED" if resolved else "UNMAPPED",
+            candidate_count=candidate_count,
+            evidence_hash=evidence_hash,
+        )
+
+    def assert_snapshot_current(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: ResolutionSnapshot,
+    ) -> None:
+        if snapshot.resolution_case_id is None:
+            if (
+                snapshot.status != "UNMAPPED"
+                or snapshot.instrument_id is not None
+                or snapshot.listing_id is not None
+                or snapshot.candidate_count != 0
+                or _SHA256_PATTERN.fullmatch(snapshot.evidence_hash) is None
+            ):
+                raise ResolutionConflictError("RESOLUTION_CHANGED")
+            return
+        row = connection.execute(
+            """
+            SELECT irc.*
+            FROM instrument_resolution_cases AS irc
+            WHERE irc.id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM instrument_resolution_cases AS newer
+                  WHERE newer.catalog_entry_id = irc.catalog_entry_id
+                    AND newer.id > irc.id
+              )
+            """,
+            (snapshot.resolution_case_id,),
+        ).fetchone()
+        if row is None:
+            raise ResolutionConflictError("RESOLUTION_CHANGED")
+        is_resolved = (
+            row["status"] == "RESOLVED"
+            and row["selected_instrument_id"] is not None
+            and row["selected_listing_id"] is not None
+            and int(row["candidate_count"]) == 1
+        )
+        current = ResolutionSnapshot(
+            instrument_id=(
+                int(row["selected_instrument_id"])
+                if row["selected_instrument_id"] is not None
+                else None
+            ),
+            listing_id=(
+                int(row["selected_listing_id"])
+                if is_resolved
+                else None
+            ),
+            resolution_case_id=int(row["id"]),
+            status="RESOLVED" if is_resolved else "UNMAPPED",
+            candidate_count=int(row["candidate_count"]),
+            evidence_hash=str(row["evidence_hash"]).lower(),
+        )
+        if current != snapshot:
+            raise ResolutionConflictError("RESOLUTION_CHANGED")
+
+    @staticmethod
+    def _normalize_reference_metadata(
+        explicit_metadata: Mapping[str, str],
+    ) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for raw_key, raw_value in explicit_metadata.items():
+            key = "_".join(str(raw_key).strip().lower().split())
+            value = " ".join(str(raw_value).split())
+            if not key or not value:
+                continue
+            if key in {"currency", "mic", "ticker", "symbol", "exchange"}:
+                value = "".join(value.split()).upper()
+            elif key == "asset_type":
+                value = value.lower().replace(" ", "_")
+            normalized[key] = value
+        return dict(sorted(normalized.items()))
+
+    @staticmethod
+    def _reference_metadata_matches(
+        row: sqlite3.Row,
+        normalized_metadata: Mapping[str, str],
+    ) -> bool:
+        expected_currency = normalized_metadata.get("currency")
+        actual_currency = str(row["reference_currency"] or "").upper()
+        if expected_currency and actual_currency and expected_currency != actual_currency:
+            return False
+        expected_mic = normalized_metadata.get("mic") or normalized_metadata.get("exchange")
+        actual_mic = str(row["reference_mic"] or "").upper()
+        if expected_mic and actual_mic and expected_mic != actual_mic:
+            return False
+        asset_type = normalized_metadata.get("asset_type")
+        expected_type = _INSTRUMENT_TYPE_BY_ASSET_TYPE.get(asset_type or "")
+        actual_type = str(row["reference_instrument_type"] or "").upper()
+        return not (
+            expected_type
+            and actual_type
+            and actual_type != "UNKNOWN"
+            and expected_type != actual_type
+        )
 
     @staticmethod
     def _latest_case(

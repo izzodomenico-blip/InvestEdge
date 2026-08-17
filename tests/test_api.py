@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import sqlite3
 
@@ -114,6 +115,171 @@ def _preview_and_apply_import(client: TestClient, payload: dict[str, object]) ->
         "/import/google-sheets/apply",
         json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
     )
+
+
+def _resolution_subject(
+    connection: sqlite3.Connection,
+    symbol: str,
+) -> dict[str, object]:
+    active = connection.execute(
+        """
+        SELECT il.instrument_id, il.id AS listing_id, a.currency, a.asset_type
+        FROM assets AS a
+        JOIN instrument_listings AS il ON il.id = a.instrument_listing_id
+        WHERE UPPER(a.symbol) = UPPER(?)
+        """,
+        (symbol,),
+    ).fetchone()
+    if active is not None:
+        return {
+            "instrument_id": int(active["instrument_id"]),
+            "listing_id": int(active["listing_id"]),
+            "currency": str(active["currency"]),
+            "asset_type": str(active["asset_type"]),
+        }
+
+    instrument_id = int(
+        connection.execute(
+            """
+            INSERT INTO instruments (
+                canonical_name, instrument_type, asset_class, quality_tier, source
+            )
+            VALUES (?, 'STOCK', 'EQUITY', 'REFERENCE_ONLY', 'TEST_RESOLUTION')
+            """,
+            (symbol,),
+        ).lastrowid
+    )
+    return {
+        "instrument_id": instrument_id,
+        "listing_id": None,
+        "currency": "EUR",
+        "asset_type": "stock",
+    }
+
+
+def _create_resolution_listing(
+    connection: sqlite3.Connection,
+    *,
+    instrument_id: int,
+    symbol: str,
+    currency: str,
+    mic: str,
+) -> int:
+    return int(
+        connection.execute(
+            """
+            INSERT INTO instrument_listings (
+                instrument_id, ticker, mic, venue_name, currency, timezone,
+                listing_status, trade_republic_status, source
+            )
+            VALUES (?, ?, ?, ?, ?, 'Europe/Rome', 'ACTIVE', 'NEVER_SEEN', 'TEST_RESOLUTION')
+            """,
+            (instrument_id, symbol, mic, f"Venue {mic}", currency),
+        ).lastrowid
+    )
+
+
+def _append_resolution_case(
+    connection: sqlite3.Connection,
+    *,
+    symbol: str,
+    instrument_id: int,
+    listing_id: int | None,
+    status: str = "RESOLVED",
+    evidence_hash: str = "a" * 64,
+    catalog_entry_id: int | None = None,
+    candidate_count: int | None = None,
+) -> dict[str, int | None]:
+    ordinal = int(
+        connection.execute("SELECT COUNT(*) FROM instrument_resolution_cases").fetchone()[0]
+    ) + 1
+    if catalog_entry_id is None:
+        snapshot_hash = hashlib.sha256(
+            f"snapshot|{symbol}|{ordinal}".encode()
+        ).hexdigest()
+        snapshot_id = int(
+            connection.execute(
+                """
+                INSERT INTO catalog_snapshots (
+                    source, source_url, content_sha256, retrieved_at, row_count,
+                    status, parser_version
+                )
+                VALUES (
+                    'TEST_RESOLUTION', 'https://example.test/catalog', ?,
+                    '2026-08-17T00:00:00Z', 1, 'COMPLETE', 'test-v1'
+                )
+                """,
+                (snapshot_hash,),
+            ).lastrowid
+        )
+        catalog_entry_id = int(
+            connection.execute(
+                """
+                INSERT INTO catalog_entries (
+                    snapshot_id, row_number, isin, name, parse_status, reason_code,
+                    raw_row_sha256, instrument_id, listing_id
+                )
+                VALUES (?, 1, 'US0378331005', ?, 'ACCEPTED', 'VALID_ISIN', ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    symbol,
+                    hashlib.sha256(f"entry|{symbol}|{ordinal}".encode()).hexdigest(),
+                    instrument_id,
+                    listing_id,
+                ),
+            ).lastrowid
+        )
+
+    effective_candidate_count = (
+        candidate_count
+        if candidate_count is not None
+        else (0 if status == "UNMATCHED" else 1)
+    )
+    reason_by_status = {
+        "RESOLVED": "EXACT_ISIN_TYPE_CURRENCY_MIC_TIMEZONE",
+        "AMBIGUOUS": "MULTIPLE_COMPATIBLE_CANDIDATES",
+        "UNMATCHED": "NO_PROVIDER_MATCH",
+        "REJECTED": "MISSING_CURRENCY",
+    }
+    selected_listing_id = listing_id if status == "RESOLVED" else None
+    case_id = int(
+        connection.execute(
+            """
+            INSERT INTO instrument_resolution_cases (
+                catalog_entry_id, provider, request_fingerprint, status, reason_code,
+                candidate_count, candidate_hash, evidence_hash,
+                selected_instrument_id, selected_listing_id, candidate_figi,
+                candidate_ticker, candidate_exchange_code, candidate_market_sector,
+                candidate_security_type, candidate_name, candidate_currency_hint,
+                created_at
+            )
+            VALUES (
+                ?, 'openfigi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+                'Equity', 'Common Stock', ?, 'EUR', '2026-08-17T00:00:00Z'
+            )
+            """,
+            (
+                catalog_entry_id,
+                hashlib.sha256(f"request|{ordinal}".encode()).hexdigest(),
+                status,
+                reason_by_status[status],
+                effective_candidate_count,
+                hashlib.sha256(f"candidates|{ordinal}".encode()).hexdigest(),
+                evidence_hash,
+                instrument_id,
+                selected_listing_id,
+                f"FIGI{ordinal:08d}" if effective_candidate_count else None,
+                symbol if effective_candidate_count else None,
+                symbol,
+            ),
+        ).lastrowid
+    )
+    return {
+        "case_id": case_id,
+        "catalog_entry_id": catalog_entry_id,
+        "listing_id": selected_listing_id,
+    }
 
 
 def test_health_endpoint(client: TestClient) -> None:
@@ -757,6 +923,277 @@ def test_import_apply_rejects_stale_preview(client: TestClient, monkeypatch: pyt
     assert client.get("/portfolio").json()["positions"] == before["positions"]
 
 
+def test_import_resolution_snapshot_keeps_legacy_unmapped_apply(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,quantity,average_price,asset_type,currency\n"
+            "LEGACYUNMAPPED,2,100,stock,EUR\n"
+        ),
+    )
+    payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+
+    preview = client.post("/import/google-sheets/preview", json=payload)
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
+    )
+
+    assert preview.status_code == 200
+    assert len(preview.json()["confirmation_token"]) == 64
+    assert response.status_code == 200
+    assert response.json()["created_assets"] == 1
+
+
+def test_import_listing_token_changes_when_local_listing_resolves(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,quantity,average_price,asset_type,currency\n"
+            "LISTINGTOKEN,2,100,stock,EUR\n"
+        ),
+    )
+    payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+    unmapped_preview = client.post("/import/google-sheets/preview", json=payload)
+    assert unmapped_preview.status_code == 200
+
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "LISTINGTOKEN")
+        listing_id = _create_resolution_listing(
+            connection,
+            instrument_id=int(subject["instrument_id"]),
+            symbol="LISTINGTOKEN",
+            currency="EUR",
+            mic="XTST",
+        )
+        _append_resolution_case(
+            connection,
+            symbol="LISTINGTOKEN",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=listing_id,
+        )
+
+    resolved_preview = client.post("/import/google-sheets/preview", json=payload)
+
+    assert resolved_preview.status_code == 200
+    assert len(resolved_preview.json()["confirmation_token"]) == 64
+    assert (
+        resolved_preview.json()["confirmation_token"]
+        != unmapped_preview.json()["confirmation_token"]
+    )
+
+
+def test_import_listing_token_rejects_candidate_appearing_after_preview(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,quantity,average_price,asset_type,currency\n"
+            "NEWCANDIDATE,2,100,stock,EUR\n"
+        ),
+    )
+    payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+    preview = client.post("/import/google-sheets/preview", json=payload)
+    assert preview.status_code == 200
+    before = client.get("/portfolio").json()
+
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "NEWCANDIDATE")
+        _append_resolution_case(
+            connection,
+            symbol="NEWCANDIDATE",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=None,
+            status="REJECTED",
+        )
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+    with db_session() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM assets WHERE symbol = 'NEWCANDIDATE'"
+        ).fetchone() is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["resolution_case_id", "listing_id", "status", "evidence_hash"],
+)
+def test_import_resolution_snapshot_change_is_stale_before_write(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from backend.app.database import db_session
+
+    _enable_google_sheets_import(monkeypatch)
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,quantity,average_price,asset_type,currency\n"
+            "TOKENSTATE,2,100,stock,EUR\n"
+        ),
+    )
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "TOKENSTATE")
+        listing_id = _create_resolution_listing(
+            connection,
+            instrument_id=int(subject["instrument_id"]),
+            symbol="TOKENSTATE",
+            currency="EUR",
+            mic="XTST",
+        )
+        original = _append_resolution_case(
+            connection,
+            symbol="TOKENSTATE",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=listing_id,
+        )
+
+    payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+    preview = client.post("/import/google-sheets/preview", json=payload)
+    assert preview.status_code == 200
+    before = client.get("/portfolio").json()
+
+    with db_session() as connection:
+        changed_listing_id = listing_id
+        changed_status = "RESOLVED"
+        changed_evidence = "a" * 64
+        if mutation == "listing_id":
+            changed_listing_id = _create_resolution_listing(
+                connection,
+                instrument_id=int(subject["instrument_id"]),
+                symbol="TOKENSTATE",
+                currency="EUR",
+                mic="XALT",
+            )
+        elif mutation == "status":
+            changed_status = "REJECTED"
+        elif mutation == "evidence_hash":
+            changed_evidence = "b" * 64
+        _append_resolution_case(
+            connection,
+            symbol="TOKENSTATE",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=changed_listing_id,
+            status=changed_status,
+            evidence_hash=changed_evidence,
+            catalog_entry_id=int(original["catalog_entry_id"]),
+        )
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+    with db_session() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM assets WHERE symbol = 'TOKENSTATE'"
+        ).fetchone() is None
+
+
+def test_import_listing_token_rejects_two_venue_candidates_without_transport(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    _enable_google_sheets_import(monkeypatch)
+    transport_calls = 0
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        nonlocal transport_calls
+        transport_calls += 1
+        raise AssertionError("Import preview must not call OpenFIGI")
+
+    monkeypatch.setattr(
+        "backend.app.data_providers.openfigi.OpenFigiProvider.map_isins",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.google_sheets_import_service.fetch_csv",
+        lambda csv_url=None: (
+            "symbol,quantity,average_price,asset_type,currency\n"
+            "DUALVENUE,2,100,stock,EUR\n"
+        ),
+    )
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "DUALVENUE")
+        listing_id = _create_resolution_listing(
+            connection,
+            instrument_id=int(subject["instrument_id"]),
+            symbol="DUALVENUE",
+            currency="EUR",
+            mic="XNYS",
+        )
+        _append_resolution_case(
+            connection,
+            symbol="DUALVENUE",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=listing_id,
+        )
+
+    payload = {"csv_url": "https://docs.google.com/spreadsheets/d/test/export?format=csv"}
+    preview = client.post("/import/google-sheets/preview", json=payload)
+    assert preview.status_code == 200
+    before = client.get("/portfolio").json()
+
+    with db_session() as connection:
+        second_listing_id = _create_resolution_listing(
+            connection,
+            instrument_id=int(subject["instrument_id"]),
+            symbol="DUALVENUE",
+            currency="EUR",
+            mic="XNAS",
+        )
+        _append_resolution_case(
+            connection,
+            symbol="DUALVENUE",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=second_listing_id,
+        )
+
+    response = client.post(
+        "/import/google-sheets/apply",
+        json={**payload, "confirmation_token": preview.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+    assert transport_calls == 0
+
+
 def test_import_rolls_back_positions_assets_and_settings_on_second_position_error(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -803,6 +1240,7 @@ def test_import_rolls_back_positions_assets_and_settings_on_second_position_erro
         asset_count_before = int(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
 
         preview = google_sheets_import_service.preview(
+            connection,
             "https://docs.google.com/spreadsheets/d/test/export?format=csv"
         )
         with pytest.raises(sqlite3.IntegrityError, match="forced second position failure"):
@@ -2181,6 +2619,156 @@ def test_allocation_apply_rejects_stale_plan(client: TestClient) -> None:
 
     assert response.status_code == 409
     assert client.get("/portfolio").json()["positions"] == before
+
+
+def test_allocation_token_changes_with_local_resolution_and_rejects_old_plan(
+    client: TestClient,
+) -> None:
+    from backend.app.database import db_session
+
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    unmapped_plan = client.post("/portfolio/allocation/plan", json=payload)
+    assert unmapped_plan.status_code == 200
+
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "AAPL")
+        _append_resolution_case(
+            connection,
+            symbol="AAPL",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=int(subject["listing_id"]),
+        )
+
+    resolved_plan = client.post("/portfolio/allocation/plan", json=payload)
+    assert resolved_plan.status_code == 200
+    assert len(resolved_plan.json()["confirmation_token"]) == 64
+    assert (
+        resolved_plan.json()["confirmation_token"]
+        != unmapped_plan.json()["confirmation_token"]
+    )
+    before = client.get("/portfolio").json()
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": unmapped_plan.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+
+
+def test_allocation_token_rejects_resolution_snapshot_change_without_transport(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    transport_calls = 0
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        nonlocal transport_calls
+        transport_calls += 1
+        raise AssertionError("Allocation apply must not call OpenFIGI")
+
+    monkeypatch.setattr(
+        "backend.app.data_providers.openfigi.OpenFigiProvider.map_isins",
+        fail_if_called,
+    )
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "AAPL")
+        original = _append_resolution_case(
+            connection,
+            symbol="AAPL",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=int(subject["listing_id"]),
+        )
+    plan = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan.status_code == 200
+    before = client.get("/portfolio").json()
+
+    with db_session() as connection:
+        _append_resolution_case(
+            connection,
+            symbol="AAPL",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=int(subject["listing_id"]),
+            evidence_hash="b" * 64,
+            catalog_entry_id=int(original["catalog_entry_id"]),
+        )
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": plan.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+    assert transport_calls == 0
+
+
+def test_allocation_apply_maps_new_local_ambiguity_to_resolution_changed(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    transport_calls = 0
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        nonlocal transport_calls
+        transport_calls += 1
+        raise AssertionError("Allocation apply must not call OpenFIGI")
+
+    monkeypatch.setattr(
+        "backend.app.data_providers.openfigi.OpenFigiProvider.map_isins",
+        fail_if_called,
+    )
+    payload = _allocation_payload("EQUAL_WEIGHT", symbols=["AAPL"], total_capital=10000)
+    with db_session() as connection:
+        subject = _resolution_subject(connection, "AAPL")
+        _append_resolution_case(
+            connection,
+            symbol="AAPL",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=int(subject["listing_id"]),
+        )
+    plan = client.post("/portfolio/allocation/plan", json=payload)
+    assert plan.status_code == 200
+    before = client.get("/portfolio").json()
+
+    with db_session() as connection:
+        second_listing_id = _create_resolution_listing(
+            connection,
+            instrument_id=int(subject["instrument_id"]),
+            symbol="AAPL",
+            currency="USD",
+            mic="XNAS",
+        )
+        _append_resolution_case(
+            connection,
+            symbol="AAPL",
+            instrument_id=int(subject["instrument_id"]),
+            listing_id=second_listing_id,
+        )
+
+    response = client.post(
+        "/portfolio/allocation/apply",
+        json={**payload, "confirmation_token": plan.json()["confirmation_token"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "RESOLUTION_CHANGED"}
+    after = client.get("/portfolio").json()
+    assert after["positions"] == before["positions"]
+    assert after["settings"] == before["settings"]
+    assert transport_calls == 0
 
 
 def test_scenario_market_crash(client: TestClient) -> None:

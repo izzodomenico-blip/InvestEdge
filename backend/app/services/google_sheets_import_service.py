@@ -6,6 +6,7 @@ import hmac
 import io
 import json
 import sqlite3
+from dataclasses import asdict
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -14,9 +15,14 @@ import httpx
 from backend.app.config import get_settings
 from backend.app.models import AssetCreate
 from backend.app.services.assets_service import create_asset, get_asset_by_symbol
+from backend.app.services.instrument_resolution_service import (
+    InstrumentResolutionService,
+    ResolutionSnapshot,
+)
 from backend.app.services.portfolio_engine import PortfolioEngine
 
 portfolio_engine = PortfolioEngine()
+instrument_resolution_service = InstrumentResolutionService()
 
 # Alias di intestazione accettati (case-insensitive, spazi/underscore normalizzati).
 _HEADER_ALIASES: dict[str, set[str]] = {
@@ -285,9 +291,32 @@ def status() -> dict[str, Any]:
     }
 
 
-def preview(csv_url: str | None = None) -> dict[str, Any]:
+def _bind_resolution_snapshots(
+    connection: sqlite3.Connection,
+    parsed: dict[str, Any],
+) -> None:
+    for holding in parsed["holdings"]:
+        explicit_metadata: dict[str, str] = {}
+        if holding["asset_type_explicit"]:
+            explicit_metadata["asset_type"] = holding["asset_type"]
+        if holding["currency_explicit"]:
+            explicit_metadata["currency"] = holding["currency"]
+        holding["resolution_snapshot"] = asdict(
+            instrument_resolution_service.snapshot_for_reference(
+                connection,
+                holding["symbol"],
+                explicit_metadata,
+            )
+        )
+
+
+def preview(
+    connection: sqlite3.Connection,
+    csv_url: str | None = None,
+) -> dict[str, Any]:
     _require_import_enabled()
     parsed = parse_holdings(fetch_csv(csv_url))
+    _bind_resolution_snapshots(connection, parsed)
     parsed["confirmation_token"] = _confirmation_token(parsed)
     return parsed
 
@@ -331,10 +360,20 @@ def apply_import(
     csv_url: str | None = None,
     confirmation_token: str | None = None,
 ) -> dict[str, Any]:
-    parsed = preview(csv_url)
+    _require_import_enabled()
+    parsed = parse_holdings(fetch_csv(csv_url))
+    if not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    _bind_resolution_snapshots(connection, parsed)
+    parsed["confirmation_token"] = _confirmation_token(parsed)
+    for holding in parsed["holdings"]:
+        instrument_resolution_service.assert_snapshot_current(
+            connection,
+            ResolutionSnapshot(**holding["resolution_snapshot"]),
+        )
     current_token = parsed["confirmation_token"]
     if confirmation_token is None or not hmac.compare_digest(confirmation_token, current_token):
-        raise StaleImportError("L'anteprima non corrisponde piu al foglio corrente. Genera una nuova anteprima.")
+        raise StaleImportError("RESOLUTION_CHANGED")
     holdings = parsed["holdings"]
     if not holdings:
         raise ValueError("Nessuna posizione valida da importare. Controlla il foglio.")

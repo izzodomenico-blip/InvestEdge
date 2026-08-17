@@ -4,10 +4,11 @@ import hashlib
 import json
 import math
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from backend.app.services.fx_service import FXService
+from backend.app.services.instrument_resolution_service import InstrumentResolutionService
 
 TRADING_DAYS = 252
 DEFAULT_TARGET_VOL = 0.15
@@ -23,6 +24,9 @@ class AllocationEngine:
 
     lookback_days: int = 120
     fx_service: FXService = field(default_factory=FXService)
+    resolution_service: InstrumentResolutionService = field(
+        default_factory=InstrumentResolutionService
+    )
 
     def plan(
         self,
@@ -83,6 +87,7 @@ class AllocationEngine:
                     "suggested_quantity": quantity,
                     "volatility": round(asset["volatility"], 4),
                     "score": asset["score"],
+                    "resolution_snapshot": asset["resolution_snapshot"],
                 }
             )
 
@@ -113,7 +118,12 @@ class AllocationEngine:
         missing: list[str] = []
         for symbol in symbols:
             row = connection.execute(
-                "SELECT id, symbol, name, currency, risk_level FROM assets WHERE UPPER(symbol) = UPPER(?) LIMIT 1",
+                """
+                SELECT id, symbol, name, asset_type, currency, risk_level
+                FROM assets
+                WHERE UPPER(symbol) = UPPER(?)
+                LIMIT 1
+                """,
                 (symbol,),
             ).fetchone()
             if row is None:
@@ -145,6 +155,18 @@ class AllocationEngine:
             ).fetchone()
             score = float(score_row["score"]) if score_row and score_row["score"] is not None else None
             fx_rate_to_base = self.fx_service.get_rate(connection, str(row["currency"])).rate
+            resolution_snapshot = self.resolution_service.snapshot_for_reference(
+                connection,
+                str(row["symbol"]),
+                {
+                    "asset_type": str(row["asset_type"]),
+                    "currency": str(row["currency"]),
+                },
+            )
+            self.resolution_service.assert_snapshot_current(
+                connection,
+                resolution_snapshot,
+            )
             assets.append(
                 {
                     "symbol": row["symbol"],
@@ -154,6 +176,7 @@ class AllocationEngine:
                     "price_base": series[-1] * fx_rate_to_base,
                     "volatility": self._annualized_vol(series),
                     "score": score,
+                    "resolution_snapshot": asdict(resolution_snapshot),
                 }
             )
         if missing:

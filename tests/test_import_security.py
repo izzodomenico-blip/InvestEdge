@@ -8,6 +8,8 @@ import pytest
 
 from backend.app.config import get_settings
 from backend.app.services import google_sheets_import_service
+from backend.app.services.instrument_resolution_service import InstrumentResolutionService
+from backend.app.services.provider_budget_service import ProviderBudgetExceeded
 
 
 @pytest.fixture(autouse=True)
@@ -284,3 +286,40 @@ def test_fetch_csv_sanitizes_malformed_url_errors() -> None:
 
     assert str(captured.value) == "URL Google Sheets non valida o non attendibile."
     _assert_exception_chain_is_sanitized(captured.value, secret)
+
+
+def test_resolution_snapshot_stays_local_when_provider_budget_is_exhausted(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session, init_db
+
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "resolution-snapshot.db"))
+    get_settings.cache_clear()
+    init_db()
+
+    class ExhaustedProvider:
+        def map_isins(self, *args: object, **kwargs: object) -> object:
+            raise ProviderBudgetExceeded("openfigi", "mapping", "DAY")
+
+    service = InstrumentResolutionService(provider=ExhaustedProvider())
+    with db_session() as connection:
+        snapshot = service.snapshot_for_reference(
+            connection,
+            " legacy ",
+            {"currency": " eur ", "asset_type": " STOCK "},
+        )
+        normalized_snapshot = service.snapshot_for_reference(
+            connection,
+            "LEGACY",
+            {"asset_type": "stock", "currency": "EUR"},
+        )
+        service.assert_snapshot_current(connection, snapshot)
+
+    assert snapshot.status == "UNMAPPED"
+    assert snapshot.instrument_id is None
+    assert snapshot.listing_id is None
+    assert snapshot.resolution_case_id is None
+    assert snapshot.candidate_count == 0
+    assert len(snapshot.evidence_hash) == 64
+    assert snapshot == normalized_snapshot

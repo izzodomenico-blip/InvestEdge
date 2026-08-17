@@ -329,6 +329,11 @@ def plan_allocation(payload: AllocationPlanIn) -> AllocationPlanOut:
                     lookback_days=payload.lookback_days,
                 )
             )
+    except (AmbiguousInstrumentError, ResolutionConflictError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -353,7 +358,7 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
             ):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Il piano e cambiato: ricalcola l'allocazione prima di applicarla.",
+                    detail={"reason_code": "RESOLUTION_CHANGED"},
                 )
             items = []
             for allocation in plan["allocations"]:
@@ -381,6 +386,11 @@ def apply_allocation(payload: AllocationPlanIn) -> PortfolioSummaryOut:
                 initial_equity_base=plan["total_capital"],
                 current_cash_base=plan["cash_buffer"],
             )
+    except (AmbiguousInstrumentError, ResolutionConflictError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": "RESOLUTION_CHANGED"},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -653,9 +663,22 @@ def import_google_sheets_status() -> ImportStatusOut:
 @router.post("/import/google-sheets/preview", response_model=ImportPreviewOut)
 def import_google_sheets_preview(payload: ImportInputIn | None = None) -> ImportPreviewOut:
     try:
-        return ImportPreviewOut(**google_sheets_import_service.preview(payload.csv_url if payload else None))
+        with db_session() as connection:
+            return ImportPreviewOut(
+                **google_sheets_import_service.preview(
+                    connection,
+                    payload.csv_url if payload else None,
+                )
+            )
     except google_sheets_import_service.ImportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except AmbiguousInstrumentError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ResolutionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -674,9 +697,20 @@ def import_google_sheets_apply(payload: ImportInputIn | None = None) -> ImportAp
     except google_sheets_import_service.ImportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except google_sheets_import_service.StaleImportError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from exc
+    except ResolutionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": str(exc)},
+        ) from exc
     except AmbiguousInstrumentError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": "RESOLUTION_CHANGED"},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -609,11 +609,11 @@ InstrumentResolutionService.snapshot_for_reference(connection: sqlite3.Connectio
 InstrumentResolutionService.assert_snapshot_current(connection: sqlite3.Connection, snapshot: ResolutionSnapshot) -> None
 ```
 
-- [ ] **Step 1: Scrivere test RED import e allocation**
+- [x] **Step 1: Scrivere test RED import e allocation**
 
 Aggiungere casi: preview con listing risolto; import legacy senza catalog match mantenuto come `UNMAPPED`; comparsa di un candidate locale dopo preview; cambio di `resolution_case_id`, `listing_id`, status o evidence hash prima di apply; due venue omonime; provider budget esaurito. Ogni cambio stale/ambiguo restituisce 409, nessuna mutazione e zero chiamate transport. Conservare i test Phase 1 su refetch CSV e input allocation congelato.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_import_security.py tests\test_api.py -k "resolution_snapshot or listing_token or allocation_token or stale_token" -q
@@ -621,15 +621,15 @@ Aggiungere casi: preview con listing risolto; import legacy senza catalog match 
 
 Expected: i token correnti non includono la resolution locale e i casi di cambio non restituiscono ancora 409.
 
-- [ ] **Step 3: Canonicalizzare lo snapshot locale**
+- [x] **Step 3: Canonicalizzare lo snapshot locale**
 
 `snapshot_for_reference()` restituisce `RESOLVED` soltanto per un latest case univoco con instrument/listing/evidence hash presenti. Se non esiste alcun candidate locale, restituisce `UNMAPPED` con evidence hash dei metadata espliciti normalizzati e candidate count zero, preservando l'import legacy; se esiste più di un candidate solleva `AmbiguousInstrumentError`. Il payload canonico ordina chiavi e liste come in Fase 1 e aggiunge lo snapshot completo per ogni riga/asset interessato. Non include candidate raw, provider response o timestamp non deterministici.
 
-- [ ] **Step 4: Validare apply senza rete**
+- [x] **Step 4: Validare apply senza rete**
 
 Import apply rifà soltanto fetch e parse del CSV già previsti, risolve il riferimento contro i case locali e confronta snapshot+token. Allocation apply ricalcola il piano sugli stessi input congelati e snapshot locali. Una differenza solleva l'errore stabile `RESOLUTION_CHANGED`, tradotto dalla route in 409; il controllo avviene prima di ogni write/savepoint applicativo.
 
-- [ ] **Step 5: Eseguire GREEN e regressione completa token**
+- [x] **Step 5: Eseguire GREEN e regressione completa token**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_import_security.py tests\test_api.py -k "import or allocation or token or resolution" -q
@@ -638,7 +638,7 @@ Import apply rifà soltanto fetch e parse del CSV già previsti, risolve il rife
 
 Expected: token Phase 1 e nuovi casi resolution verdi; nessuna chiamata provider da apply; Ruff verde.
 
-- [ ] **Step 6: Review, commit e gate remoto**
+- [x] **Step 6: Review, commit e gate remoto**
 
 Review indipendente su canonicalizzazione, TOCTOU locale, assenza rete, compare_digest, 409 e rollback. Correggere Critical/Important e ripetere Step 5.
 
