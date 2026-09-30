@@ -26,6 +26,7 @@
 - I dati non validi, mancanti, stale, futuri, non finiti, incoerenti, in valuta inattesa o provenienti da mapping ambiguo non sovrascrivono l'ultimo dato valido. Le ragioni sono persistite con codici stabili e sanitizzati.
 - I fallback sono ammessi soltanto tra provider/listing/capability/valuta/sessione compatibili. L'uso del fallback e la sua freschezza sono visibili; divergenza oltre soglia sospende la promozione e non viene mediata in silenzio.
 - Non usare `npm audit fix --force`, force-push, push su `main`, PR, merge, reset distruttivi o cancellazioni ricorsive.
+- **Override utente 2026-09-30:** push del branch di ogni task e merge fast-forward su `main` ai gate di fase verificati sono autorizzati. Stato, eccezioni ed evidenze sono in `PROGRAMMA-OPERATIVO.md`, che prevale su questo piano per stato e ordine dei lavori.
 - Un solo writer modifica i file di ciascun Task. Subagent e reviewer eseguono analisi o review read-only e restituiscono rilievi al writer.
 
 ## Protocollo automatico: una nuova chat per ogni Task
@@ -1216,7 +1217,7 @@ Expected: un solo commit sopra Task 9 e gate remoto verde.
 
 **Branch:** `codex/investedge-phase-2-task-11`
 
-**Base remota esatta:** `origin/codex/investedge-phase-2-task-10`.
+**Base remota esatta:** `origin/investedge/programma-operativo` (commit documentale sopra `origin/codex/investedge-phase-2-task-10`, aggiunto il 2026-09-30 con `AGENTS.md` e `PROGRAMMA-OPERATIVO.md`).
 
 **Files:**
 
