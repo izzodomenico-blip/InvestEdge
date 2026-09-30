@@ -598,6 +598,31 @@ def test_safe_transport_rejects_redirects_without_following_location() -> None:
     assert seen_hosts == ["api.example.test"]
 
 
+def test_safe_transport_reports_not_modified_without_payload_or_cache() -> None:
+    connection = _initialize()
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("if-modified-since"))
+        return httpx.Response(304)
+
+    transport = _transport(handler)
+    with pytest.raises(SafeProviderTransportError) as exc_info:
+        _request(
+            transport,
+            connection,
+            headers={"If-Modified-Since": "Sat, 15 Aug 2026 00:00:00 GMT"},
+        )
+
+    assert exc_info.value.code == "NOT_MODIFIED"
+    assert seen_headers == ["Sat, 15 Aug 2026 00:00:00 GMT"]
+    log = connection.execute(
+        "SELECT outcome, status_code FROM provider_request_log"
+    ).fetchall()
+    assert [tuple(row) for row in log] == [("SUCCEEDED", 304)]
+    assert connection.execute("SELECT COUNT(*) FROM api_cache").fetchone()[0] == 0
+
+
 def test_safe_transport_retries_429_with_capped_numeric_retry_after_and_official_headers() -> None:
     connection = _initialize()
     responses = iter(

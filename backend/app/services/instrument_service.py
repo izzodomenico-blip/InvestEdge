@@ -154,7 +154,7 @@ class InstrumentService:
                     (
                         f"{_LEGACY_CURATED_SOURCE}|{row['asset_id']}|"
                         f"COINGECKO_ID|{coingecko_id}"
-                    ).encode("utf-8")
+                    ).encode()
                 ).hexdigest()
                 connection.execute(
                     """

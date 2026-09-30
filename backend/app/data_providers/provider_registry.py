@@ -9,9 +9,11 @@ from backend.app.config import Settings
 from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.data_providers.coingecko import CoinGeckoProvider
+from backend.app.data_providers.ecb import ECB_ALLOWED_HOSTS, EcbFxProvider
 from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
-from backend.app.data_providers.fred import FredProvider
+from backend.app.data_providers.fred import FredReferenceProvider
 from backend.app.data_providers.stooq import StooqProvider
+from backend.app.data_providers.transport import SafeProviderTransport
 from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
 from backend.app.services.provider_budget_service import (
     ProviderAvailability,
@@ -39,8 +41,13 @@ class ProviderRegistry:
             AlphaVantageProvider(settings, connection),
             YahooFinanceProvider(settings, connection),
             CoinGeckoProvider(settings, connection),
-            FredProvider(settings, connection),
+            FredReferenceProvider(settings, connection),
         ]
+        # FX BCE: modello separato (fx_rates/FXQuote), stesso trasporto governato e bucket `ecb`.
+        self.ecb_fx_provider = EcbFxProvider(
+            SafeProviderTransport(allowed_hosts=ECB_ALLOWED_HOSTS, settings=settings),
+            cache_ttl_seconds=max(0, settings.ecb_fx_cache_ttl_hours) * 3600,
+        )
 
     def provider_for_asset_type(self, asset_type: str) -> BaseMarketDataProvider | None:
         normalized = asset_type.lower()

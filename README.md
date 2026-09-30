@@ -232,7 +232,8 @@ Provider predisposti:
 - `AlphaVantageProvider`: visibile ma disabilitato per i prezzi con reason code `SECRET_IN_QUERY_POLICY`; la key non viene inserita in URL o transport.
 - `YahooFinanceProvider`: mantenuto per compatibilita, ma disabilitato come provider prezzo primario o fallback di rete con reason code `NOT_PRIMARY_POLICY`.
 - `CoinGeckoProvider`: barre EOD e quote EUR/USD soltanto con un `COINGECKO_ID` verificato; i cinque asset crypto legacy ricevono esclusivamente il mapping curato BTC=`bitcoin`, ETH=`ethereum`, SOL=`solana`, BNB=`binancecoin`, XRP=`ripple`. Non deriva l'identita dal ticker, dal nome, da ISIN o da MIC. Le barre giornaliere sono in UTC: il punto delle 00:00 UTC chiude il giorno precedente e il giorno UTC in corso, incompleto, non diventa una barra EOD. Powered by CoinGecko API.
-- `FredProvider`: serie macro/tassi e bond proxy, tra cui DGS10, DGS2 e FEDFUNDS.
+- `EcbFxProvider`: cambi di riferimento BCE verso EUR (ECB Data Portal, serie EXR `D.<VALUTA>.EUR.SP00.A` in CSV, `lastNObservations=2`, `If-Modified-Since`/304). Keyless, budget locale 5/minuto, 50/giorno e 500/mese, qualita `reference` e mai realtime. Refresh manuale di una sola valuta con `POST /data/fx/refresh?from_currency=USD` (richiede `ENABLE_REAL_DATA=true`); un refresh fallito non tocca l'ultimo cambio valido e le operazioni continuano a bloccarsi su cambio mancante o stale.
+- `FredReferenceProvider` (alias storico `FredProvider`): serie DGS10, DGS2 e FEDFUNDS soltanto come riferimento, mai come prezzo. Disabilitato per policy: senza key `MISSING_CREDENTIAL`, con key `SECRET_IN_QUERY_POLICY` (FRED v1 richiede la key in query string); FRED v2 offre solo download bulk (`BULK_ONLY_POLICY`). Nessuna chiamata di rete. `BTP10Y` e' soltanto un alias legacy del proxy USA `DGS10`, etichettato `REFERENCE_ONLY/US_10Y_PROXY`. Fonte: FRED®, Federal Reserve Bank of St. Louis.
 
 Modalita dati:
 
@@ -355,6 +356,7 @@ Endpoint iniziali:
 - `POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/apply`
 - `POST /data/refresh/{symbol}?force=false`
 - `POST /data/refresh-all?limit=5&force=false`
+- `POST /data/fx/refresh?from_currency=USD`
 - `GET /data/usage`
 - `GET /news?limit=50&symbol=AAPL`
 - `GET /news/{symbol}`

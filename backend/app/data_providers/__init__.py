@@ -8,8 +8,9 @@ from backend.app.data_providers.base import (
     RealDataDisabled,
 )
 from backend.app.data_providers.coingecko import CoinGeckoProvider
+from backend.app.data_providers.ecb import EcbFetchResult, EcbFxProvider
 from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
-from backend.app.data_providers.fred import FredProvider
+from backend.app.data_providers.fred import FredProvider, FredReferenceProvider
 from backend.app.data_providers.mock_news_provider import NewsProviderMock
 from backend.app.data_providers.mock_provider import MockMarketDataProvider
 from backend.app.data_providers.news_base import BaseNewsProvider
@@ -27,7 +28,10 @@ __all__ = [
     "BaseMarketDataProvider",
     "BaseNewsProvider",
     "CoinGeckoProvider",
+    "EcbFetchResult",
+    "EcbFxProvider",
     "FredProvider",
+    "FredReferenceProvider",
     "FinnhubQuoteProvider",
     "MissingApiKey",
     "MockMarketDataProvider",

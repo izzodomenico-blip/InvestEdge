@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import math
+import re
 import sqlite3
-import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 
 import httpx
 
 from backend.app.config import get_settings
 
+if TYPE_CHECKING:
+    from backend.app.data_providers.ecb import EcbFxProvider
+    from backend.app.models import FxRefreshResult
+
 ECB_DAILY_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
-ECB_RESPONSE_LIMIT_BYTES = 1024 * 1024
-ECB_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
+_CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
 
 
 class FXRateUnavailable(ValueError):
@@ -30,6 +35,9 @@ class FXQuote:
 
 
 class FXService:
+    def __init__(self, ecb_provider: EcbFxProvider | None = None) -> None:
+        self._ecb_provider = ecb_provider
+
     def get_rate(
         self,
         connection: sqlite3.Connection,
@@ -76,30 +84,150 @@ class FXService:
             quality=quality,
         )
 
+    def refresh_currency(
+        self,
+        connection: sqlite3.Connection,
+        from_currency: str,
+        now: datetime | None = None,
+    ) -> FxRefreshResult:
+        """Aggiorna una sola valuta verso EUR dal reference rate ufficiale BCE."""
+        from backend.app.data_providers.base import ProviderError
+        from backend.app.data_providers.ecb import normalize_ecb_currency
+        from backend.app.models import FxRefreshResult
+
+        currency = normalize_ecb_currency(from_currency)
+        moment = (now or datetime.now(UTC)).astimezone(UTC)
+        previous = connection.execute(
+            """
+            SELECT observed_at, ingested_at
+            FROM fx_rates
+            WHERE from_currency = ? AND to_currency = 'EUR' AND provider = 'ecb'
+            ORDER BY observed_at DESC, id DESC
+            LIMIT 1
+            """,
+            (currency,),
+        ).fetchone()
+        since = _date_or_none(previous["observed_at"]) if previous is not None else None
+
+        result = self._ecb(connection).fetch_rate(connection, currency, "EUR", since, moment)
+        if result.status == "NOT_MODIFIED" or result.quote is None:
+            if previous is None:
+                raise ProviderError("ecb:FX:NOT_MODIFIED_WITHOUT_BASELINE")
+            return FxRefreshResult(
+                from_currency=currency,
+                to_currency="EUR",
+                provider="ecb",
+                status="NOT_MODIFIED",
+                rows_written=0,
+                observed_at=_datetime_or_none(previous["observed_at"]),
+                ingested_at=_datetime_or_none(previous["ingested_at"]),
+            )
+
+        rows_written = self._persist_quotes(connection, [result.quote], moment, replace_existing=True)
+        return FxRefreshResult(
+            from_currency=currency,
+            to_currency="EUR",
+            provider="ecb",
+            status="UPDATED",
+            rows_written=rows_written,
+            observed_at=_datetime_or_none(result.quote.observed_at),
+            ingested_at=moment,
+        )
+
     def refresh_ecb(
         self,
         connection: sqlite3.Connection,
         client: httpx.Client | None = None,
     ) -> int:
-        if client is None:
-            with httpx.Client(timeout=ECB_TIMEOUT, follow_redirects=False) as owned_client:
-                payload = self._download_ecb(owned_client)
-        else:
-            payload = self._download_ecb(client)
+        """Percorso Fase 1: un solo documento BCE multi-valuta, persistito atomicamente."""
+        provider = self._ecb(connection)
+        if client is not None:
+            provider = provider.with_client(client)
+        now = datetime.now(UTC)
+        quotes = provider.fetch_reference_rates(connection, now)
+        return self._persist_quotes(connection, quotes, now, replace_existing=False)
 
-        inserted = 0
-        for currency, rate, observed_at in self._parse_ecb(payload):
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO fx_rates (
-                    from_currency, to_currency, rate, observed_at, provider, quality
-                )
-                VALUES (?, 'EUR', ?, ?, 'ecb', 'reference')
-                """,
-                (currency, rate, observed_at),
-            )
-            inserted += max(cursor.rowcount, 0)
-        return inserted
+    def _ecb(self, connection: sqlite3.Connection) -> EcbFxProvider:
+        if self._ecb_provider is not None:
+            return self._ecb_provider
+        from backend.app.data_providers.provider_registry import ProviderRegistry
+
+        return ProviderRegistry(get_settings(), connection).ecb_fx_provider
+
+    @staticmethod
+    def _persist_quotes(
+        connection: sqlite3.Connection,
+        quotes: Sequence[FXQuote],
+        ingested_at: datetime,
+        *,
+        replace_existing: bool,
+    ) -> int:
+        """Valida tutte le quote, poi scrive in un savepoint: su errore l'ultimo valore buono resta."""
+        from backend.app.data_providers.base import ProviderError
+
+        for quote in quotes:
+            if (
+                not _CURRENCY_PATTERN.fullmatch(quote.from_currency)
+                or quote.to_currency != "EUR"
+                or _date_or_none(quote.observed_at) is None
+            ):
+                raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
+            if not math.isfinite(quote.rate) or quote.rate <= 0:
+                raise ProviderError("ecb:FX:INVALID_RATE")
+
+        ingested_at_text = ingested_at.astimezone(UTC).isoformat(timespec="seconds")
+        written = 0
+        connection.execute("SAVEPOINT fx_persist_quotes")
+        try:
+            for quote in quotes:
+                if replace_existing:
+                    connection.execute(
+                        """
+                        INSERT INTO fx_rates (
+                            from_currency, to_currency, rate, observed_at, ingested_at, provider, quality
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(from_currency, to_currency, observed_at, provider) DO UPDATE SET
+                            rate = excluded.rate,
+                            ingested_at = excluded.ingested_at,
+                            quality = excluded.quality
+                        """,
+                        (
+                            quote.from_currency,
+                            quote.to_currency,
+                            quote.rate,
+                            quote.observed_at,
+                            ingested_at_text,
+                            quote.provider,
+                            quote.quality,
+                        ),
+                    )
+                    written += 1
+                else:
+                    cursor = connection.execute(
+                        """
+                        INSERT OR IGNORE INTO fx_rates (
+                            from_currency, to_currency, rate, observed_at, ingested_at, provider, quality
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            quote.from_currency,
+                            quote.to_currency,
+                            quote.rate,
+                            quote.observed_at,
+                            ingested_at_text,
+                            quote.provider,
+                            quote.quality,
+                        ),
+                    )
+                    written += max(cursor.rowcount, 0)
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT fx_persist_quotes")
+            connection.execute("RELEASE SAVEPOINT fx_persist_quotes")
+            raise
+        connection.execute("RELEASE SAVEPOINT fx_persist_quotes")
+        return written
 
     @staticmethod
     def _latest_rate(
@@ -129,53 +257,21 @@ class FXService:
         age_days = (datetime.now(UTC).date() - observed_date).days
         return age_days > get_settings().ecb_fx_max_age_days
 
-    @staticmethod
-    def _download_ecb(client: httpx.Client) -> bytes:
-        with client.stream("GET", ECB_DAILY_URL) as response:
-            response.raise_for_status()
-            content_length = response.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    if int(content_length) > ECB_RESPONSE_LIMIT_BYTES:
-                        raise ValueError("La risposta BCE supera il limite di 1 MiB.")
-                except ValueError as exc:
-                    if "1 MiB" in str(exc):
-                        raise
 
-            payload = bytearray()
-            for chunk in response.iter_bytes():
-                payload.extend(chunk)
-                if len(payload) > ECB_RESPONSE_LIMIT_BYTES:
-                    raise ValueError("La risposta BCE supera il limite di 1 MiB.")
-        return bytes(payload)
+def _date_or_none(value: object) -> date | None:
+    text = str(value or "").strip()
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
-    @staticmethod
-    def _parse_ecb(payload: bytes) -> list[tuple[str, float, str]]:
-        uppercase_payload = payload.upper()
-        if b"<!DOCTYPE" in uppercase_payload or b"<!ENTITY" in uppercase_payload:
-            raise ValueError("Il feed XML BCE contiene dichiarazioni di entita' non ammesse.")
-        try:
-            root = ET.fromstring(payload)
-        except ET.ParseError as exc:
-            raise ValueError("Il feed XML BCE non e' valido.") from exc
 
-        rates: list[tuple[str, float, str]] = []
-        for element in root.iter():
-            observed_at = element.attrib.get("time")
-            if not observed_at:
-                continue
-            for rate_element in element:
-                currency = rate_element.attrib.get("currency", "").strip().upper()
-                raw_rate = rate_element.attrib.get("rate")
-                if len(currency) != 3 or not currency.isalpha() or raw_rate is None:
-                    continue
-                try:
-                    ecb_rate = float(raw_rate)
-                except ValueError as exc:
-                    raise ValueError("Il feed XML BCE contiene un cambio non valido.") from exc
-                if not math.isfinite(ecb_rate) or ecb_rate <= 0:
-                    raise ValueError("Il feed XML BCE contiene un cambio non valido.")
-                rates.append((currency, 1.0 / ecb_rate, observed_at))
-        if not rates:
-            raise ValueError("Il feed XML BCE non contiene cambi utilizzabili.")
-        return rates
+def _datetime_or_none(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)

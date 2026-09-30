@@ -262,6 +262,36 @@ def test_missing_fx_blocks_order_without_mutating_portfolio(connection) -> None:
     assert connection.execute("SELECT COUNT(*) FROM portfolio_positions").fetchone()[0] == 0
 
 
+def test_failed_fx_refresh_keeps_last_valid_rate_for_orders(connection) -> None:
+    import httpx
+
+    from backend.app.data_providers.base import ProviderError
+    from backend.app.data_providers.ecb import ECB_ALLOWED_HOSTS, EcbFxProvider
+    from backend.app.data_providers.transport import SafeProviderTransport
+    from backend.app.services.fx_service import FXService
+
+    engine = PortfolioEngine()
+    _set_usd_rate(connection, 0.80)
+    _initialize(engine, connection)
+    transport = SafeProviderTransport(allowed_hosts=ECB_ALLOWED_HOSTS).with_client(
+        httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(404)))
+    )
+
+    connection.commit()
+    with pytest.raises(ProviderError) as exc_info:
+        FXService(ecb_provider=EcbFxProvider(transport, sleeper=lambda _delay: None)).refresh_currency(
+            connection, "USD"
+        )
+    assert str(exc_info.value) == "ecb:FX:HTTP_404"
+    order = engine.simulate_order(
+        connection,
+        SimulatedOrderIn(symbol="AAPL", order_type="BUY", quantity=1, price=100, fees=0),
+    )
+
+    assert order.order.fx_rate_to_base == 0.80
+    assert order.order.net_amount_base == 80
+
+
 def test_stale_fx_blocks_order_without_mutating_portfolio(connection) -> None:
     engine = PortfolioEngine()
     stale_date = (datetime.now(UTC).date() - timedelta(days=8)).isoformat()

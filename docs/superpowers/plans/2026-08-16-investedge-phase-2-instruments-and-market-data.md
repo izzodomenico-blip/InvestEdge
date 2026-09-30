@@ -1300,11 +1300,11 @@ class FredReferenceProvider(BaseMarketDataProvider):
 
 Il registry costruisce un `EcbFxProvider` con il `SafeProviderTransport` condiviso; `FXService(ecb_provider=injected_adapter)` è il seam dei test e il default risolve lo stesso adapter dal registry, senza creare un client non governato. Nuovo endpoint manuale `POST /data/fx/refresh?from_currency=USD -> FxRefreshResult`: chiama esclusivamente `FXService.refresh_currency()` e non il facade multi-currency; nessuna esecuzione automatica o scheduler. `UPDATED` restituisce `rows_written=1` e i timestamp della riga validata/upsertata. `NOT_MODIFIED` restituisce `rows_written=0` e i timestamp dell'ultima riga persistita della coppia; un 304 senza riga precedente è un provider failure sanitizzato, non un falso successo. Il provider code persistito, esposto e usato per budget/cache/coverage è sempre il canonico Fase 1 lowercase `ecb`; “ECB” è soltanto label/attribution UI. FX conserva un modello separato e già compatibile: l'adapter scrive soltanto `fx_rates`/`FXQuote`, non crea instrument listing né `MarketObservationEnvelope`. Il Task 16 misura quindi FX per currency direttamente da `fx_rates`, senza fingere un mapping currency→listing.
 
-- [ ] **Step 1: Scrivere test RED FX/reference**
+- [x] **Step 1: Scrivere test RED FX/reference**
 
 ECB: `refresh_currency()` su CSV/SDMX valido, 304 con/senza riga precedente, valore mancante, rate <= 0, currency non allowlistata, stale 7 giorni, risultato/timestamp e idempotenza; `refresh_ecb()` legacy su XML multi-currency conserva firma, conteggio, direct/inverse/identity e idempotenza con un solo documento bounded. Per entrambi testare adapter/transport iniettato, cache prima della reservation, una reservation per tentativo fisico, 429/cooldown, una sola chiamata HTTP fisica nel caso senza retry, stesso provider code `ecb` e stesso bucket budget/coverage. Passare `client` al solo legacy dimostra che `with_client()` mantiene la governance. FRED: v1 non costruisce URL con key; v2 non avvia download release; stati `SECRET_IN_QUERY_POLICY`/`BULK_ONLY_POLICY`; fixture legacy con `.` missing; attribution e diritti serie dichiarati. API: refresh manuale usa adapter fixture, chiama una sola currency e non muta su failure.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_fx_service.py tests\test_reference_providers.py tests\test_portfolio_accounting.py tests\test_api.py -k "ecb or fx or fred or reference_provider" -q
@@ -1312,19 +1312,19 @@ ECB: `refresh_currency()` su CSV/SDMX valido, 304 con/senza riga precedente, val
 
 Expected: failure per adapter/endpoints mancanti; i test Fase 1 direct/inverse continuano a documentare il contratto.
 
-- [ ] **Step 3: Implementare ECB Data API mantenendo il facade FX**
+- [x] **Step 3: Implementare ECB Data API mantenendo il facade FX**
 
 Usare host/path ufficiale e response CSV, limitando le righe e richiedendo `lastNObservations=2`; supportare `If-Modified-Since`. `EcbFxProvider.fetch_rate()` e `fetch_reference_rates()` chiamano esclusivamente `SafeProviderTransport.request()` con `provider="ecb"`, policy ECB, cache scope separati e limite 1 MiB; reservation, retry, 429/cooldown, deduplica e cache restano quindi comuni. `FXService.refresh_currency()` normalizza la singola quote ufficiale in `currency -> EUR`, salva `observed_at`, `ingested_at`, provider `ecb`, quality `reference` e costruisce `FxRefreshResult`. Estrarre un helper privato comune che valida e upserta quote senza cambiare l'ultimo valore buono su errore. `FXService.refresh_ecb()` mantiene il percorso Fase 1: se `client` è fornito usa temporaneamente `ecb_provider.with_client(client)`, che resta sul transport governato; una sola risposta XML ufficiale, limite 1 MiB/entity guard e massimo 64 currency, viene validata e persistita atomicamente dallo stesso helper e restituisce il numero di righe. Non chiama `refresh_currency()` in loop e non crea lavoro bulk sul catalogo.
 
-- [ ] **Step 4: Rendere FRED esplicitamente fail-closed e reference-only**
+- [x] **Step 4: Rendere FRED esplicitamente fail-closed e reference-only**
 
 Non chiamare v1 perché richiede la key in query e non chiamare v2 perché l'unico endpoint documentato scarica intere release, violando il refresh lazy/bounded. Con key assente restituire `DISABLED/MISSING_CREDENTIAL`; con key presente restituire `DISABLED/SECRET_IN_QUERY_POLICY` per v1 e includere `BULK_ONLY_POLICY` nelle capability notes per v2. Conservare il parser fixture/righe già locali, convertire `.` in `ValidationReason="MISSING_VALUE"`, persistere la rejection sullo scope FRED REFERENCE e risolverla solo con un valore locale valido successivo; non trasformare rendimenti/tassi in prezzo e non promuovere oltre `REFERENCE_ONLY`. `BTP10Y` resta soltanto alias legacy del proxy USA `DGS10`, esplicitamente etichettato `REFERENCE_ONLY/US_10Y_PROXY` e mai descritto come rendimento BTP italiano. Registrare l'attribuzione FRED nel metadata provider.
 
-- [ ] **Step 5: Collegare endpoint manuale e regressione EUR**
+- [x] **Step 5: Collegare endpoint manuale e regressione EUR**
 
 La route valida valuta ISO, chiama esattamente `FXService.refresh_currency(connection, from_currency)` una volta e restituisce `FxRefreshResult`; il test sostituisce l'adapter nel service, non inventa un parametro route/client. La route mappa missing/rate-limit/provider failure in risposta sanitizzata. Un refresh fallito non elimina l'ultimo FX valido; le operazioni Fase 1 continuano a bloccare stale/missing senza mutazione. Il test chiama separatamente anche `refresh_ecb()` e dimostra il comportamento multi-currency legacy bounded sul medesimo bucket `ecb`.
 
-- [ ] **Step 6: Eseguire GREEN**
+- [x] **Step 6: Eseguire GREEN**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_fx_service.py tests\test_reference_providers.py tests\test_portfolio_accounting.py tests\test_api.py -q
@@ -1333,7 +1333,7 @@ La route valida valuta ISO, chiama esattamente `FXService.refresh_currency(conne
 
 Expected: test FX/EUR e reference verdi; Ruff verde; nessun secret o chiamata live.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su orientamento quote EUR, 304, stale, FX frozen, assenza di chiamate FRED v1/v2, reference-only, rights/attribution e autenticazione. Correggere Critical/Important e ripetere Step 6.
 

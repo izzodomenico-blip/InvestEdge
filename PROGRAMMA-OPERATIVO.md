@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-09-30.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 11 — FX BCE verso EUR e fallback FRED.**
+**SP2a · Fase 2 · Task 12 — Provider e fallback news reali (+ isolamento news demo).**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 11*.
-- Branch: `codex/investedge-phase-2-task-11`.
-- Base remota: `origin/investedge/programma-operativo`.
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 11.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 12*.
+- Branch: `codex/investedge-phase-2-task-12`.
+- Base remota: `origin/codex/investedge-phase-2-task-11`.
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 12.
 
 ## Legenda
 
@@ -32,7 +32,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 | SP | Titolo | Stato | Spec | Piano | Branch finale | In `main` |
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
-| SP2a | Strumenti e dati di mercato (Fase 2) | IN CORSO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | no |
+| SP2a | Strumenti e dati di mercato (Fase 2) | IN CORSO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | a ogni task (dal Task 11) |
 | SP1 | Laboratorio di verità | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -81,7 +81,7 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 8 | EOD gratuito e fallback (Stooq) | FATTO | `98de55a` | 2026-08-17 | Codex |
 | 9 | Quote USA (Finnhub) | FATTO | `9503e70` | 2026-08-17 | Codex |
 | 10 | Prezzi crypto con identità CoinGecko | FATTO | `54b3faf` checkpoint + `49cdb82` | 2026-09-30 | Codex → Claude |
-| 11 | FX BCE verso EUR e fallback FRED | NON INIZIATO | — | — | — |
+| 11 | FX BCE verso EUR e fallback FRED | FATTO | branch `codex/investedge-phase-2-task-11` | 2026-09-30 | Claude |
 | 12 | Provider e fallback news reali (+ isolamento news demo) | NON INIZIATO | — | — | — |
 | 13 | Refresh lazy, prioritari, deduplicati | NON INIZIATO | — | — | — |
 | 14 | API catalogo e conferme versionate | NON INIZIATO | — | — | — |
@@ -97,11 +97,19 @@ Evidenza Task 10 (2026-09-30, Claude):
 - gate `pytest tests\test_coingecko_provider.py tests\test_provider_budget.py tests\test_market_data_observations.py tests\test_api.py` = 295 passati; Ruff verde; `git diff --check` verde;
 - commit sopra il Task 9: 2 (checkpoint + completamento), come da deroga approvata.
 
+Evidenza Task 11 (2026-09-30, Claude):
+
+- nuovo `EcbFxProvider` (ECB Data Portal CSV, `If-Modified-Since`/304, budget 5/min · 50/giorno · 500/mese, bucket `ecb`); `FXService.refresh_currency()` e route `POST /data/fx/refresh`; `refresh_ecb()` legacy passa dal trasporto governato con firma e conteggio invariati;
+- `FredReferenceProvider` fail-closed (`MISSING_CREDENTIAL`/`SECRET_IN_QUERY_POLICY`, nota `BULK_ONLY_POLICY`), nessuna chiamata di rete; osservazioni FRED `REFERENCE`/QUOTE mai proiettate in `price_history`; alias `BTP10Y` = `REFERENCE_ONLY/US_10Y_PROXY`;
+- deviazioni: `backend/app/data_providers/transport.py` e `tests/test_provider_budget.py` modificati per gestire il 304 come `NOT_MODIFIED` (fuori dall'elenco file del task); la route FX rispetta `ENABLE_REAL_DATA=false` (409, nessuna chiamata); `backend/app/models/__init__.py` esporta `FxRefreshResult`; nuova impostazione `ECB_FX_CACHE_TTL_HOURS`; autofix Ruff UP012 in `instrument_service.py` (violazione lasciata dal checkpoint Task 10, avrebbe fatto fallire la CI);
+- gate: suite completa `pytest` = 595 passati; `ruff check backend scripts tests` verde; `git diff --check` verde.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 
 - **SP2a Task 12:** news demo mai incluse in sentiment, `news_score` o feature ML; nessun rinnovo della data di pubblicazione delle news demo.
+- **SP1 (efficienza test):** la fixture `client` di `tests/test_api.py` ricrea il seed a ogni test; usare un database di esempio creato una volta e copiato per test.
 - **SP1:** pipeline di feature unica e causale (test: il valore alla riga *i* non cambia aggiungendo dati futuri); rimozione di `chikou_span` dai dati di calcolo; score unico per interfaccia, backtest e ML; fill all'apertura della barra successiva; prezzi rettificati per i rendimenti; costi reali (Trade Republic 1 €) e cambio EUR; harness IC, spread per decili e turnover; walk-forward con ottimizzazione in-sample e Sharpe corretto per i tentativi; tabella `features_daily` e job asincroni per backtest e training.
 - **SP2b:** fondamentali point-in-time (SEC EDGAR), eventi (utili, revisioni, insider Form 4, 8-K), macro/regime, barre intraday dalla fonte scelta dall'utente, universo IPO (S-1/F-1/424B), snapshot giornalieri dell'universo.
 - **SP3:** famiglie tecniche "trend di qualità" e "breakout" per orizzonte; forza relativa; volatilità che si comprime; news classificate per tipo di evento, deduplicate, pesate per fonte e tempo; pesi stimati dai dati.
@@ -120,6 +128,7 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-09-30 | Task 10: si conserva il checkpoint `54b3faf` più un commit di completamento, senza riscrivere la storia | utente |
 | 2026-09-30 | Push del branch di ogni task e merge fast-forward su `main` ai gate di fase verificati: supera il divieto di merge/push su `main` dei piani Fase 1 e Fase 2 | utente |
 | 2026-09-30 | Documenti di handoff Codex del Task 10 archiviati in `docs/handoff/2026-08-17-phase-2-task-10/` | Claude |
+| 2026-09-30 | Push e merge fast-forward su `main` a ogni task: l'app non è in uso fino al completamento del programma | utente |
 
 ## Note di ripresa
 

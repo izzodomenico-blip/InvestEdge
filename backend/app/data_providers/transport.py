@@ -639,6 +639,18 @@ class SafeProviderTransport:
             try:
                 with response_stream as response:
                     status_code = response.status_code
+                    if status_code == 304:
+                        # Risposta condizionale (If-Modified-Since): chiamata riuscita,
+                        # nessun payload e nessuna cache; il chiamante decide.
+                        self._budget_manager.complete(
+                            connection,
+                            reservation_id,
+                            "SUCCEEDED",
+                            status_code,
+                            attempts - 1,
+                            None,
+                        )
+                        raise SafeProviderTransportError(provider, operation, "NOT_MODIFIED")
                     if 300 <= status_code < 400:
                         self._budget_manager.complete(
                             connection,

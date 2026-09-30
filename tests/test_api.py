@@ -3838,3 +3838,117 @@ def test_news_refresh_all_endpoint(client: TestClient) -> None:
     assert data["summary"]["requested"] == 3
     assert len(data["results"]) == 3
     assert all(item["provider"] == "mock_news" for item in data["results"])
+
+
+def _fixture_ecb_adapter(handler):  # noqa: ANN001, ANN202
+    from backend.app.data_providers.ecb import ECB_ALLOWED_HOSTS, EcbFxProvider
+    from backend.app.data_providers.transport import SafeProviderTransport
+
+    transport = SafeProviderTransport(allowed_hosts=ECB_ALLOWED_HOSTS).with_client(
+        httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    return EcbFxProvider(transport, sleeper=lambda _delay: None)
+
+
+def _enable_real_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.config import get_settings
+
+    monkeypatch.setenv("ENABLE_REAL_DATA", "true")
+    get_settings.cache_clear()
+
+
+def _usd_fx_rows() -> list[tuple[object, ...]]:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        return [
+            tuple(row)
+            for row in connection.execute(
+                """
+                SELECT rate, observed_at, provider FROM fx_rates
+                WHERE from_currency = 'USD' AND to_currency = 'EUR'
+                ORDER BY observed_at, id
+                """
+            )
+        ]
+
+
+def test_fx_refresh_endpoint_refreshes_exactly_one_currency(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import backend.app.api.routes as routes
+    from backend.app.services.fx_service import FXService
+
+    body = (
+        b"KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2026-08-14,1.25\n"
+    )
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(200, stream=httpx.ByteStream(body), headers={"content-type": "text/csv"})
+
+    monkeypatch.setattr(routes, "fx_service", FXService(ecb_provider=_fixture_ecb_adapter(handler)))
+    _enable_real_data(monkeypatch)
+
+    response = client.post("/data/fx/refresh", params={"from_currency": "usd"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "UPDATED"
+    assert data["rows_written"] == 1
+    assert (data["from_currency"], data["to_currency"], data["provider"]) == ("USD", "EUR", "ecb")
+    assert paths == ["/service/data/EXR/D.USD.EUR.SP00.A"]
+    assert (0.8, "2026-08-14", "ecb") in _usd_fx_rows()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_status"),
+    [(404, 503), (429, 429)],
+)
+def test_fx_refresh_endpoint_failure_is_sanitized_and_does_not_mutate(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    expected_status: int,
+) -> None:
+    import backend.app.api.routes as routes
+    from backend.app.services.fx_service import FXService
+
+    before = _usd_fx_rows()
+    adapter = _fixture_ecb_adapter(lambda _request: httpx.Response(status_code))
+    monkeypatch.setattr(routes, "fx_service", FXService(ecb_provider=adapter))
+    _enable_real_data(monkeypatch)
+
+    response = client.post("/data/fx/refresh", params={"from_currency": "USD"})
+
+    assert response.status_code == expected_status
+    assert "ecb.europa.eu" not in response.text
+    assert _usd_fx_rows() == before
+
+
+def test_fx_refresh_endpoint_respects_real_data_opt_in_and_validates_currency(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import backend.app.api.routes as routes
+    from backend.app.services.fx_service import FXService
+
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    monkeypatch.setattr(routes, "fx_service", FXService(ecb_provider=_fixture_ecb_adapter(handler)))
+
+    disabled = client.post("/data/fx/refresh", params={"from_currency": "USD"})
+    _enable_real_data(monkeypatch)
+    invalid = client.post("/data/fx/refresh", params={"from_currency": "US1"})
+
+    assert disabled.status_code == 409
+    assert invalid.status_code == 422
+    assert calls == 0

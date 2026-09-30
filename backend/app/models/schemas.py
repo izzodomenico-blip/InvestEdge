@@ -1107,6 +1107,19 @@ class DataRefreshAllOut(BaseModel):
     results: list[DataRefreshResultOut]
 
 
+FxRefreshStatus = Literal["UPDATED", "NOT_MODIFIED"]
+
+
+class FxRefreshResult(BaseModel):
+    from_currency: str
+    to_currency: Literal["EUR"]
+    provider: Literal["ecb"]
+    status: FxRefreshStatus
+    rows_written: int
+    observed_at: datetime | None
+    ingested_at: datetime | None
+
+
 class CatalogIngestResultOut(BaseModel):
     snapshot_id: int
     content_sha256: str = Field(..., min_length=64, max_length=64)

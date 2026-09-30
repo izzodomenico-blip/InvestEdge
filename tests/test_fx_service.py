@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from backend.app.config import Settings, get_settings
+from backend.app.data_providers.base import ProviderError
 from backend.app.database import SCHEMA
 from backend.app.services.fx_service import ECB_DAILY_URL, FXRateUnavailable, FXService
 from backend.scripts.seed_database import _seed_fx_rates
@@ -117,18 +118,28 @@ def test_get_rate_raises_when_neither_direct_nor_inverse_quote_exists(connection
         FXService().get_rate(connection, "CHF")
 
 
+def _xml_response(content: bytes, status_code: int = 200) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        stream=httpx.ByteStream(content),
+        headers={"content-type": "text/xml"},
+    )
+
+
 def test_refresh_ecb_stores_reciprocal_reference_rates_from_registered_xml(connection) -> None:
     requested_urls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requested_urls.append(str(request.url))
-        return httpx.Response(200, content=ECB_XML, request=request)
+        return _xml_response(ECB_XML)
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         inserted = FXService().refresh_ecb(connection, client=client)
 
     assert inserted == 2
     assert requested_urls == [ECB_DAILY_URL]
+    log = connection.execute("SELECT provider, outcome FROM provider_request_log").fetchall()
+    assert [tuple(row) for row in log] == [("ecb", "SUCCEEDED")]
     rows = connection.execute(
         """
         SELECT from_currency, to_currency, rate, observed_at, provider, quality, ingested_at
@@ -144,28 +155,39 @@ def test_refresh_ecb_stores_reciprocal_reference_rates_from_registered_xml(conne
 
 
 def test_refresh_ecb_keeps_cached_observations_idempotent(connection) -> None:
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=ECB_XML, request=request))
+    calls = 0
 
-    with httpx.Client(transport=transport) as client:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _xml_response(ECB_XML)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert FXService().refresh_ecb(connection, client=client) == 2
         assert FXService().refresh_ecb(connection, client=client) == 0
 
+    assert calls == 1
     assert connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 2
 
 
 def test_refresh_ecb_checks_http_status(connection) -> None:
-    transport = httpx.MockTransport(lambda request: httpx.Response(503, request=request))
+    transport = httpx.MockTransport(lambda _request: httpx.Response(404))
 
-    with httpx.Client(transport=transport) as client, pytest.raises(httpx.HTTPStatusError):
+    with httpx.Client(transport=transport) as client, pytest.raises(ProviderError) as exc_info:
         FXService().refresh_ecb(connection, client=client)
+
+    assert str(exc_info.value) == "ecb:FX:HTTP_404"
+    assert connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
 
 
 def test_refresh_ecb_rejects_responses_larger_than_one_mib(connection) -> None:
     oversized = b"x" * ((1024 * 1024) + 1)
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=oversized, request=request))
+    transport = httpx.MockTransport(lambda _request: _xml_response(oversized))
 
-    with httpx.Client(transport=transport) as client, pytest.raises(ValueError, match="1 MiB"):
+    with httpx.Client(transport=transport) as client, pytest.raises(ProviderError) as exc_info:
         FXService().refresh_ecb(connection, client=client)
+
+    assert str(exc_info.value) == "ecb:FX:RESPONSE_TOO_LARGE"
 
 
 def test_refresh_ecb_rejects_xml_entity_declarations(connection) -> None:
@@ -173,12 +195,31 @@ def test_refresh_ecb_rejects_xml_entity_declarations(connection) -> None:
 <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
 <Envelope><Cube><Cube time="2026-08-14"><Cube currency="USD" rate="1.25"/></Cube></Cube></Envelope>
 """
-    transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, content=xml_with_entity, request=request)
-    )
+    transport = httpx.MockTransport(lambda _request: _xml_response(xml_with_entity))
 
-    with httpx.Client(transport=transport) as client, pytest.raises(ValueError, match="entit"):
+    with httpx.Client(transport=transport) as client, pytest.raises(ProviderError) as exc_info:
         FXService().refresh_ecb(connection, client=client)
+
+    assert str(exc_info.value) == "ecb:FX:XML_ENTITIES_NOT_ALLOWED"
+    assert connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
+
+
+def test_refresh_ecb_rejects_documents_with_more_than_64_currencies(connection) -> None:
+    cubes = "".join(
+        f'<Cube currency="{chr(65 + index // 26)}{chr(65 + index % 26)}X" rate="1.5"/>'
+        for index in range(65)
+    )
+    document = (
+        '<?xml version="1.0"?><Envelope><Cube><Cube time="2026-08-14">'
+        f"{cubes}</Cube></Cube></Envelope>"
+    ).encode()
+    transport = httpx.MockTransport(lambda _request: _xml_response(document))
+
+    with httpx.Client(transport=transport) as client, pytest.raises(ProviderError) as exc_info:
+        FXService().refresh_ecb(connection, client=client)
+
+    assert str(exc_info.value) == "ecb:FX:TOO_MANY_CURRENCIES"
+    assert connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
 
 
 def test_settings_reads_ecb_fx_max_age_days(monkeypatch) -> None:

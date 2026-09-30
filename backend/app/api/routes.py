@@ -7,6 +7,9 @@ from collections.abc import Iterable
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
+from backend.app.config import get_settings
+from backend.app.data_providers.base import ProviderError, RateLimitExceeded
+from backend.app.data_providers.ecb import normalize_ecb_currency
 from backend.app.data_providers.transport import SafeProviderTransportError
 from backend.app.database import db_session
 from backend.app.models import (
@@ -29,6 +32,7 @@ from backend.app.models import (
     DataRefreshAllOut,
     DataRefreshResultOut,
     DataStatusOut,
+    FxRefreshResult,
     ImportApplyOut,
     ImportInputIn,
     ImportPreviewOut,
@@ -90,6 +94,7 @@ from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
 from backend.app.services.catalog_service import CatalogRefreshError, CatalogService
 from backend.app.services.dashboard_service import get_dashboard
+from backend.app.services.fx_service import FXService
 from backend.app.services.instrument_resolution_service import (
     CatalogResolutionError,
     InstrumentResolutionService,
@@ -117,6 +122,7 @@ news_engine = NewsEngine()
 ml_engine = MLEngine()
 catalog_service = CatalogService()
 instrument_resolution_service = InstrumentResolutionService()
+fx_service = FXService()
 
 
 def _get_unique_asset(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
@@ -1071,6 +1077,42 @@ def refresh_all_data(
     with db_session() as connection:
         _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection, limit))
         return DataRefreshAllOut(**market_data_service.refresh_all_watchlist(connection, limit=limit, force=force))
+
+
+@router.post("/data/fx/refresh", response_model=FxRefreshResult)
+def refresh_fx_rate(
+    from_currency: str = Query(..., min_length=3, max_length=3),
+) -> FxRefreshResult:
+    """Refresh manuale di una sola valuta verso EUR dal reference rate BCE."""
+    try:
+        currency = normalize_ecb_currency(from_currency)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="Valuta non supportata dai cambi di riferimento BCE.",
+        ) from None
+    if not get_settings().enable_real_data:
+        raise HTTPException(
+            status_code=409,
+            detail="Dati reali disattivati: abilita ENABLE_REAL_DATA per aggiornare i cambi BCE.",
+        )
+    failure: HTTPException
+    # L'errore viene sollevato fuori dalla transazione: budget e cooldown restano
+    # registrati, mentre fx_rates non viene toccato (nessuna scrittura su errore).
+    with db_session() as connection:
+        try:
+            return fx_service.refresh_currency(connection, currency)
+        except RateLimitExceeded:
+            failure = HTTPException(
+                status_code=429,
+                detail="Limite richieste BCE raggiunto: riprova piu tardi.",
+            )
+        except ProviderError:
+            failure = HTTPException(
+                status_code=503,
+                detail="Cambio BCE non aggiornato: resta valido l'ultimo cambio salvato.",
+            )
+    raise failure
 
 
 @router.get("/data/usage", response_model=list[ApiUsageOut])

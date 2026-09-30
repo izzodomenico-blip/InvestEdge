@@ -1,0 +1,18 @@
+{
+  "realtime_start": "2026-08-16",
+  "realtime_end": "2026-08-16",
+  "observation_start": "2026-08-13",
+  "observation_end": "2026-08-14",
+  "units": "lin",
+  "output_type": 1,
+  "file_type": "json",
+  "order_by": "observation_date",
+  "sort_order": "asc",
+  "count": 2,
+  "offset": 0,
+  "limit": 100000,
+  "observations": [
+    {"realtime_start": "2026-08-16", "realtime_end": "2026-08-16", "date": "2026-08-13", "value": "4.21"},
+    {"realtime_start": "2026-08-16", "realtime_end": "2026-08-16", "date": "2026-08-14", "value": "4.25"}
+  ]
+}
