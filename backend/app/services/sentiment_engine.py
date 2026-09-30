@@ -16,6 +16,11 @@ POSITIVE_KEYWORDS = [
     "dividend increase",
 ]
 
+# News demo/locali generate dal fallback: visibili in app, mai nei calcoli
+# (sentiment, news_score/final_score, riepilogo di mercato, feature ML).
+DEMO_NEWS_PROVIDERS = frozenset({"mock_news"})
+REAL_NEWS_SQL_FILTER = "COALESCE(provider, '') NOT IN ('mock_news')"
+
 NEGATIVE_KEYWORDS = [
     "earnings miss",
     "revenue decline",
@@ -89,12 +94,13 @@ def aggregate_news_sentiment(
 ) -> dict[str, Any]:
     cutoff = (datetime.now(UTC).replace(tzinfo=None) - timedelta(days=lookback_days)).isoformat(timespec="seconds")
     rows = connection.execute(
-        """
+        f"""
         SELECT id, symbol, provider, title, summary, url, source, published_at,
             sentiment_score, sentiment_label, impact_level, relevance_score, raw_json, created_at, updated_at
         FROM news_items
         WHERE UPPER(symbol) = UPPER(?)
           AND (published_at IS NULL OR published_at >= ?)
+          AND {REAL_NEWS_SQL_FILTER}
         ORDER BY published_at DESC, created_at DESC, id DESC
         """,
         (symbol, cutoff),

@@ -103,7 +103,7 @@ from backend.app.services.instrument_resolution_service import (
 from backend.app.services.instrument_service import AmbiguousInstrumentError
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
-from backend.app.services.news_engine import NewsEngine
+from backend.app.services.news_engine import DEFAULT_REFRESH_ALL_LIMIT, MAX_REFRESH_ALL_LIMIT, NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.provider_budget_service import ProviderBudgetExceeded
@@ -148,6 +148,21 @@ def _ensure_unambiguous_symbols(
         connection.execute("BEGIN IMMEDIATE")
     for symbol in sorted(normalized_symbols):
         _get_unique_asset(connection, symbol)
+
+
+def _ensure_unambiguous_before_provider_calls(
+    connection: sqlite3.Connection,
+    symbols: Iterable[str],
+) -> None:
+    """Verifica l'univocita dei simboli e rilascia il lock prima delle chiamate provider.
+
+    Il budget provider apre una propria transazione (`BEGIN IMMEDIATE`) e un lock
+    tenuto durante l'I/O di rete bloccherebbe tutti gli altri writer: senza il
+    rilascio ogni refresh reale via API cadrebbe in `TRANSPORT_FAILED`.
+    """
+    _ensure_unambiguous_symbols(connection, symbols)
+    if connection.in_transaction:
+        connection.commit()
 
 
 def _selected_asset_symbols(
@@ -851,7 +866,7 @@ def news_sentiment(symbol: str) -> NewsSentimentSummaryOut:
 def refresh_news(symbol: str, force: bool = Query(default=False)) -> NewsRefreshResultOut:
     try:
         with db_session() as connection:
-            _ensure_unambiguous_symbols(connection, [symbol])
+            _ensure_unambiguous_before_provider_calls(connection, [symbol])
             return NewsRefreshResultOut(**news_engine.refresh_news_for_symbol(connection, symbol, force=force))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -859,12 +874,13 @@ def refresh_news(symbol: str, force: bool = Query(default=False)) -> NewsRefresh
 
 @router.post("/news/refresh-all", response_model=NewsRefreshAllOut)
 def refresh_all_news(
-    limit: int | None = Query(default=None, ge=1, le=50),
+    limit: int | None = Query(default=None, ge=1, le=MAX_REFRESH_ALL_LIMIT),
     force: bool = Query(default=False),
 ) -> NewsRefreshAllOut:
+    effective_limit = limit or DEFAULT_REFRESH_ALL_LIMIT
     with db_session() as connection:
-        _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection, limit))
-        return NewsRefreshAllOut(**news_engine.refresh_all_news(connection, limit=limit, force=force))
+        _ensure_unambiguous_before_provider_calls(connection, _selected_asset_symbols(connection, effective_limit))
+        return NewsRefreshAllOut(**news_engine.refresh_all_news(connection, limit=effective_limit, force=force))
 
 
 @router.get("/news/{symbol}", response_model=list[NewsItemOut])
@@ -1063,7 +1079,7 @@ def asset_data_status(symbol: str) -> AssetDataStatusOut:
 def refresh_asset_data(symbol: str, force: bool = Query(default=False)) -> DataRefreshResultOut:
     try:
         with db_session() as connection:
-            _ensure_unambiguous_symbols(connection, [symbol])
+            _ensure_unambiguous_before_provider_calls(connection, [symbol])
             return DataRefreshResultOut(**market_data_service.refresh_asset_prices(connection, symbol, force=force))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -1075,7 +1091,7 @@ def refresh_all_data(
     force: bool = Query(default=False),
 ) -> DataRefreshAllOut:
     with db_session() as connection:
-        _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection, limit))
+        _ensure_unambiguous_before_provider_calls(connection, _selected_asset_symbols(connection, limit))
         return DataRefreshAllOut(**market_data_service.refresh_all_watchlist(connection, limit=limit, force=force))
 
 

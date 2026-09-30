@@ -1021,9 +1021,11 @@ def test_news_provider_force_is_forwarded_only_as_transport_bypass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from backend.app.data_providers.yahoo_news import YahooNewsProvider
+    # Dal Task 12 Finnhub e' l'unico provider news live (Yahoo e Alpha sono fail-closed).
+    from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
 
     monkeypatch.setenv("ENABLE_REAL_NEWS", "true")
+    monkeypatch.setenv("FINNHUB_API_KEY", "SENTINEL_FINNHUB_FORCE_KEY")
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "news.db"))
     get_settings.cache_clear()
     connection = _initialize()
@@ -1032,16 +1034,16 @@ def test_news_provider_force_is_forwarded_only_as_transport_bypass(
     def handler(_request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return _json_response({"news": []})
+        return _json_response([])
 
-    transport = _transport(handler, allowed_hosts={"query1.finance.yahoo.com"})
-    provider = YahooNewsProvider(get_settings(), connection, transport=transport)
+    transport = _transport(handler, allowed_hosts={"finnhub.io"})
+    provider = FinnhubNewsProvider(get_settings(), connection, transport=transport)
     provider.get_news_for_symbol("AAPL")
     provider.get_news_for_symbol("AAPL", force=True)
 
     assert calls == 2
     assert connection.execute(
-        "SELECT calls_count FROM api_usage WHERE provider = 'yahoo_news'"
+        "SELECT calls_count FROM api_usage WHERE provider = 'finnhub_news'"
     ).fetchone()[0] == 2
     get_settings.cache_clear()
 

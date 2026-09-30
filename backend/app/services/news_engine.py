@@ -4,7 +4,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -12,6 +12,7 @@ from backend.app.config import get_settings
 from backend.app.data_providers import MissingApiKey, ProviderError, RateLimitExceeded, RealDataDisabled
 from backend.app.data_providers.alpha_vantage_news import AlphaVantageNewsProvider
 from backend.app.data_providers.finnhub_news import FinnhubNewsProvider
+from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
 from backend.app.data_providers.mock_news_provider import NewsProviderMock
 from backend.app.data_providers.news_base import BaseNewsProvider
 from backend.app.data_providers.yahoo_news import YahooNewsProvider
@@ -24,7 +25,35 @@ from backend.app.services.common import (
 from backend.app.services.common import (
     signal_from_score as _signal_from_score,
 )
-from backend.app.services.sentiment_engine import aggregate_news_sentiment, classify_sentiment, estimate_impact
+from backend.app.services.provider_budget_service import ProviderAvailability
+from backend.app.services.sentiment_engine import (
+    DEMO_NEWS_PROVIDERS,
+    REAL_NEWS_SQL_FILTER,
+    aggregate_news_sentiment,
+    classify_sentiment,
+    estimate_impact,
+)
+
+DEFAULT_REFRESH_ALL_LIMIT = 10
+MAX_REFRESH_ALL_LIMIT = 25
+NewsProviderName = Literal["finnhub_news", "alpha_vantage_news", "yahoo_news", "local"]
+
+
+@dataclass(frozen=True)
+class NewsProviderDecision:
+    provider: NewsProviderName
+    availability: ProviderAvailability
+    fallback_provider: Literal["local"] | None
+    provider_symbol: str | None = None
+
+
+_FALLBACK_MESSAGES = {
+    "OPT_IN_DISABLED": "News reali disattivate. Stai usando news demo/locali.",
+    "MISSING_CREDENTIAL": "Provider news non configurato, uso news demo/locali.",
+    "UNSUPPORTED_CAPABILITY": "Nessun simbolo news verificato per questo strumento, uso news demo/locali.",
+    "RATE_LIMITED": "Limite provider news raggiunto, uso news locali.",
+    "BUDGET_EXHAUSTED": "Limite provider news raggiunto, uso news locali.",
+}
 
 
 def _safe_json(value: Any) -> str:
@@ -71,7 +100,7 @@ class NewsEngine:
     def _asset(self, connection: sqlite3.Connection, symbol: str) -> sqlite3.Row | None:
         return connection.execute(
             """
-            SELECT id, symbol, asset_type
+            SELECT id, symbol, asset_type, instrument_listing_id
             FROM assets
             WHERE UPPER(symbol) = UPPER(?)
             LIMIT 1
@@ -79,33 +108,57 @@ class NewsEngine:
             (symbol,),
         ).fetchone()
 
-    def _real_provider(self, connection: sqlite3.Connection) -> BaseNewsProvider | None:
-        # Preferenza: Yahoo (nessuna API key, nessuna quota -> news sempre fresche),
-        # poi Finnhub (quota dedicata) e Alpha Vantage come fallback.
-        settings = get_settings()
-        if settings.enable_yahoo_news:
-            return YahooNewsProvider(settings, connection)
-        if settings.finnhub_api_key:
-            return FinnhubNewsProvider(settings, connection)
-        if settings.alpha_vantage_api_key:
-            return AlphaVantageNewsProvider(settings, connection)
-        return None
-
     def _mock_provider(self, connection: sqlite3.Connection) -> NewsProviderMock:
         return NewsProviderMock(get_settings(), connection)
 
-    def _has_real_news_key(self) -> bool:
-        settings = get_settings()
-        # Yahoo non richiede chiave: se attivo, le news reali sono comunque disponibili.
-        return bool(settings.enable_yahoo_news or settings.finnhub_api_key or settings.alpha_vantage_api_key)
+    def _verified_news_symbol(self, connection: sqlite3.Connection, asset: sqlite3.Row) -> str | None:
+        """Simbolo Finnhub NEWS `VERIFIED` del listing, solo su venue USA supportata."""
+        listing_id = asset["instrument_listing_id"]
+        if listing_id is None:
+            return None
+        mics = sorted(FinnhubQuoteProvider.supported_mics)
+        placeholders = ",".join("?" for _ in mics)
+        rows = connection.execute(
+            f"""
+            SELECT symbol.provider_symbol
+            FROM provider_symbols AS symbol
+            JOIN instrument_listings AS listing ON listing.id = symbol.listing_id
+            WHERE symbol.listing_id = ?
+              AND UPPER(symbol.provider) = 'FINNHUB'
+              AND UPPER(symbol.capability) = 'NEWS'
+              AND symbol.status = 'VERIFIED'
+              AND listing.listing_status = 'ACTIVE'
+              AND UPPER(COALESCE(listing.mic, '')) IN ({placeholders})
+            """,
+            (int(listing_id), *mics),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        value = str(rows[0]["provider_symbol"] or "").strip()
+        return value or None
 
-    def _provider_for_refresh(self, connection: sqlite3.Connection) -> BaseNewsProvider:
-        settings = get_settings()
-        if settings.enable_real_news:
-            provider = self._real_provider(connection)
-            if provider is not None:
-                return provider
-        return self._mock_provider(connection)
+    def decide_provider(self, connection: sqlite3.Connection, asset: sqlite3.Row) -> NewsProviderDecision:
+        """Finnhub e' l'unico provider news live; Alpha e Yahoo restano fail-closed."""
+        availability = FinnhubNewsProvider(get_settings(), connection).availability()
+        if availability.state != "AVAILABLE":
+            return NewsProviderDecision("local", availability, None)
+        provider_symbol = self._verified_news_symbol(connection, asset)
+        if provider_symbol is None:
+            return NewsProviderDecision(
+                "local",
+                ProviderAvailability("DISABLED", "UNSUPPORTED_CAPABILITY", None),
+                None,
+            )
+        return NewsProviderDecision("finnhub_news", availability, "local", provider_symbol)
+
+    @staticmethod
+    def _fallback_message(availability: ProviderAvailability) -> str:
+        if availability.state == "COOLDOWN":
+            return _FALLBACK_MESSAGES["RATE_LIMITED"]
+        return _FALLBACK_MESSAGES.get(
+            availability.reason_code or "",
+            "Provider news non disponibile, uso news locali.",
+        )
 
     def refresh_news_for_symbol(
         self,
@@ -117,49 +170,36 @@ class NewsEngine:
         if asset is None:
             raise ValueError(f"Asset {symbol.upper()} non trovato.")
 
-        settings = get_settings()
-        provider = self._provider_for_refresh(connection)
-        used_fallback = provider.provider_name == "mock_news"
-        message = "News demo/locali aggiornate."
-
-        if settings.enable_real_news and not self._has_real_news_key():
-            message = "Provider news non configurato, uso news demo/locali."
-        elif not settings.enable_real_news:
-            message = "News reali disattivate. Stai usando news demo/locali."
-
-        try:
-            news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=force)
-        except RateLimitExceeded as exc:
-            provider = self._mock_provider(connection)
+        decision = self.decide_provider(connection, asset)
+        provider: BaseNewsProvider = self._mock_provider(connection)
+        used_fallback = True
+        used_cache = False
+        news: list[dict[str, Any]] = []
+        message = self._fallback_message(decision.availability)
+        if decision.provider == "finnhub_news":
+            finnhub = FinnhubNewsProvider(get_settings(), connection)
+            try:
+                news, used_cache = finnhub.get_news_for_symbol(
+                    decision.provider_symbol or asset["symbol"],
+                    force=force,
+                )
+            except RateLimitExceeded:
+                message = _FALLBACK_MESSAGES["RATE_LIMITED"]
+            except MissingApiKey:
+                message = _FALLBACK_MESSAGES["MISSING_CREDENTIAL"]
+            except RealDataDisabled:
+                message = _FALLBACK_MESSAGES["OPT_IN_DISABLED"]
+            except (ProviderError, httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
+                message = "Provider news non disponibile, uso news locali."
+            else:
+                provider = finnhub
+                used_fallback = False
+                message = "News aggiornate da cache." if used_cache else "News aggiornate da provider reale."
+        if used_fallback:
             news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=False)
-            used_fallback = True
-            message = str(exc)
-        except MissingApiKey:
-            provider = self._mock_provider(connection)
-            news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=False)
-            used_fallback = True
-            message = "Provider news non configurato, uso news demo/locali."
-        except RealDataDisabled as exc:
-            provider = self._mock_provider(connection)
-            news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=False)
-            used_fallback = True
-            message = str(exc)
-        except ProviderError as exc:
-            provider = self._mock_provider(connection)
-            news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=False)
-            used_fallback = True
-            message = f"{exc} Uso news locali."
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError):
-            provider = self._mock_provider(connection)
-            news, used_cache = provider.get_news_for_symbol(asset["symbol"], force=False)
-            used_fallback = True
-            message = "Provider news non disponibile, uso news locali."
 
         inserted, updated = self.save_news_to_db(connection, asset["symbol"], news)
         self._update_signal_news_score(connection, asset["id"], asset["symbol"])
-        if not used_fallback:
-            message = "News aggiornate da cache." if used_cache else "News aggiornate da provider reale."
-
         return {
             "symbol": asset["symbol"],
             "provider": provider.provider_name,
@@ -176,16 +216,20 @@ class NewsEngine:
         limit: int | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
+        """Batch limitato agli asset attivi: default 10, massimo 25, mai il catalogo."""
+        effective_limit = (
+            DEFAULT_REFRESH_ALL_LIMIT if limit is None else max(1, min(int(limit), MAX_REFRESH_ALL_LIMIT))
+        )
         rows = connection.execute(
-            "SELECT symbol FROM assets ORDER BY asset_type, symbol"
+            "SELECT symbol FROM assets ORDER BY asset_type, symbol LIMIT ?",
+            (effective_limit,),
         ).fetchall()
-        selected = rows[:limit] if limit else rows
-        symbols = [row["symbol"] for row in selected]
+        symbols = [row["symbol"] for row in rows]
         results: list[dict[str, Any]] = []
         for symbol in symbols:
             try:
                 results.append(self.refresh_news_for_symbol(connection, symbol, force=force))
-            except Exception as exc:
+            except Exception:
                 results.append(
                     {
                         "symbol": symbol,
@@ -194,7 +238,7 @@ class NewsEngine:
                         "items_updated": 0,
                         "used_cache": False,
                         "used_fallback": True,
-                        "message": f"Errore: {exc}",
+                        "message": "Errore durante l'aggiornamento news, uso news locali.",
                     }
                 )
         return {
@@ -259,10 +303,11 @@ class NewsEngine:
     def get_market_sentiment_summary(self, connection: sqlite3.Connection, lookback_days: int = 7) -> dict[str, Any]:
         cutoff = (datetime.now(UTC).replace(tzinfo=None)).date().isoformat()
         rows = connection.execute(
-            """
+            f"""
             SELECT sentiment_score, sentiment_label, impact_level
             FROM news_items
-            WHERE published_at IS NULL OR published_at >= date(?, ?)
+            WHERE (published_at IS NULL OR published_at >= date(?, ?))
+              AND {REAL_NEWS_SQL_FILTER}
             """,
             (cutoff, f"-{lookback_days} days"),
         ).fetchall()
@@ -296,6 +341,12 @@ class NewsEngine:
         for item in news:
             normalized = self._normalize_for_db(asset["symbol"], item)
             existing = self._existing_news(connection, asset["symbol"], normalized)
+            if (
+                existing is not None
+                and normalized["provider"] in DEMO_NEWS_PROVIDERS
+                and existing["published_at"]
+            ):
+                normalized["published_at"] = existing["published_at"]
             params = (
                 asset["id"],
                 asset["symbol"],
@@ -342,9 +393,38 @@ class NewsEngine:
 
     def get_status(self, connection: sqlite3.Connection) -> dict[str, Any]:
         settings = get_settings()
-        real_provider = self._real_provider(connection) or AlphaVantageNewsProvider(settings, connection)
-        mock_provider = self._mock_provider(connection)
-        usage = self._usage_for_provider(connection, real_provider.provider_name)
+        live_providers: list[BaseNewsProvider] = [
+            FinnhubNewsProvider(settings, connection),
+            AlphaVantageNewsProvider(settings, connection),
+            YahooNewsProvider(settings, connection),
+        ]
+        provider_status: list[dict[str, Any]] = []
+        for provider in live_providers:
+            availability = provider.availability()  # type: ignore[attr-defined]
+            usage = self._usage_for_provider(connection, provider.provider_name)
+            supports = ["stock", "etf"] if provider.provider_name == "finnhub_news" else []
+            if availability.reason_code:
+                supports.append(availability.reason_code)
+            provider_status.append(
+                {
+                    "provider": provider.provider_name,
+                    "enabled": availability.state == "AVAILABLE",
+                    "api_key_configured": provider.api_key_configured(),
+                    "daily_limit": provider.daily_limit,
+                    "calls_today": usage["calls_count"],
+                    "supports": supports,
+                }
+            )
+        provider_status.append(
+            {
+                "provider": "mock_news",
+                "enabled": True,
+                "api_key_configured": True,
+                "daily_limit": 0,
+                "calls_today": 0,
+                "supports": ["demo", "stock", "etf", "crypto", "bond", "bond_etf"],
+            }
+        )
         latest = connection.execute(
             """
             SELECT MAX(COALESCE(updated_at, created_at)) AS last_refresh
@@ -353,25 +433,8 @@ class NewsEngine:
         ).fetchone()
         return {
             "enable_real_news": settings.enable_real_news,
-            "provider_status": [
-                {
-                    "provider": real_provider.provider_name,
-                    "enabled": settings.enable_real_news,
-                    "api_key_configured": real_provider.api_key_configured(),
-                    "daily_limit": real_provider.daily_limit,
-                    "calls_today": usage["calls_count"],
-                    "supports": ["stock", "etf", "bond_etf"],
-                },
-                {
-                    "provider": mock_provider.provider_name,
-                    "enabled": True,
-                    "api_key_configured": True,
-                    "daily_limit": 0,
-                    "calls_today": 0,
-                    "supports": ["stock", "etf", "crypto", "bond", "bond_etf"],
-                },
-            ],
-            "daily_usage": usage,
+            "provider_status": provider_status,
+            "daily_usage": self._usage_for_provider(connection, "finnhub_news"),
             "cache_status": self._cache_stats(connection),
             "last_refresh": latest["last_refresh"] if latest else None,
         }
@@ -419,7 +482,7 @@ class NewsEngine:
         if url:
             row = connection.execute(
                 """
-                SELECT id
+                SELECT id, published_at
                 FROM news_items
                 WHERE UPPER(symbol) = UPPER(?) AND url = ?
                 LIMIT 1
@@ -430,7 +493,7 @@ class NewsEngine:
                 return row
         return connection.execute(
             """
-            SELECT id
+            SELECT id, published_at
             FROM news_items
             WHERE UPPER(symbol) = UPPER(?) AND title = ? AND COALESCE(published_at, '') = COALESCE(?, '')
             LIMIT 1

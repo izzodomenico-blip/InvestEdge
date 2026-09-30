@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from backend.app.services.sentiment_engine import REAL_NEWS_SQL_FILTER
 from backend.app.services.technical_analysis import TechnicalAnalysisService
 
 FEATURE_COLUMNS = [
@@ -334,7 +335,7 @@ class MLDatasetService:
 
     def _news_features(self, connection: sqlite3.Connection, symbol: str, as_of_date: str) -> dict[str, float]:
         row = connection.execute(
-            """
+            f"""
             SELECT
                 COALESCE(AVG(sentiment_score), 0) AS sentiment,
                 SUM(CASE WHEN sentiment_label = 'POSITIVE' THEN 1 ELSE 0 END) AS positive_count,
@@ -344,6 +345,7 @@ class MLDatasetService:
             WHERE UPPER(COALESCE(symbol, '')) = UPPER(?)
               AND date(COALESCE(published_at, created_at)) <= date(?)
               AND date(COALESCE(published_at, created_at)) > date(?, '-7 days')
+              AND {REAL_NEWS_SQL_FILTER}
             """,
             (symbol, as_of_date, as_of_date),
         ).fetchone()

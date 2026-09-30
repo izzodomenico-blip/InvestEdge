@@ -1,0 +1,24 @@
+[
+  {
+    "category": "company",
+    "datetime": 1786800000,
+    "headline": "Fixture Corp raises guidance after earnings beat",
+    "id": 1001,
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": "Revenue growth and a buyback support the outlook.",
+    "url": "https://www.example.com/news/fixture-guidance"
+  },
+  {
+    "category": "company",
+    "datetime": 1786713600,
+    "headline": "Fixture Corp faces investigation in a regional market",
+    "id": 1002,
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": "Regulators opened a review.",
+    "url": "https://www.example.com/news/fixture-investigation"
+  }
+]

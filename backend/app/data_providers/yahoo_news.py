@@ -2,30 +2,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode
 
+from backend.app.data_providers.base import ProviderError
 from backend.app.data_providers.news_base import BaseNewsProvider
+from backend.app.services.provider_budget_service import ProviderAvailability
 from backend.app.services.sentiment_engine import classify_sentiment
-
-# Yahoo blocca lo User-Agent di default: serve un UA da browser (come per i prezzi).
-BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    )
-}
 
 
 class YahooNewsProvider(BaseNewsProvider):
-    """News via endpoint pubblico Yahoo Finance (search).
+    """Yahoo Finance news: disabilitato come provider live (`NOT_PRIMARY_POLICY`).
 
-    Vantaggi: nessuna API key, nessuna quota giornaliera (a differenza di Finnhub
-    free, 20/giorno) -> news sempre fresche. Alimenta la stessa pipeline di
-    sentiment che entra nei consigli del motore.
-
-    Nota onesta: per i singoli titoli le news sono pertinenti; per ETF e crypto
-    Yahoo restituisce news generiche di mercato (segnale debole, come da qualsiasi
-    fonte). Per questo la rilevanza degli ETF/crypto e' tenuta piu' bassa.
+    Yahoo non offre una API pubblica supportata per la raccolta automatizzata: nessuna
+    richiesta di rete e nessun User-Agent da browser. Resta soltanto il parser, per
+    compatibilita con payload gia locali.
     """
 
     provider_name = "yahoo_news"
@@ -41,16 +30,8 @@ class YahooNewsProvider(BaseNewsProvider):
         # Yahoo Finance non richiede API key.
         return True
 
-    def _request_url(self, symbol: str) -> str:
-        query = urlencode(
-            {
-                "q": symbol.upper(),
-                "newsCount": 12,
-                "quotesCount": 0,
-                "enableFuzzyQuery": "false",
-            }
-        )
-        return f"{self.base_url}?{query}"
+    def availability(self) -> ProviderAvailability:
+        return ProviderAvailability("DISABLED", "NOT_PRIMARY_POLICY", None)
 
     def _asset_type(self, symbol: str) -> str:
         row = self.connection.execute(
@@ -60,14 +41,8 @@ class YahooNewsProvider(BaseNewsProvider):
         return str(row["asset_type"]).lower() if row else "stock"
 
     def get_news_for_symbol(self, symbol: str, force: bool = False) -> tuple[list[dict[str, Any]], bool]:
-        request_url = self._request_url(symbol)
-        cached = self.get_from_cache(self.endpoint, symbol, request_url, force=force)
-        if cached is not None:
-            return self.normalize_news(cached, symbol), True
-
-        raw_response = self.fetch_json(request_url, headers=BROWSER_HEADERS)
-        self.save_to_cache(self.endpoint, symbol, request_url, raw_response)
-        return self.normalize_news(raw_response, symbol), False
+        del symbol, force
+        raise ProviderError(f"{self.provider_name}:{self.endpoint}:NOT_PRIMARY_POLICY")
 
     def normalize_news(self, raw_response: dict[str, Any], symbol: str) -> list[dict[str, Any]]:
         items = raw_response.get("news")

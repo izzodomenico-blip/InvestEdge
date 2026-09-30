@@ -3800,11 +3800,14 @@ def test_symbol_news_endpoint(client: TestClient) -> None:
 def test_news_sentiment_endpoint(client: TestClient) -> None:
     client.post("/news/refresh/AAPL")
     response = client.get("/news/sentiment/AAPL")
+    listed = client.get("/news/AAPL")
 
     assert response.status_code == 200
     data = response.json()
     assert data["symbol"] == "AAPL"
-    assert data["news_count"] >= 1
+    # Le news demo restano visibili ma non entrano mai nel sentiment (Task 12, estensione 2026-09-30).
+    assert data["news_count"] == 0
+    assert listed.json() and all(item["provider"] == "mock_news" for item in listed.json())
     assert data["sentiment_label"] in {"POSITIVE", "NEGATIVE", "NEUTRAL"}
     assert {"positive_count", "negative_count", "neutral_count", "latest_news"} <= set(data)
 
@@ -3815,7 +3818,13 @@ def test_news_status_endpoint(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["enable_real_news"] is False
-    assert {provider["provider"] for provider in data["provider_status"]} >= {"yahoo_news", "mock_news"}
+    by_provider = {provider["provider"]: provider for provider in data["provider_status"]}
+    assert set(by_provider) >= {"finnhub_news", "alpha_vantage_news", "yahoo_news", "mock_news"}
+    assert by_provider["alpha_vantage_news"]["enabled"] is False
+    assert "SECRET_IN_QUERY_POLICY" in by_provider["alpha_vantage_news"]["supports"]
+    assert by_provider["yahoo_news"]["enabled"] is False
+    assert "NOT_PRIMARY_POLICY" in by_provider["yahoo_news"]["supports"]
+    assert by_provider["finnhub_news"]["enabled"] is False
     assert data["daily_usage"]["calls_count"] == 0
 
 
@@ -3952,3 +3961,148 @@ def test_fx_refresh_endpoint_respects_real_data_opt_in_and_validates_currency(
     assert disabled.status_code == 409
     assert invalid.status_code == 422
     assert calls == 0
+
+
+def _mock_provider_network(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:  # noqa: ANN001
+    """Sostituisce il client HTTP del trasporto governato: nessuna rete reale."""
+    import backend.app.data_providers.transport as transport_module
+
+    seen: list[httpx.Request] = []
+    real_client = httpx.Client
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+
+    def factory(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return real_client(transport=httpx.MockTransport(recording))
+
+    monkeypatch.setattr(transport_module.httpx, "Client", factory)
+    return seen
+
+
+def test_data_refresh_route_reaches_governed_provider_without_route_lock(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from pathlib import Path
+
+    chart = json.loads(
+        (Path(__file__).parent / "fixtures" / "market_data" / "coingecko_market_chart.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    seen = _mock_provider_network(
+        monkeypatch,
+        lambda _request: httpx.Response(
+            200,
+            stream=httpx.ByteStream(json.dumps(chart).encode()),
+            headers={"content-type": "application/json"},
+        ),
+    )
+    _enable_real_data(monkeypatch)
+
+    response = client.post("/data/refresh/BTC", params={"force": "true"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider"] == "coingecko"
+    assert data["used_fallback"] is False, data["message"]
+    assert [request.url.host for request in seen] == ["api.coingecko.com"]
+
+
+def _verify_aapl_news_symbol() -> None:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        listing_id = connection.execute(
+            "SELECT instrument_listing_id FROM assets WHERE symbol = 'AAPL'"
+        ).fetchone()[0]
+        connection.execute("UPDATE instrument_listings SET mic = 'XNAS' WHERE id = ?", (listing_id,))
+        connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol, status,
+                source, observed_at, verified_at, evidence_hash, version
+            )
+            VALUES ('finnhub', ?, 'NEWS', 'AAPL', 'AAPL', 'VERIFIED', 'test',
+                    '2026-09-30T00:00:00Z', '2026-09-30T00:00:00Z', ?, 1)
+            """,
+            (listing_id, hashlib.sha256(b"aapl news mapping").hexdigest()),
+        )
+
+
+def test_news_refresh_route_reaches_finnhub_with_verified_symbol(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from pathlib import Path
+
+    from backend.app.config import get_settings
+
+    sentinel = "SENTINEL_FINNHUB_ROUTE_KEY_4242"
+    articles = json.loads(
+        (Path(__file__).parent / "fixtures" / "market_data" / "finnhub_company_news.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    _verify_aapl_news_symbol()
+    seen = _mock_provider_network(
+        monkeypatch,
+        lambda _request: httpx.Response(
+            200,
+            stream=httpx.ByteStream(json.dumps(articles).encode()),
+            headers={"content-type": "application/json"},
+        ),
+    )
+    monkeypatch.setenv("ENABLE_REAL_NEWS", "true")
+    monkeypatch.setenv("FINNHUB_API_KEY", sentinel)
+    get_settings.cache_clear()
+
+    response = client.post("/news/refresh/AAPL", params={"force": "true"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert (data["provider"], data["used_fallback"]) == ("finnhub_news", False), data["message"]
+    assert data["items_inserted"] == 2
+    assert [request.url.path for request in seen] == ["/api/v1/company-news"]
+    assert seen[0].headers["X-Finnhub-Token"] == sentinel
+    assert sentinel not in response.text
+    assert sentinel not in str(seen[0].url)
+
+
+def test_news_refresh_all_is_bounded_and_forwards_force(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.services.news_engine import NewsEngine
+
+    calls: list[tuple[str, bool]] = []
+
+    def fake_refresh(self, connection, symbol, force=False):  # noqa: ANN001, ANN202
+        calls.append((symbol, force))
+        return {
+            "symbol": symbol,
+            "provider": "mock_news",
+            "items_inserted": 0,
+            "items_updated": 0,
+            "used_cache": False,
+            "used_fallback": True,
+            "message": "fixture",
+        }
+
+    monkeypatch.setattr(NewsEngine, "refresh_news_for_symbol", fake_refresh)
+
+    default = client.post("/news/refresh-all", params={"force": "true"})
+    too_many = client.post("/news/refresh-all", params={"limit": "26"})
+    maximum = client.post("/news/refresh-all", params={"limit": "25"})
+
+    assert default.status_code == 200
+    assert default.json()["summary"]["requested"] == 10
+    assert all(force is True for _symbol, force in calls[:10])
+    assert too_many.status_code == 422
+    assert maximum.status_code == 200
+    assert maximum.json()["summary"]["requested"] == 25
+    assert len({symbol for symbol, _force in calls}) == 25

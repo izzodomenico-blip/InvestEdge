@@ -85,6 +85,8 @@ class Settings:
     yahoo_news_daily_limit: int = 0
     news_cache_ttl_hours: int = 6
     news_daily_limit: int = 20
+    finnhub_news_minute_limit: int = 55
+    finnhub_news_monthly_limit: int = 0
     news_sentiment_weight: float = 5.0
     enable_alerts: bool = False
     telegram_bot_token: str | None = None
@@ -215,6 +217,8 @@ class Settings:
             yahoo_news_daily_limit=int(os.getenv("YAHOO_NEWS_DAILY_LIMIT", "0")),
             news_cache_ttl_hours=int(os.getenv("NEWS_CACHE_TTL_HOURS", "6")),
             news_daily_limit=int(os.getenv("NEWS_DAILY_LIMIT", "20")),
+            finnhub_news_minute_limit=int(os.getenv("FINNHUB_NEWS_MINUTE_LIMIT", "55")),
+            finnhub_news_monthly_limit=int(os.getenv("FINNHUB_NEWS_MONTHLY_LIMIT", "0")),
             news_sentiment_weight=float(os.getenv("NEWS_SENTIMENT_WEIGHT", "5")),
             enable_alerts=os.getenv("ENABLE_ALERTS", "false").lower() == "true",
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,

@@ -1375,6 +1375,8 @@ Expected: un solo commit sopra Task 10 e gate remoto verde.
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`
 
+**Estensione approvata 2026-09-30 (programma operativo, backlog SP2a):** le news demo/locali (`provider = 'mock_news'`) restano visibili ma non entrano mai in `aggregate_news_sentiment`, `news_score`/`final_score`, riepilogo sentiment di mercato o feature ML; un refresh non rinnova `published_at` delle news demo gia salvate. File aggiuntivi autorizzati: `backend/app/services/sentiment_engine.py`, `backend/app/services/ml_dataset_service.py`. Il conteggio `news_count` del sentiment in modalita demo diventa 0 (contratto aggiornato di proposito).
+
 **Compatibility/caller:** Preservare `NewsEngine`, modelli/sentiment, news locali e route esistenti. Non cambiare scoring o introdurre hub news. Finnhub diventa l'unico provider news live ammesso; Alpha e Yahoo sono fail-closed con reason code, poi fallback locale.
 
 **Interfaces — Consumes:** transport/budget Task 2, `FINNHUB_API_KEY` opzionale, listing/active asset univoco, un `provider_symbols` corrente `VERIFIED` per capability `NEWS` e venue compatibile, cache sanitizzata, articoli/sentiment Fase 1.

@@ -82,7 +82,7 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 9 | Quote USA (Finnhub) | FATTO | `9503e70` | 2026-08-17 | Codex |
 | 10 | Prezzi crypto con identità CoinGecko | FATTO | `54b3faf` checkpoint + `49cdb82` | 2026-09-30 | Codex → Claude |
 | 11 | FX BCE verso EUR e fallback FRED | FATTO | branch `codex/investedge-phase-2-task-11` | 2026-09-30 | Claude |
-| 12 | Provider e fallback news reali (+ isolamento news demo) | NON INIZIATO | — | — | — |
+| 12 | Provider e fallback news reali (+ isolamento news demo) | IN CORSO | branch `codex/investedge-phase-2-task-12` (checkpoint) | 2026-09-30 | Claude |
 | 13 | Refresh lazy, prioritari, deduplicati | NON INIZIATO | — | — | — |
 | 14 | API catalogo e conferme versionate | NON INIZIATO | — | — | — |
 | 15 | Catalogo paginato nella pagina Universe | NON INIZIATO | — | — | — |
@@ -131,6 +131,9 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-09-30 | Push e merge fast-forward su `main` a ogni task: l'app non è in uso fino al completamento del programma | utente |
 
 ## Note di ripresa
+
+- **Task 12 interrotto (limite di utilizzo) con checkpoint pubblicato.** Fatto: Finnhub unico provider news live (header, simbolo NEWS verificato, venue USA, budget 55/min, max 50 articoli, data/URL validati); Alpha e Yahoo news fail-closed; news demo escluse da sentiment, riepilogo di mercato e feature ML, data non rinnovata; batch news default 10, max 25; correzione Critical trasversale: le route di refresh (`/data/refresh*`, `/news/refresh*`) tenevano `BEGIN IMMEDIATE` durante l'I/O e ogni refresh reale via API cadeva in `TRANSPORT_FAILED` (helper `_ensure_unambiguous_before_provider_calls`). Test: `tests/test_news_providers.py` 20 verdi; `pytest tests/test_api.py -k "news or data_refresh_route or refresh_asset or data_refresh"` 20 verdi.
+- **Resta per chiudere il Task 12:** aggiornare `.env.example`/`backend/.env.example` (Yahoo news non piu fonte, `FINNHUB_NEWS_MINUTE_LIMIT`, `FINNHUB_NEWS_MONTHLY_LIMIT`) e la sezione news del README; `ruff check backend scripts tests`; suite completa `pytest`; spuntare le checkbox del Task 12 nel piano; registrare le deviazioni (`sentiment_engine.py`, `ml_dataset_service.py`, `tests/test_provider_budget.py` spostato da Yahoo a Finnhub, fix route dati); commit `fix: govern real news providers and fallbacks`, push, merge fast-forward su `main`.
 
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
