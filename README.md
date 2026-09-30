@@ -231,7 +231,7 @@ Provider predisposti:
 - `FinnhubQuoteProvider`: quote snapshot soltanto per listing su MIC USA allowlistati e simbolo `QUOTE/VERIFIED`; usa `X-Finnhub-Token`, classifica conservativamente il feed come `delayed` e non crea barre in `price_history`.
 - `AlphaVantageProvider`: visibile ma disabilitato per i prezzi con reason code `SECRET_IN_QUERY_POLICY`; la key non viene inserita in URL o transport.
 - `YahooFinanceProvider`: mantenuto per compatibilita, ma disabilitato come provider prezzo primario o fallback di rete con reason code `NOT_PRIMARY_POLICY`.
-- `CoinGeckoProvider`: barre EOD e quote EUR/USD soltanto con un `COINGECKO_ID` verificato; i cinque asset crypto legacy ricevono esclusivamente il mapping curato BTC=`bitcoin`, ETH=`ethereum`, SOL=`solana`, BNB=`binancecoin`, XRP=`ripple`. Non deriva l'identita dal ticker, dal nome, da ISIN o da MIC. Powered by CoinGecko API.
+- `CoinGeckoProvider`: barre EOD e quote EUR/USD soltanto con un `COINGECKO_ID` verificato; i cinque asset crypto legacy ricevono esclusivamente il mapping curato BTC=`bitcoin`, ETH=`ethereum`, SOL=`solana`, BNB=`binancecoin`, XRP=`ripple`. Non deriva l'identita dal ticker, dal nome, da ISIN o da MIC. Le barre giornaliere sono in UTC: il punto delle 00:00 UTC chiude il giorno precedente e il giorno UTC in corso, incompleto, non diventa una barra EOD. Powered by CoinGecko API.
 - `FredProvider`: serie macro/tassi e bond proxy, tra cui DGS10, DGS2 e FEDFUNDS.
 
 Modalita dati:

@@ -28,6 +28,18 @@ from backend.app.services.prices_service import get_price_history
 NOW = datetime(2026, 8, 17, 16, 0, tzinfo=UTC)
 
 
+def _freeze_service_clock(monkeypatch: pytest.MonkeyPatch, *modules: str) -> None:
+    """Blocca `datetime.now` dei servizi su NOW: la freschezza non dipende dal calendario reale."""
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return NOW.replace(tzinfo=None) if tz is None else NOW.astimezone(tz)
+
+    for module in modules:
+        monkeypatch.setattr(f"{module}.datetime", FrozenDatetime)
+
+
 def _payload_hash(label: str) -> str:
     return hashlib.sha256(label.encode("utf-8")).hexdigest()
 
@@ -791,7 +803,9 @@ def test_quality_tier_freshness_policy_uses_configured_eod_threshold(
 
 def test_price_history_projection_exposes_provenance_and_fallback_fields(
     market_connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_service_clock(monkeypatch, "backend.app.services.prices_service")
     listing_id = int(_listing(market_connection)["id"])
     service = MarketObservationService()
     service.ingest_batch(market_connection, [_envelope(listing_id)], NOW)
@@ -1126,6 +1140,7 @@ def test_refresh_no_data_records_rejection_fallback_and_later_resolution(
     market_connection: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_service_clock(monkeypatch, "backend.app.services.market_data_service")
     listing_id = int(_listing(market_connection)["id"])
     service = MarketDataService()
     service.observation_service.ingest_batch(

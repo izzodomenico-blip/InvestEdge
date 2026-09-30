@@ -6,7 +6,8 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as day_time
 from typing import Any
 
 from backend.app.config import Settings
@@ -256,7 +257,11 @@ class CoinGeckoProvider(BaseMarketDataProvider):
                 )
             ]
 
-        samples_by_day: dict[str, tuple[int, int, object, object, datetime]] = {}
+        # Un campione chiude il periodo che termina al suo timestamp: il punto delle
+        # 00:00 UTC chiude il giorno precedente (granularita daily CoinGecko). Il
+        # giorno UTC in corso e incompleto e non diventa una barra EOD.
+        current_day = received_at.astimezone(UTC).date()
+        samples_by_day: dict[date, tuple[int, int, object, object]] = {}
         for index, (price_item, volume_item) in enumerate(zip(prices, volumes, strict=True)):
             if (
                 not isinstance(price_item, list)
@@ -292,32 +297,46 @@ class CoinGeckoProvider(BaseMarketDataProvider):
                         payload,
                     )
                 ]
-            day = observed_at.date().isoformat()
-            current = samples_by_day.get(day)
+            bar_day = (observed_at - timedelta(milliseconds=1)).date()
+            if bar_day >= current_day:
+                continue
+            current = samples_by_day.get(bar_day)
             candidate = (
                 timestamp_ms,
                 index,
                 price_item[1],
                 volume_item[1],
-                observed_at,
             )
             if current is None or candidate[:2] >= current[:2]:
-                samples_by_day[day] = candidate
+                samples_by_day[bar_day] = candidate
 
-        return [
-            self._bar_envelope(
-                listing_id,
-                currency,
-                received_at,
-                timestamp_ms,
-                price,
-                volume,
-                observed_at,
+        if not samples_by_day:
+            return [
+                self._rejection_envelope(
+                    listing_id,
+                    "EOD",
+                    self.eod_operation,
+                    received_at,
+                    "PROVIDER_NO_DATA",
+                    payload,
+                )
+            ]
+
+        envelopes: list[MarketObservationEnvelope] = []
+        for bar_day in sorted(samples_by_day):
+            timestamp_ms, _index, price, volume = samples_by_day[bar_day]
+            envelopes.append(
+                self._bar_envelope(
+                    listing_id,
+                    currency,
+                    received_at,
+                    timestamp_ms,
+                    price,
+                    volume,
+                    datetime.combine(bar_day, day_time.min, tzinfo=UTC),
+                )
             )
-            for timestamp_ms, _index, price, volume, observed_at in (
-                samples_by_day[day] for day in sorted(samples_by_day)
-            )
-        ]
+        return envelopes
 
     def _bar_envelope(
         self,

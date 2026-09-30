@@ -313,6 +313,8 @@ def test_coingecko_keyless_quote_sends_no_credential_or_secret_query() -> None:
 
 
 def test_coingecko_market_chart_ms_timestamp_and_same_day_samples_choose_last() -> None:
+    # CoinGecko daily points at 00:00 UTC close the previous UTC day: the bar is
+    # labelled with the completed day (Stooq convention: 00:00 of the bar date).
     connection, listing_id = _initialize_connection()
     provider = _provider(
         connection,
@@ -325,17 +327,56 @@ def test_coingecko_market_chart_ms_timestamp_and_same_day_samples_choose_last() 
     ingest = MarketObservationService().ingest_batch(connection, envelopes, NOW)
 
     assert [item.provider_observed_at for item in envelopes] == [
-        datetime(2026, 8, 16, 12, 0, tzinfo=UTC),
-        datetime(2026, 8, 17, 0, 0, tzinfo=UTC),
+        datetime(2026, 8, 15, 0, 0, tzinfo=UTC),
+        datetime(2026, 8, 16, 0, 0, tzinfo=UTC),
     ]
     assert [item.raw_fields for item in envelopes] == [
-        {"close": 61250.5, "adjusted_close": 61250.5, "volume": 1200000000.0},
+        {"close": 61000.0, "adjusted_close": 61000.0, "volume": 1000000000.0},
         {"close": 61500.25, "adjusted_close": 61500.25, "volume": 1300000000.0},
     ]
     assert all(item.timezone == "UTC" and item.session == "24X7" for item in envelopes)
     assert all(isinstance(item, ValidatedObservation) for item in results)
     assert ingest.accepted == 2
-    assert connection.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 2
+    assert [
+        tuple(row)
+        for row in connection.execute("SELECT date, close FROM price_history ORDER BY date")
+    ] == [("2026-08-15", 61000.0), ("2026-08-16", 61500.25)]
+    connection.close()
+
+
+def test_coingecko_market_chart_excludes_incomplete_current_utc_day() -> None:
+    connection, listing_id = _initialize_connection()
+    payload = {
+        "prices": [[1786924800000, 61500.25], [1786978800000, 61800.0]],
+        "total_volumes": [[1786924800000, 1300000000.0], [1786978800000, 900000000.0]],
+    }
+    provider = _provider(connection, lambda _request: _json_response(payload))
+    listing = _listing(connection, listing_id)
+
+    envelopes = provider.fetch_daily(listing, 2)
+
+    assert [item.provider_observed_at for item in envelopes] == [
+        datetime(2026, 8, 16, 0, 0, tzinfo=UTC),
+    ]
+    assert envelopes[0].raw_fields["close"] == 61500.25
+    connection.close()
+
+
+def test_coingecko_market_chart_with_only_current_day_is_provider_no_data() -> None:
+    connection, listing_id = _initialize_connection()
+    payload = {
+        "prices": [[1786960800000, 61700.0], [1786978800000, 61800.0]],
+        "total_volumes": [[1786960800000, 800000000.0], [1786978800000, 900000000.0]],
+    }
+    provider = _provider(connection, lambda _request: _json_response(payload))
+    listing = _listing(connection, listing_id)
+
+    envelopes = provider.fetch_daily(listing, 1)
+    result = MarketObservationService().validate(listing, envelopes[0], NOW)
+
+    assert len(envelopes) == 1
+    assert isinstance(result, ObservationRejection)
+    assert result.reason_code == "PROVIDER_NO_DATA"
     connection.close()
 
 

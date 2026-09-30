@@ -1166,11 +1166,11 @@ class CoinGeckoProvider(BaseMarketDataProvider):
 
 Policy budget: Demo massimo locale 90/minuto e 9.000/mese; keyless massimo locale 10/minuto e 1.000/mese. I limiti upstream/429 possono solo ridurre questi valori. Il Data Center espone l'attribuzione “Powered by CoinGecko API”.
 
-- [ ] **Step 1: Scrivere test RED su identità, payload e budget**
+- [x] **Step 1: Scrivere test RED su identità, payload e budget**
 
 Testare ID `bitcoin` distinto dal ticker `BTC`, quote EUR/USD, timestamp millisecondi, duplicate timestamp, array non allineati, response vuota, prezzo zero/non finito, valuta non supportata, Demo header, keyless senza query secret, margini minuto/mese e 429 con cooldown. Per EOD e QUOTE verificare che `bypass_cache=true` arrivi soltanto al transport e conservi fingerprint, in-flight dedupe, budget e validation.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_coingecko_provider.py tests\test_provider_budget.py tests\test_api.py -k "coingecko or crypto_identity or crypto_budget" -q
@@ -1178,17 +1178,17 @@ Testare ID `bitcoin` distinto dal ticker `BTC`, quote EUR/USD, timestamp millise
 
 Expected: failure perché l'adapter corrente mappa un set fisso di ticker e non produce observation governate.
 
-- [ ] **Step 3: Migrare l'adapter a ID e observation**
+- [x] **Step 3: Migrare l'adapter a ID e observation**
 
 Richiedere un `COINGECKO_ID` verificato; usare endpoint/host fissi. Demo usa header, keyless nessuna credenziale. `fetch_daily()` e `fetch_quote()` passano `bypass_cache` senza reinterpretazione soltanto a `SafeProviderTransport.request()`. Normalizzare `market_chart` in BAR giornaliere UTC/24x7 e `simple/price` in QUOTE; il validator gestisce currency, timestamp e valori. La deduplica aggrega timestamp dello stesso giorno scegliendo l'ultimo campione solo dentro la stessa risposta/provider.
 
 Per preservare gli asset seed esistenti, eseguire un backfill una tantum e idempotente soltanto per la mappa curata già supportata dalla baseline (`BTC=bitcoin`, `ETH=ethereum`, `SOL=solana`, `BNB=binancecoin`, `XRP=ripple`). Il backfill richiede `asset_type="crypto"`, simbolo univoco nell'universo attivo e instrument già collegato; salva scheme `COINGECKO_ID`, source `LEGACY_CURATED`, observed_at uguale alla migrazione. Non estendere la mappa per somiglianza di nome o ticker.
 
-- [ ] **Step 4: Collegare capability e fallback**
+- [x] **Step 4: Collegare capability e fallback**
 
 Registry supporta crypto EOD/QUOTE soltanto per ID esplicito. Il fallback è l'ultima observation CoinGecko compatibile, opportunamente stale; non usare una quotazione USD per un listing EUR senza passare dall'FX service e non effettuare qui conversioni implicite.
 
-- [ ] **Step 5: Eseguire GREEN**
+- [x] **Step 5: Eseguire GREEN**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_coingecko_provider.py tests\test_provider_budget.py tests\test_market_data_observations.py tests\test_api.py -q
@@ -1197,7 +1197,7 @@ Registry supporta crypto EOD/QUOTE soltanto per ID esplicito. Il fallback è l'u
 
 Expected: test verdi, nessuna rete, nessuna identità inventata, Ruff verde.
 
-- [ ] **Step 6: Review, commit e gate remoto**
+- [x] **Step 6: Review, commit e gate remoto**
 
 Review indipendente su ID-vs-ticker, budget mensile, header, keyless, valuta, UTC/24x7, attribuzione e fallback. Correggere Critical/Important e ripetere Step 5.
 
