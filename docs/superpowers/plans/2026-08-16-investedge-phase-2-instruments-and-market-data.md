@@ -1768,7 +1768,7 @@ Expected: un solo commit sopra Task 13 e gate remoto verde.
 
 **Interfaces — Produces:** tipi TypeScript omologhi `InstrumentListItem`, `InstrumentSearch`, `InstrumentDetail`, `InstrumentListing`, `EffectiveObservationQuality`; funzioni `getInstruments(filters)`, `getInstrument(id)`, `activateListing(id)`, `markListingViewed(id)`; test runner `npm run test:run`.
 
-- [ ] **Step 1: Installare il test runner**
+- [x] **Step 1: Installare il test runner**
 
 ```powershell
 npm --prefix frontend install --save-dev vitest@4.1.10 @testing-library/react@16.3.2 @testing-library/jest-dom@7.0.1 jsdom@30.0.1
@@ -1776,11 +1776,11 @@ npm --prefix frontend install --save-dev vitest@4.1.10 @testing-library/react@16
 
 Expected: dipendenze e lockfile aggiornati; nessun test eseguito prima della configurazione.
 
-- [ ] **Step 2: Configurare il runner e scrivere i test UI**
+- [x] **Step 2: Configurare il runner e scrivere i test UI**
 
 Aggiungere esplicitamente `"test:run": "vitest run"` a `frontend/package.json`, creare `frontend/vitest.config.ts` con environment `jsdom` e creare `frontend/src/test/setup.ts` che importa `@testing-library/jest-dom/vitest`. Scrivere `UniversePage.test.tsx`: il test mocka `api.ts` e richiede tab “Attivi”/“Catalogo”, loading, empty, errore, debounce query, filtri/paginazione, badge tier/freschezza, ISIN/FIGI/MIC/valuta, mapping ambiguo non attivabile e nessun fetch bulk.
 
-- [ ] **Step 3: Eseguire RED UI**
+- [x] **Step 3: Eseguire RED UI**
 
 ```powershell
 npm --prefix frontend run test:run -- UniversePage.test.tsx
@@ -1788,15 +1788,15 @@ npm --prefix frontend run test:run -- UniversePage.test.tsx
 
 Expected RED: Vitest/jsdom/setup partono correttamente e falliscono soltanto le aspettative UI catalogo non ancora implementate, non uno script, modulo o file di configurazione mancante.
 
-- [ ] **Step 4: Definire i tipi e il client sanitizzato**
+- [x] **Step 4: Definire i tipi e il client sanitizzato**
 
 Aggiungere i type senza cambiare `Asset`. Le funzioni codificano ogni query con `URLSearchParams`; `ApiError` conserva status e detail ma il messaggio di errore DEV usa metodo+pathname sanitizzato, mai URL/query completa. La fetch precedente viene abortita quando query/pagina cambia.
 
-- [ ] **Step 5: Implementare il tab catalogo**
+- [x] **Step 5: Implementare il tab catalogo**
 
 Usare debounce 300 ms, `limit=50`, offset e ordering backend; non concatenare pagine. Aprire il dettaglio chiama una sola volta `markListingViewed(listing_id)` e non esegue subito il refresh provider. `DataQualityBadge` mostra tier/effective quality/stale; `InstrumentIdentity` mostra identifier, venue, currency e stato Trade Republic senza suggerire tradability. Attivazione resta esplicita e gestisce 409.
 
-- [ ] **Step 6: Eseguire GREEN e build**
+- [x] **Step 6: Eseguire GREEN e build**
 
 ```powershell
 npm --prefix frontend run test:run -- UniversePage.test.tsx
@@ -1805,7 +1805,7 @@ npm --prefix frontend run build
 
 Expected: test Universe verde e TypeScript/Vite build exit 0.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su nullability Python/TypeScript, request abort/debounce, paginazione, URL sanitizzati, mark-viewed bounded, a11y e scope UI. Correggere Critical/Important e ripetere Step 6.
 

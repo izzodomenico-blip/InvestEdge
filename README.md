@@ -490,16 +490,19 @@ Frontend locale: `http://127.0.0.1:5173`.
 
 Il frontend usa `VITE_API_BASE_URL` se presente, con fallback a `http://127.0.0.1:8000`.
 
+La pagina **Universe** ha due tab. **Attivi** è la lista degli asset monitorati, con aggiunta, rimozione e purge protetto. **Catalogo** cerca nel catalogo strumenti (`GET /instruments`) con ricerca debounced (300 ms), filtri per classe, tier, stato Trade Republic, valuta e MIC, e pagine da 50 risultati senza caricare l'intero catalogo. Ogni riga mostra identificativo, venue, valuta, tier, freschezza del dato e stato Trade Republic, che indica la fonte della conferma e non la negoziabilità. Aprire un dettaglio segnala il listing come visualizzato una sola volta (`POST /data/refresh/viewed/{listing_id}`, nessun refresh provider immediato). L'attivazione è sempre esplicita, consentita solo per listing `RESOLVED` e con identità non ambigua; i conflitti 409 sono spiegati in pagina.
+
 ## Test
 
 ```powershell
 backend\.venv\Scripts\python.exe -m pytest
 ```
 
-Build frontend:
+Test e build frontend (Vitest + Testing Library in jsdom, API sempre simulate):
 
 ```powershell
 cd frontend
+npm run test:run
 npm run build
 ```
 

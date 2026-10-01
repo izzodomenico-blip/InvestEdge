@@ -6,13 +6,13 @@ Ultimo aggiornamento: 2026-10-01.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 15 — Catalogo paginato nella pagina Universe.**
+**SP2a · Fase 2 · Task 16 — API e metriche misurabili di copertura dati.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 15*.
-- Branch: `codex/investedge-phase-2-task-15`.
-- Base remota: `origin/codex/investedge-phase-2-task-14`.
-- Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01).
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 15.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 16*.
+- Branch: `codex/investedge-phase-2-task-16`.
+- Base remota: `origin/codex/investedge-phase-2-task-15`.
+- Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01), salvo diversa indicazione dell'utente.
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 16.
 
 ## Legenda
 
@@ -85,8 +85,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 11 | FX BCE verso EUR e fallback FRED | FATTO | `88fc20d` | 2026-09-30 | Claude |
 | 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + `edbc07e` | 2026-10-01 | Claude |
 | 13 | Refresh lazy, prioritari, deduplicati | FATTO | `b1a39e2` | 2026-10-01 | Claude |
-| 14 | API catalogo e conferme versionate | FATTO | branch `codex/investedge-phase-2-task-14` | 2026-10-01 | Claude |
-| 15 | Catalogo paginato nella pagina Universe | NON INIZIATO | — | — | — |
+| 14 | API catalogo e conferme versionate | FATTO | `62ed48b` | 2026-10-01 | Claude |
+| 15 | Catalogo paginato nella pagina Universe | FATTO | branch `codex/investedge-phase-2-task-15` | 2026-10-01 | Claude |
 | 16 | API e metriche di copertura dati | NON INIZIATO | — | — | — |
 | 17 | Copertura, qualità e budget nel Data Center | NON INIZIATO | — | — | — |
 | 18 | Audit cumulativo e report Fase 2 | NON INIZIATO | — | — | — |
@@ -132,6 +132,16 @@ Evidenza Task 14 (2026-10-01, Claude):
 - minore aperto: un listing legacy `NEVER_SEEN` di uno strumento presente nel catalogo resta `NEVER_SEEN` (lo stato TR e per listing): da rendere chiaro nella UI del Task 15;
 - gate: suite completa `pytest` = 665 passati; `ruff check backend scripts tests` verde; `git diff --check` verde; frontend non toccato.
 
+Evidenza Task 15 (2026-10-01, Claude):
+
+- test runner frontend: Vitest 4.1.10, Testing Library React 16.3.2, jest-dom 7.0.1, jsdom 30.0.1 (`@testing-library/dom` installato come peer); `npm run test:run`; lockfile: 85 pacchetti aggiunti, nessuna versione esistente cambiata o rimossa;
+- pagina Universe con tab **Attivi** (contenuto, form e purge protetto invariati) e **Catalogo**: ricerca debounced 300 ms, filtri classe/tier/stato TR/valuta/MIC (valuta e MIC inviati solo come codici completi), `limit=50` con offset del backend e pagine sostituite (mai concatenate), richiesta precedente abortita, stati loading/vuoto/errore; `DataQualityBadge` (tier e freschezza effettiva) e `InstrumentIdentity` (identificativo, venue, valuta, stato TR come fonte della conferma, non negoziabilita); dettaglio con identificativi e listing, `markListingViewed` una sola volta per listing e solo all'apertura; attivazione esplicita solo per listing `RESOLVED` con identita non ambigua, 409 spiegati per `reason_code`; nessun fetch del catalogo finche il tab non viene aperto;
+- client `api.ts`: tipi omologhi agli schemi Python (nullability verificata campo per campo), `getInstruments`/`getInstrument`/`activateListing`/`markListingViewed` con `URLSearchParams` e `encodeURIComponent`, `ApiError` con `detail`, `apiReasonCode`, `AbortSignal` su `apiGet`;
+- deviazioni: il messaggio DEV di errore di rete ora usa metodo e pathname per tutte le richieste (prima includeva URL e query completi); `setup.ts` registra anche la pulizia di Testing Library (necessaria senza `globals`); test del client API dentro `UniversePage.test.tsx` (nessun file extra); sottotitolo della pagina aggiornato; review a11y: testo visibile dei pulsanti incluso nel nome accessibile; esecuzione nella stessa chat del Task 14 su richiesta esplicita dell'utente;
+- note: npm 11 segnala lo script `postinstall` di esbuild non approvato (non approvato di proposito, la build funziona); l'avviso Vite sulla dimensione del bundle era gia presente;
+- minori aperti: se il totale scende sotto l'offset corrente la pagina vuota mostra un numero di pagina incoerente (resta il pulsante "Precedente"); lo stato del tab catalogo si azzera cambiando tab;
+- gate: `npm run test:run -- UniversePage.test.tsx` = 9 passati; `npm run build` exit 0; backend invariato: suite `pytest` = 665 passati; `git diff --check` verde.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -159,6 +169,7 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-09-30 | Push e merge fast-forward su `main` a ogni task: l'app non è in uso fino al completamento del programma | utente |
 | 2026-10-01 | Le route che chiamano provider rilasciano il lock di univocita prima dell'I/O di rete (il budget non accetta transazioni del chiamante; un lock durante retry di rete bloccherebbe tutte le scritture) | Claude, motivata nel Task 12 |
 | 2026-10-01 | Una nuova versione del provider symbol puo sostituire (`supersedes`) la versione ritirata dello stesso listing anche con simbolo diverso; trigger estesi con migrazione | Claude, motivata nel Task 14 |
+| 2026-10-01 | Task 15 eseguito nella stessa chat del Task 14 (deroga alla regola "nuova chat per task") | utente |
 
 ## Note di ripresa
 

@@ -919,23 +919,29 @@ export type NewsSentimentSummary = {
 
 export type MarketNewsSummary = Omit<NewsSentimentSummary, "symbol" | "latest_news">;
 
-async function parseError(response: Response) {
+async function parseError(response: Response): Promise<ApiError> {
+  const fallback = `API request failed: ${response.status}`;
   try {
     const payload = await response.json();
     if (typeof payload.detail === "string") {
-      return payload.detail;
+      return new ApiError(payload.detail, response.status, payload.detail);
     }
+    return new ApiError(fallback, response.status, payload.detail ?? null);
   } catch {
-    return `API request failed: ${response.status}`;
+    return new ApiError(fallback, response.status);
   }
-  return `API request failed: ${response.status}`;
 }
 
-function fetchErrorMessage(path: string, error: unknown) {
-  const targetUrl = `${API_URL}${path}`;
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function fetchErrorMessage(method: string, path: string, error: unknown) {
   const base = error instanceof Error ? error.message : "Failed to fetch";
   if (import.meta.env.DEV) {
-    return `${base}. API_URL=${API_URL}; request=${targetUrl}; origin=${window.location.origin}`;
+    // Solo metodo e pathname: la query string (ricerche, filtri) non finisce nei messaggi.
+    const pathname = path.split(/[?#]/, 1)[0];
+    return `${base}. API_URL=${API_URL}; request=${method} ${pathname}; origin=${window.location.origin}`;
   }
   return base;
 }
@@ -962,22 +968,36 @@ export type ReportSummary = {
 };
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail: unknown = null,
+  ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+/** `reason_code` stabile di un errore API (`{"detail": {"reason_code": ...}}`), se presente. */
+export function apiReasonCode(error: unknown): string | null {
+  if (!(error instanceof ApiError) || typeof error.detail !== "object" || error.detail === null) {
+    return null;
+  }
+  const reason = (error.detail as { reason_code?: unknown }).reason_code;
+  return typeof reason === "string" ? reason : null;
+}
+
+export async function apiGet<T>(path: string, init: { signal?: AbortSignal } = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`);
+    response = await fetch(`${API_URL}${path}`, init.signal ? { signal: init.signal } : undefined);
   } catch (error) {
-    throw new Error(fetchErrorMessage(path, error));
+    if (isAbortError(error)) throw error;
+    throw new Error(fetchErrorMessage("GET", path, error));
   }
 
   if (!response.ok) {
-    throw new ApiError(await parseError(response), response.status);
+    throw await parseError(response);
   }
 
   return response.json() as Promise<T>;
@@ -992,11 +1012,11 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
-    throw new Error(fetchErrorMessage(path, error));
+    throw new Error(fetchErrorMessage("POST", path, error));
   }
 
   if (!response.ok) {
-    throw new ApiError(await parseError(response), response.status);
+    throw await parseError(response);
   }
 
   return response.json() as Promise<T>;
@@ -1009,12 +1029,138 @@ export async function apiDelete<T>(path: string): Promise<T> {
       method: "DELETE",
     });
   } catch (error) {
-    throw new Error(fetchErrorMessage(path, error));
+    throw new Error(fetchErrorMessage("DELETE", path, error));
   }
 
   if (!response.ok) {
-    throw new ApiError(await parseError(response), response.status);
+    throw await parseError(response);
   }
 
   return response.json() as Promise<T>;
+}
+
+export type EffectiveObservationQuality = "realtime" | "delayed" | "eod" | "reference" | "stale";
+export type QualityTier = "QUALIFIED" | "OBSERVABLE" | "REFERENCE_ONLY";
+export type TradeRepublicStatus = "NEVER_SEEN" | "CATALOGED" | "VERIFIED" | "UNAVAILABLE";
+export type ResolutionStatus = "RESOLVED" | "AMBIGUOUS" | "UNMATCHED" | "REJECTED";
+export type InstrumentType =
+  | "STOCK"
+  | "ETF"
+  | "BOND"
+  | "ETC"
+  | "ETN"
+  | "CRYPTO"
+  | "FX"
+  | "INDEX"
+  | "RATE"
+  | "MACRO"
+  | "UNKNOWN";
+export type AssetClass =
+  | "EQUITY"
+  | "FUND"
+  | "FIXED_INCOME"
+  | "COMMODITY"
+  | "CRYPTO"
+  | "FX"
+  | "REFERENCE"
+  | "UNKNOWN";
+export type IdentifierScheme =
+  | "ISIN"
+  | "FIGI"
+  | "OPENFIGI_TICKER"
+  | "COINGECKO_ID"
+  | "FRED_SERIES_ID"
+  | "ECB_SERIES_KEY";
+
+export type InstrumentListItem = {
+  instrument_id: number;
+  canonical_name: string;
+  instrument_type: InstrumentType;
+  asset_class: AssetClass;
+  quality_tier: QualityTier;
+  quality_reasons: string[];
+  primary_identifier_scheme: IdentifierScheme | null;
+  primary_identifier: string | null;
+  listing_id: number | null;
+  ticker: string | null;
+  mic: string | null;
+  venue_name: string | null;
+  currency: string | null;
+  timezone: string | null;
+  trade_republic_status: TradeRepublicStatus;
+  trade_republic_cataloged_at: string | null;
+  trade_republic_verified_at: string | null;
+  observation_quality: EffectiveObservationQuality | null;
+  observed_at: string | null;
+};
+
+export type InstrumentSearch = {
+  items: InstrumentListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  catalog_snapshot_id: number | null;
+};
+
+export type InstrumentIdentifier = {
+  scheme: IdentifierScheme;
+  value: string;
+  sources: string[];
+  first_observed_at: string;
+  last_observed_at: string;
+};
+
+export type InstrumentListing = {
+  listing_id: number;
+  ticker: string;
+  mic: string | null;
+  venue_name: string | null;
+  currency: string;
+  timezone: string | null;
+  resolution_status: ResolutionStatus;
+  trade_republic_status: TradeRepublicStatus;
+};
+
+export type InstrumentDetail = InstrumentListItem & {
+  identifiers: InstrumentIdentifier[];
+  listings: InstrumentListing[];
+};
+
+export type InstrumentFilters = {
+  q?: string;
+  asset_class?: AssetClass;
+  instrument_type?: InstrumentType;
+  currency?: string;
+  mic?: string;
+  quality_tier?: QualityTier;
+  trade_republic_status?: TradeRepublicStatus;
+  limit?: number;
+  offset?: number;
+};
+
+export function getInstruments(filters: InstrumentFilters, signal?: AbortSignal): Promise<InstrumentSearch> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, String(value));
+    }
+  }
+  const query = params.toString();
+  return apiGet<InstrumentSearch>(`/instruments${query ? `?${query}` : ""}`, { signal });
+}
+
+export function getInstrument(instrumentId: number, signal?: AbortSignal): Promise<InstrumentDetail> {
+  return apiGet<InstrumentDetail>(`/instruments/${encodeURIComponent(String(instrumentId))}`, { signal });
+}
+
+/** Attivazione esplicita di un listing RESOLVED (201 alla creazione, 200 se gia attivo). */
+export function activateListing(listingId: number): Promise<Asset> {
+  return apiPost<Asset>(`/assets/from-listing/${encodeURIComponent(String(listingId))}`);
+}
+
+/** Accoda un refresh `VIEWED` non forzato: nessuna chiamata provider immediata. */
+export function markListingViewed(listingId: number): Promise<{ refresh_request_id: number }> {
+  return apiPost<{ refresh_request_id: number }>(
+    `/data/refresh/viewed/${encodeURIComponent(String(listingId))}`,
+  );
 }
