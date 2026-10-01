@@ -231,7 +231,7 @@ Le soglie sono configurabili tramite `MARKET_DATA_QUOTE_MAX_AGE_MINUTES` (defaul
 1. Copia `backend/.env.example` in `backend/.env`.
 2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Per le quote snapshot USA configura `FINNHUB_API_KEY` e un simbolo Finnhub `QUOTE/VERIFIED` sul listing. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
 3. Riavvia `Avvia-InvestEdge.bat`.
-4. Apri la pagina **Dati** e clicca **Aggiorna tutti i dati** (e nella pagina **News**, **Aggiorna tutte**).
+4. Apri la pagina **Dati** e clicca **Esegui batch prioritario (10)** (e nella pagina **News**, **Aggiorna tutte**).
 
 Finche non fai questo, l'app mostra dati simulati: il banner in dashboard indica la modalita corrente (SEED/MIXED/REAL). Il file `backend/.env` non va mai committato (e gia in `.gitignore`).
 
@@ -286,6 +286,8 @@ I refresh passano da una coda (`refresh_requests`, esiti in `refresh_runs`) con 
 - Coda: `pending_refresh` (`PENDING`) e `budget_deferred` (`BUDGET_DEFERRED`).
 
 `GET /data/status` resta compatibile e aggiunge `coverage_summary` (nullable: `null` se una partizione non somma al proprio denominatore, mentre `/data/coverage` risponde 500 con `COVERAGE_INVARIANT_FAILED`). Ogni provider aggiunge `capabilities`, `budget_windows` (minuto/giorno/mese con `limit`, `used`, `remaining`, `reset_at`), `cooldown_until`, `availability_state`/`availability_reason` e `last_outcome`/`last_outcome_at`; `daily_limit` e `calls_today` restano coerenti con la finestra giornaliera. Nessuna key, URL, endpoint o fingerprint viene esposto.
+
+La pagina **Dati** (Data Center) mostra questi valori così come arrivano dall'API, senza ricalcolare percentuali: parsing e risoluzione del catalogo con i rispettivi denominatori, tier e stato Trade Republic (irrisolti inclusi), gruppi per classe e MIC, copertura provider (idonei, non mappati, mappati, freschi, non aggiornati, senza osservazione, rejection aperte), qualità effettiva e bucket di ritardo, budget minuto/giorno/mese con reset, cooldown, motivo di disponibilità e ultimo esito per provider, cambi verso EUR per valuta (diretto/inverso, fresco/non aggiornato/mancante) separati dai provider, motivi di rejection e coda. Gli orari sono nel fuso locale con l'UTC nel tooltip; un dato non aggiornato non viene mai etichettato come tempo reale e un `rate_to_eur` non decimale viene mostrato come `—`. L'unica azione aggregata è **Esegui batch prioritario (10)** (`POST /data/refresh-all?limit=10`), che poi ricarica status e copertura; il pannello backup e il refresh del singolo asset restano invariati. Se la copertura non è disponibile (per esempio `COVERAGE_INVARIANT_FAILED`) il resto della pagina resta consultabile.
 
 Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backend/.env` puo contenere chiavi reali e non deve essere committato.
 

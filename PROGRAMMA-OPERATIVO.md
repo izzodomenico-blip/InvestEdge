@@ -6,13 +6,13 @@ Ultimo aggiornamento: 2026-10-01.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 17 — Copertura, qualità e budget nel Data Center.**
+**SP2a · Fase 2 · Task 18 — Audit cumulativo e report Fase 2.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 17*.
-- Branch: `codex/investedge-phase-2-task-17`.
-- Base remota: `origin/codex/investedge-phase-2-task-16`.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 18*.
+- Branch: `codex/investedge-phase-2-task-18`.
+- Base remota: `origin/codex/investedge-phase-2-task-17`.
 - Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01), salvo diversa indicazione dell'utente.
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 17.
+- Vincolo: ultimo task della Fase 2; nessun lavoro su SP1 prima della sua chiusura.
 
 ## Legenda
 
@@ -87,8 +87,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 13 | Refresh lazy, prioritari, deduplicati | FATTO | `b1a39e2` | 2026-10-01 | Claude |
 | 14 | API catalogo e conferme versionate | FATTO | `62ed48b` | 2026-10-01 | Claude |
 | 15 | Catalogo paginato nella pagina Universe | FATTO | `30069f0` | 2026-10-01 | Claude |
-| 16 | API e metriche di copertura dati | FATTO | branch `codex/investedge-phase-2-task-16` | 2026-10-01 | Claude |
-| 17 | Copertura, qualità e budget nel Data Center | NON INIZIATO | — | — | — |
+| 16 | API e metriche di copertura dati | FATTO | `d0d6b4c` | 2026-10-01 | Claude |
+| 17 | Copertura, qualità e budget nel Data Center | FATTO | branch `codex/investedge-phase-2-task-17` | 2026-10-01 | Claude |
 | 18 | Audit cumulativo e report Fase 2 | NON INIZIATO | — | — | — |
 
 Evidenza Task 10 (2026-09-30, Claude):
@@ -151,6 +151,15 @@ Evidenza Task 16 (2026-10-01, Claude):
 - minori aperti: lo stato TR `VERIFIED` viene dalla projection del listing senza applicare `TRADE_REPUBLIC_VERIFIED_MAX_AGE_DAYS`; ECB non compare in `provider_status` (budget FX non visibile nello status); `/data/status` esegue anche la misura di copertura; un errore SQL inatteso della copertura non e fail-soft (lo sono solo le invarianti);
 - gate: `pytest tests\test_data_coverage.py` = 12 passati; `pytest tests\test_api.py -k "coverage or data_status"` = 4 passati; suite completa `pytest -p no:cacheprovider` = 679 passati (0 falliti, JUnit XML); `ruff check backend scripts tests` verde; `git diff --check` verde; frontend non toccato.
 
+Evidenza Task 17 (2026-10-01, Claude):
+
+- client `api.ts`: tipi omologhi a `DataCoverageOut`, `DataCoverageSummaryOut`, `CoverageCount`, `ProviderCoverageOut`, `FxCoverageOut` (`rate_to_eur: string | null`), `ProviderBudgetWindowOut` e alle estensioni di `DataStatusOut`/`DataProviderStatusOut` (campi e nullability confrontati automaticamente con i modelli Pydantic: 10 coppie coerenti); `getDataCoverage()` (una GET), `refreshAll(limit)` (intero 1..25 validato nel client, `URLSearchParams`, una POST senza body, `DataRefreshAllOut` invariato), `formatRateToEur` (solo stringa decimale completa e finita, altrimenti `—`, conversione solo per la presentazione);
+- Data Center: copertura catalogo (parsing/risoluzione con denominatori, tier e stato Trade Republic con irrisolti, gruppi per classe e MIC, snapshot e SHA-256), copertura provider (idonei/non mappati/mappati/freschi/non aggiornati/senza osservazione/rejection, qualità effettiva senza etichetta tempo reale per i dati stale, bucket di ritardo, ultima osservazione/ingestione, attribuzione), budget per provider (finestre minuto/giorno/mese con reset, cooldown, motivo leggibile con reason code, ultimo esito), FX verso EUR per valuta separato dai provider (diretto/inverso, fresco/non aggiornato/mancante, osservato/ingerito, età), rejection parser/risoluzione distinte e coda; orari locali con UTC nel tooltip; percentuali mostrate come arrivano dall'API (test con percentuali volutamente diverse dal rapporto); copertura con loading/errore propri (`COVERAGE_INVARIANT_FAILED` spiegato, status legacy e backup restano visibili); "Aggiorna tutti i dati" sostituito da **Esegui batch prioritario (10)** con loading separato e ricarica di status e copertura; pannello backup, status `SEED/MIXED/REAL`, provider/cache, refresh del singolo asset e route `/data` invariati;
+- test deterministici: fuso fissato con `vi.stubEnv("TZ", "Europe/Rome")` (verificato verde anche con `TZ` di ambiente New York e Tokyo) e solo `Date` finto con orario fisso;
+- deviazioni: `frontend/package-lock.json` fuori elenco file: il gate `npm audit --audit-level=high` falliva per advisory high nuovi su `browserslist` 4.28.2 (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g), dipendenza transitiva di build preesistente; `npm update browserslist` (senza `--force`, `package.json` invariato) aggiorna solo browserslist 4.29.3, baseline-browser-mapping 2.11.26, caniuse-lite, electron-to-chromium, node-releases, update-browserslist-db 1.3.3; restano 2 low e 2 moderate (vitest/@vitest/mocker, @babel/core, postcss-selector-parser); ambiente: all'avvio il DNS non risolveva (GitHub, PyPI, npm irraggiungibili), quindi `backend/.venv` e stato popolato copiando `site-packages` dal venv del worktree Task 16 (stesso Python 3.14.7 e stessi requirements, `pip check` pulito), `npm ci --offline` dalla cache e il lock remoto del branch e stato pubblicato appena tornata la rete (base e `main` verificati a `d0d6b4c`); test client nello stesso file di test della pagina; `coverage_summary` tipizzato ma non usato dalla UI (la pagina legge `/data/coverage` completo); messaggio del batch "senza fallback / con fallback" (una cache hit non e un aggiornamento dal provider);
+- minori aperti: un `rate_to_eur` in notazione scientifica (Decimal da float sotto 1e-6, es. `1E-7`) viene mostrato `—` (nessuna valuta BCE attuale e sotto quella soglia; correzione naturale nel backend con quantize); ECB assente da `provider_status`, quindi budget FX non visibile (gia noto dal Task 16); dopo il batch la pagina ricarica con lo skeleton completo (comportamento preesistente di `loadDataCenter`) e fra ricariche sovrapposte vince l'ultima risposta; l'esempio README `POST /news/refresh-all?limit=50` supera il massimo 25 (fuori scope, non modificato);
+- gate: `npm --prefix frontend run test:run -- DataCenterPage.test.tsx UniversePage.test.tsx` = 23 passati (14 Data Center + 9 Universe); `npm --prefix frontend run build` exit 0 (avviso dimensione bundle preesistente); `npm --prefix frontend audit --audit-level=high` exit 0; backend invariato: suite completa `pytest -p no:cacheprovider` = 679 passati (0 falliti, JUnit XML); `ruff check backend scripts tests` verde; `git diff --check` verde.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -180,9 +189,12 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-01 | Una nuova versione del provider symbol puo sostituire (`supersedes`) la versione ritirata dello stesso listing anche con simbolo diverso; trigger estesi con migrazione | Claude, motivata nel Task 14 |
 | 2026-10-01 | Task 15 eseguito nella stessa chat del Task 14 (deroga alla regola "nuova chat per task") | utente |
 | 2026-10-01 | Copertura: denominatori provider sui soli listing risolti (metadata VERIFIED + case RESOLVED, ACTIVE) e sulle coppie mappabili su listing (coingecko EOD/QUOTE, finnhub QUOTE, stooq EOD); `rejection_reasons` con prefisso `PARSE:`/`RESOLUTION:`; invariante violata → `/data/coverage` 500 e `coverage_summary` null | Claude, motivata nel Task 16 |
+| 2026-10-01 | Gate audit del Task 17: aggiornamento del solo lockfile (`npm update browserslist`, nessun `--force`, `package.json` invariato) per eliminare advisory high su una dipendenza transitiva di build; moderate/low residui lasciati visibili | Claude, motivata nel Task 17 |
 
 ## Note di ripresa
 
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
 - Test legati al calendario: un test non deve dipendere dalla data reale. Se un servizio legge `datetime.now`, il test blocca l'orologio (vedi `_freeze_service_clock` in `tests/test_market_data_observations.py`).
+- Test frontend con orari: fissare il fuso con `vi.stubEnv("TZ", ...)` (il build TypeScript non conosce `process`) e creare gli `Intl.DateTimeFormat` al render, non a livello di modulo.
+- `npm audit` dipende da advisory pubblicati dopo l'ultimo task: il gate puo fallire senza modifiche al codice.

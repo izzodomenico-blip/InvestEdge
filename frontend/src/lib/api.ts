@@ -793,6 +793,35 @@ export type AllocationPlan = {
   confirmation_token: string;
 };
 
+export type ProviderCapability = "CATALOG" | "IDENTITY" | "EOD" | "QUOTE" | "FX" | "REFERENCE" | "NEWS";
+export type BudgetWindow = "MINUTE" | "DAY" | "MONTH";
+export type RequestOutcome =
+  | "SUCCEEDED"
+  | "CACHE_HIT"
+  | "RATE_LIMITED"
+  | "TIMED_OUT"
+  | "RETRY_EXHAUSTED"
+  | "REJECTED"
+  | "DISABLED";
+export type AvailabilityState = "AVAILABLE" | "DISABLED" | "COOLDOWN";
+export type AvailabilityReason =
+  | "MISSING_CREDENTIAL"
+  | "SECRET_IN_QUERY_POLICY"
+  | "BULK_ONLY_POLICY"
+  | "NOT_PRIMARY_POLICY"
+  | "OPT_IN_DISABLED"
+  | "RATE_LIMITED"
+  | "BUDGET_EXHAUSTED"
+  | "UNSUPPORTED_CAPABILITY";
+
+export type ProviderBudgetWindow = {
+  window: BudgetWindow;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  reset_at: string;
+};
+
 export type DataProviderStatus = {
   provider: string;
   enabled: boolean;
@@ -800,6 +829,14 @@ export type DataProviderStatus = {
   daily_limit: number;
   calls_today: number;
   supports: string[];
+  // Estensioni additive (Task 16): nessuna key, URL, endpoint o fingerprint.
+  capabilities: ProviderCapability[];
+  budget_windows: ProviderBudgetWindow[];
+  cooldown_until: string | null;
+  availability_state: AvailabilityState | null;
+  availability_reason: AvailabilityReason | null;
+  last_outcome: RequestOutcome | null;
+  last_outcome_at: string | null;
 };
 
 export type ApiUsage = {
@@ -817,6 +854,103 @@ export type DataStatus = {
   cache_stats: Record<string, number>;
   global_last_update: string | null;
   data_mode: "SEED" | "MIXED" | "REAL";
+  coverage_summary: DataCoverageSummary | null;
+};
+
+export type CoverageCount = {
+  key: string;
+  total: number;
+  resolved: number;
+  qualified: number;
+  observable: number;
+  reference_only: number;
+};
+
+export type ProviderCoverage = {
+  provider: string;
+  capability: ProviderCapability;
+  eligible_listings: number;
+  unmapped_listings: number;
+  mapped_listings: number;
+  fresh_listings: number;
+  stale_listings: number;
+  missing_observation_listings: number;
+  rejected_observations: number;
+  quality_counts: Record<string, number>;
+  delay_bucket_counts: Record<string, number>;
+  latest_provider_observed_at: string | null;
+  latest_ingested_at: string | null;
+  attribution: string | null;
+};
+
+export type FxCoverageStatus = "FRESH" | "STALE" | "MISSING";
+export type FxRateDirection = "DIRECT" | "INVERSE";
+
+export type FxCoverage = {
+  from_currency: string;
+  to_currency: "EUR";
+  status: FxCoverageStatus;
+  direction: FxRateDirection | null;
+  provider: string | null;
+  /** Decimal serializzato da Pydantic come stringa (mai binary float): solo presentazione. */
+  rate_to_eur: string | null;
+  observed_at: string | null;
+  ingested_at: string | null;
+  age_seconds: number | null;
+  quality: string | null;
+};
+
+export type DataCoverage = {
+  measured_at: string;
+  latest_catalog_snapshot_id: number | null;
+  latest_catalog_retrieved_at: string | null;
+  latest_catalog_sha256: string | null;
+  parse_accepted_entries: number;
+  parse_ambiguous_entries: number;
+  parse_rejected_entries: number;
+  parse_denominator: number;
+  resolution_resolved_entries: number;
+  resolution_ambiguous_entries: number;
+  resolution_unmatched_entries: number;
+  resolution_rejected_entries: number;
+  resolution_unprocessed_entries: number;
+  resolution_denominator: number;
+  resolved_percent: number;
+  tier_denominator: number;
+  tier_counts: Record<QualityTier, number>;
+  tier_percentages: Record<QualityTier, number>;
+  trade_republic_denominator: number;
+  trade_republic_status_counts: Record<string, number>;
+  trade_republic_verified_percent: number;
+  by_asset_class: CoverageCount[];
+  by_market: CoverageCount[];
+  rejection_reasons: Record<string, number>;
+  provider_coverage: ProviderCoverage[];
+  fx_currency_denominator: number;
+  fx_fresh_currencies: number;
+  fx_stale_currencies: number;
+  fx_missing_currencies: number;
+  fx_coverage: FxCoverage[];
+  pending_refresh: number;
+  budget_deferred: number;
+};
+
+export type DataCoverageSummary = {
+  measured_at: string;
+  latest_catalog_snapshot_id: number | null;
+  latest_catalog_retrieved_at: string | null;
+  resolution_denominator: number;
+  resolved_percent: number;
+  tier_denominator: number;
+  tier_percentages: Record<QualityTier, number>;
+  trade_republic_denominator: number;
+  trade_republic_verified_percent: number;
+  fx_currency_denominator: number;
+  fx_fresh_currencies: number;
+  fx_stale_currencies: number;
+  fx_missing_currencies: number;
+  pending_refresh: number;
+  budget_deferred: number;
 };
 
 export type AssetDataStatus = {
@@ -1156,6 +1290,35 @@ export function getInstrument(instrumentId: number, signal?: AbortSignal): Promi
 /** Attivazione esplicita di un listing RESOLVED (201 alla creazione, 200 se gia attivo). */
 export function activateListing(listingId: number): Promise<Asset> {
   return apiPost<Asset>(`/assets/from-listing/${encodeURIComponent(String(listingId))}`);
+}
+
+/** Copertura misurata sul database locale (`GET /data/coverage`): una sola richiesta. */
+export function getDataCoverage(): Promise<DataCoverage> {
+  return apiGet<DataCoverage>("/data/coverage");
+}
+
+export const REFRESH_BATCH_MAX_LIMIT = 25;
+
+/** Batch prioritario limitato (`POST /data/refresh-all?limit=N`, senza body), N intero 1..25. */
+export async function refreshAll(limit: number): Promise<DataRefreshAllResult> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > REFRESH_BATCH_MAX_LIMIT) {
+    throw new RangeError(`limit deve essere un intero da 1 a ${REFRESH_BATCH_MAX_LIMIT}`);
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  return apiPost<DataRefreshAllResult>(`/data/refresh-all?${params.toString()}`);
+}
+
+const DECIMAL_STRING = /^\d+(?:\.\d+)?$/;
+const rateFormatter = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 6 });
+
+/**
+ * Presentazione di `rate_to_eur`: accetta solo una stringa decimale completa e finita,
+ * altrimenti `—`. La conversione numerica serve esclusivamente a formattare, mai a calcolare.
+ */
+export function formatRateToEur(value: string | null): string {
+  if (value === null || !DECIMAL_STRING.test(value)) return "—";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? rateFormatter.format(numeric) : "—";
 }
 
 /** Accoda un refresh `VIEWED` non forzato: nessuna chiamata provider immediata. */

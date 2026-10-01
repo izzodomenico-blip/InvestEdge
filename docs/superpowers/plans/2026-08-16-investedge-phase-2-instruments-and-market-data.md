@@ -1994,7 +1994,7 @@ Expected: un solo commit sopra Task 15 e gate remoto verde.
 
 **Interfaces — Produces:** tipi TypeScript omologhi per coverage/provider budget/FX, incluso `FxCoverage.rate_to_eur: string | null` coerente con il JSON Pydantic; `getDataCoverage()`; `refreshAll(limit: number)` che invia `POST /data/refresh-all?limit=<encoded>` senza body e restituisce il vigente `DataRefreshAllOut`; sezioni UI catalogo/resolution/tier/TR, provider freshness/delay/budget, FX EUR per currency, rejection e coda.
 
-- [ ] **Step 1: Scrivere test UI RED**
+- [x] **Step 1: Scrivere test UI RED**
 
 `DataCenterPage.test.tsx` mocka `api.ts` e verifica: loading/empty/error; denominatori parsing/resolution, percentuali mapping, tier e TR inclusi gli irrisolti; provider eligible/unmapped/mapped/fresh/stale/missing observation, observed/ingested, delay bucket, quota/cooldown/reason; FX EUR separato con currency fresh/stale/missing, direct/inverse e timestamp; payload realistico `rate_to_eur: "0.923456789"`, valore null e stringa invalida visualizzata come `—`; rejection; attribution; backup panel invariato; bottone “Esegui batch prioritario (10)” che chiama una sola volta `refreshAll(10)`; assenza del testo/azione bulk indiscriminata. Aggiungere un test client che verifica metodo/path codificato e deserializzazione `DataRefreshAllOut`.
 
@@ -2004,15 +2004,15 @@ npm --prefix frontend run test:run -- DataCenterPage.test.tsx
 
 Expected RED: tipi, metriche e nuova azione non esistono.
 
-- [ ] **Step 2: Aggiungere tipi e client coverage**
+- [x] **Step 2: Aggiungere tipi e client coverage**
 
 Modellare nullability e chiavi enum come nel backend; dichiarare `rate_to_eur: string | null` e un formatter che accetta solo una stringa decimale completa, verifica `Number.isFinite` dopo la conversione usata esclusivamente per la presentazione e restituisce `—` per null/invalido, senza usare il valore per calcoli. `getDataCoverage()` esegue una sola GET e usa error path sanitizzato. Implementare `refreshAll(limit)` in `api.ts` con validazione client `1..25`, `URLSearchParams` e una sola POST verso `/data/refresh-all`; preservare `summary/results` e tutti i campi `DataRefreshResult`. Non calcolare percentuali nel client: mostrare valori/denominatori restituiti dall'API.
 
-- [ ] **Step 3: Implementare sezioni Data Center mirate**
+- [x] **Step 3: Implementare sezioni Data Center mirate**
 
 Mostrare timestamp in timezone locale con UTC nel tooltip, quality/delay senza etichetta realtime quando stale, budget remaining/reset/cooldown e reason code leggibili. La sezione FX usa `fx_coverage`, non provider listing: mostra from/EUR, direct/inverse, fresh/stale/missing e observed/ingested senza modificare cambi congelati. Il batch button ha limit 10 fisso, loading separato e rieffettua status+coverage dopo successo. Mantenere intatti backup create/list e gestione errori.
 
-- [ ] **Step 4: Eseguire GREEN, build e audit**
+- [x] **Step 4: Eseguire GREEN, build e audit**
 
 ```powershell
 npm --prefix frontend run test:run -- DataCenterPage.test.tsx UniversePage.test.tsx
@@ -2022,7 +2022,7 @@ npm --prefix frontend audit --audit-level=high
 
 Expected: test UI verdi, TypeScript/Vite build exit 0 e nessuna vulnerabilità high/critical.
 
-- [ ] **Step 5: Review, commit e gate remoto**
+- [x] **Step 5: Review, commit e gate remoto**
 
 Review indipendente su TypeScript/backend consistency, denominatori, stale/missing, timestamp/delay, secret/error, attribuzioni, backup panel e assenza bulk. Correggere Critical/Important e ripetere Step 4.
 
