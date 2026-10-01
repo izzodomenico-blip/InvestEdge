@@ -545,7 +545,7 @@ def test_legacy_symbol_ambiguity_blocks_symbol_only_read_and_write_callers(
         ("POST", "/ml/predict/AMBIG", {}),
         ("POST", "/ml/predict-all", {}),
         ("POST", "/news/refresh/AMBIG", None),
-        ("POST", "/news/refresh-all", None),
+        ("POST", "/news/refresh-all?limit=25", None),
         ("POST", "/data/refresh/AMBIG", None),
         ("POST", "/data/refresh-all", None),
     ]
@@ -561,10 +561,15 @@ def test_legacy_symbol_ambiguity_blocks_symbol_only_read_and_write_callers(
     assert all("AMBIG" in response.json()["detail"] for response in responses.values())
 
 
-def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
+def test_provider_refresh_guard_checks_symbol_then_releases_lock_before_network(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Contratto aggiornato il 2026-09-30 (Task 12): il controllo di univocita resta
+    # sotto lock, ma le route che chiamano provider rilasciano il lock prima dell'I/O
+    # di rete. Il budget provider rifiuta transazioni del chiamante (Task 2): con il
+    # lock tenuto ogni refresh reale via API cadeva in TRANSPORT_FAILED. Il refresh
+    # resta sull'asset risolto prima del rilascio (id piu basso).
     response = client.post(
         "/assets",
         json={
@@ -577,6 +582,8 @@ def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
     assert response.status_code == 201
     lock_errors: list[str] = []
 
+    resolved: list[int] = []
+
     def probe_concurrent_duplicate(
         connection: sqlite3.Connection,
         symbol: str,
@@ -584,6 +591,7 @@ def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
     ) -> dict[str, object]:
         assert symbol == "RACELOCK"
         assert force is False
+        assert connection.in_transaction is False
         database_path = connection.execute("PRAGMA database_list").fetchone()[2]
         try:
             with sqlite3.connect(database_path, timeout=0) as concurrent:
@@ -595,6 +603,7 @@ def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
                 )
         except sqlite3.OperationalError as exc:
             lock_errors.append(str(exc))
+        resolved.append(int(routes.market_data_service._asset(connection, symbol)["id"]))
         return {
             "symbol": symbol,
             "provider": "probe",
@@ -616,7 +625,17 @@ def test_instrument_listing_guard_holds_write_lock_through_mutating_caller(
     response = client.post("/data/refresh/RACELOCK")
 
     assert response.status_code == 200
-    assert lock_errors and all("locked" in error.lower() for error in lock_errors)
+    assert lock_errors == []
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        ids = [
+            int(row["id"])
+            for row in connection.execute("SELECT id FROM assets WHERE symbol = 'RACELOCK' ORDER BY id")
+        ]
+    assert len(ids) == 2
+    assert resolved == [ids[0]]
+    assert client.post("/data/refresh/RACELOCK").status_code == 409
 
 
 def test_prices_for_symbol(client: TestClient) -> None:

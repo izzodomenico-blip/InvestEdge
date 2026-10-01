@@ -1395,15 +1395,15 @@ NewsEngine.refresh_all_news(connection: sqlite3.Connection, limit: int | None = 
 POST /news/refresh-all?limit=&force= -> NewsRefreshAllOut(summary: dict[str, int], results: list[NewsRefreshResultOut])
 ```
 
-- [ ] **Step 1: Scrivere test RED provider news**
+- [x] **Step 1: Scrivere test RED provider news**
 
 Testare Finnhub GET con parametri non sensibili `symbol/from/to` e header `X-Finnhub-Token`; key sentinella assente da URL/fingerprint/cache/log/error; key mancante; payload list/errore/malformed; 429/cooldown e budget. Con cache preesistente verificare cache hit per `force=false`, una richiesta fisica governata e cache aggiornata per `force=true`, più due force concorrenti coalesciati sul fingerprint. Richiedere un provider symbol NEWS `VERIFIED` e venue compatibile: mapping mancante, ambiguo, retired o di venue incompatibile non chiama Finnhub e usa soltanto fallback locale. Verificare che Alpha non costruisca `_request_url`, Yahoo non effettui rete e che entrambi producano rispettivamente `SECRET_IN_QUERY_POLICY` e `NOT_PRIMARY_POLICY` con fallback locale.
 
-- [ ] **Step 2: Scrivere test RED batch bounded e compatibilità**
+- [x] **Step 2: Scrivere test RED batch bounded e compatibilità**
 
 In `tests/test_api.py` coprire refresh singolo, firma `refresh_all_news(connection, limit=None, force=False)`, propagazione di `force`, payload vigente `NewsRefreshAllOut` con `summary/results`, refresh-all news con effective default 10 e range 1..25, soli active assets, simbolo ambiguo 409 e nessuna scansione catalogo. In `tests/test_alert_service.py` conservare scoring/news locali e sentinelle secret.
 
-- [ ] **Step 3: Eseguire RED**
+- [x] **Step 3: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_news_providers.py tests\test_api.py tests\test_alert_service.py -k "news_provider or news_refresh or news_secret or local_fallback" -q
@@ -1411,15 +1411,15 @@ In `tests/test_api.py` coprire refresh singolo, firma `refresh_all_news(connecti
 
 Expected: Finnhub costruisce ancora token in query, Yahoo resta primario, Alpha costruisce apikey in query e refresh news non è governato dal nuovo budget.
 
-- [ ] **Step 4: Migrare Finnhub news al transport comune**
+- [x] **Step 4: Migrare Finnhub news al transport comune**
 
 Usare host/path fissi, key solo header e params separati. `NewsEngine` risolve prima l'active asset in modo univoco e passa a Finnhub esclusivamente il provider symbol NEWS `VERIFIED` del listing, dopo il controllo della venue supportata; mapping assente/ambiguo/retired fallisce chiuso sul fallback locale. Applicare budget locale 55/minuto e il limite day/month configurato; normalizzare al massimo 50 articoli, validare timestamp/URL pubblici e mantenere il sentiment locale. Cache key usa request fingerprint sanitizzato; `FinnhubNewsProvider.get_news_for_symbol(symbol, force)` passa `bypass_cache=force` al transport.
 
-- [ ] **Step 5: Disabilitare Alpha/Yahoo e rendere bounded il batch**
+- [x] **Step 5: Disabilitare Alpha/Yahoo e rendere bounded il batch**
 
 `AlphaVantageNewsProvider` restituisce `DISABLED/SECRET_IN_QUERY_POLICY` prima di costruire URL. `YahooNewsProvider` restituisce `DISABLED/NOT_PRIMARY_POLICY` e non usa User-Agent/browser endpoint. `NewsEngine` prova Finnhub solo quando provider symbol e venue sono verificati, poi news locali; conserva il metodo `refresh_all_news(connection, limit=None, force=False)`, propaga `force` fino a `bypass_cache=force`, usa `assets` attivi ordinati, applica effective default 10/massimo 25 e non visita il catalogo. La route conserva il response model `NewsRefreshAllOut` e i campi `summary/results` correnti.
 
-- [ ] **Step 6: Eseguire GREEN e regressione news**
+- [x] **Step 6: Eseguire GREEN e regressione news**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_news_providers.py tests\test_api.py tests\test_alert_service.py -q
@@ -1428,7 +1428,7 @@ Usare host/path fissi, key solo header e params separati. `NewsEngine` risolve p
 
 Expected: news fixture/locali verdi, nessun secret o rete live, batch bounded, Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su query/header, cache fingerprint, provider priority, fallback locale, batch bound, symbol ambiguity e compatibilità sentiment. Correggere Critical/Important e ripetere Step 6.
 

@@ -103,6 +103,7 @@ class NewsEngine:
             SELECT id, symbol, asset_type, instrument_listing_id
             FROM assets
             WHERE UPPER(symbol) = UPPER(?)
+            ORDER BY id
             LIMIT 1
             """,
             (symbol,),

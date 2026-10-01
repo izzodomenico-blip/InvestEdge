@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-09-30.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 12 — Provider e fallback news reali (+ isolamento news demo).**
+**SP2a · Fase 2 · Task 13 — Refresh lazy, prioritari, deduplicati e limitati.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 12*.
-- Branch: `codex/investedge-phase-2-task-12`.
-- Base remota: `origin/codex/investedge-phase-2-task-11`.
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 12.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 13*.
+- Branch: `codex/investedge-phase-2-task-13`.
+- Base remota: `origin/codex/investedge-phase-2-task-12`.
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 13.
 
 ## Legenda
 
@@ -81,8 +81,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 8 | EOD gratuito e fallback (Stooq) | FATTO | `98de55a` | 2026-08-17 | Codex |
 | 9 | Quote USA (Finnhub) | FATTO | `9503e70` | 2026-08-17 | Codex |
 | 10 | Prezzi crypto con identità CoinGecko | FATTO | `54b3faf` checkpoint + `49cdb82` | 2026-09-30 | Codex → Claude |
-| 11 | FX BCE verso EUR e fallback FRED | FATTO | branch `codex/investedge-phase-2-task-11` | 2026-09-30 | Claude |
-| 12 | Provider e fallback news reali (+ isolamento news demo) | IN CORSO | branch `codex/investedge-phase-2-task-12` (checkpoint) | 2026-09-30 | Claude |
+| 11 | FX BCE verso EUR e fallback FRED | FATTO | `88fc20d` | 2026-09-30 | Claude |
+| 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + branch `codex/investedge-phase-2-task-12` | 2026-10-01 | Claude |
 | 13 | Refresh lazy, prioritari, deduplicati | NON INIZIATO | — | — | — |
 | 14 | API catalogo e conferme versionate | NON INIZIATO | — | — | — |
 | 15 | Catalogo paginato nella pagina Universe | NON INIZIATO | — | — | — |
@@ -103,6 +103,14 @@ Evidenza Task 11 (2026-09-30, Claude):
 - `FredReferenceProvider` fail-closed (`MISSING_CREDENTIAL`/`SECRET_IN_QUERY_POLICY`, nota `BULK_ONLY_POLICY`), nessuna chiamata di rete; osservazioni FRED `REFERENCE`/QUOTE mai proiettate in `price_history`; alias `BTP10Y` = `REFERENCE_ONLY/US_10Y_PROXY`;
 - deviazioni: `backend/app/data_providers/transport.py` e `tests/test_provider_budget.py` modificati per gestire il 304 come `NOT_MODIFIED` (fuori dall'elenco file del task); la route FX rispetta `ENABLE_REAL_DATA=false` (409, nessuna chiamata); `backend/app/models/__init__.py` esporta `FxRefreshResult`; nuova impostazione `ECB_FX_CACHE_TTL_HOURS`; autofix Ruff UP012 in `instrument_service.py` (violazione lasciata dal checkpoint Task 10, avrebbe fatto fallire la CI);
 - gate: suite completa `pytest` = 595 passati; `ruff check backend scripts tests` verde; `git diff --check` verde.
+
+Evidenza Task 12 (2026-10-01, Claude):
+
+- Finnhub unico provider news live: key solo header, simbolo `NEWS/VERIFIED` del listing, venue USA supportata, budget 55/min + limiti giornaliero/mensile configurati, massimo 50 articoli, scartati orari invalidi/futuri, URL solo http(s) pubblici; Alpha (`SECRET_IN_QUERY_POLICY`) e Yahoo (`NOT_PRIMARY_POLICY`) news fail-closed senza rete; batch `refresh-all` default 10, massimo 25, solo asset attivi;
+- estensione approvata: news demo (`mock_news`) visibili ma escluse da sentiment, `news_score`/`final_score`, riepilogo di mercato e feature ML; la data delle news demo non viene rinnovata (in demo il sentiment conta 0 news: contratto aggiornato di proposito);
+- **correzione Critical trasversale:** le route di refresh tenevano `BEGIN IMMEDIATE` durante le chiamate provider e il budget (Task 2) rifiuta transazioni del chiamante: ogni refresh reale via API (`/data/refresh*`, `/news/refresh*`) cadeva in `TRANSPORT_FAILED`. Ora il controllo di univocita resta sotto lock e il lock viene rilasciato prima dell'I/O di rete (`_ensure_unambiguous_before_provider_calls`); `_asset` sceglie sempre l'asset originale (`ORDER BY id`). Il test Task 5 sul lock e stato aggiornato al nuovo contratto;
+- deviazioni di file: `sentiment_engine.py`, `ml_dataset_service.py` (estensione demo), `market_data_service.py` (ordinamento `_asset`), `tests/test_provider_budget.py` (test di inoltro `force` spostato da Yahoo a Finnhub); `tests/test_alert_service.py` non richiedeva modifiche;
+- gate: suite completa `pytest` = 618 passati; `ruff check backend scripts tests` verde; `git diff --check` verde; commit sopra il Task 11: 2 (checkpoint per limite di utilizzo + completamento).
 
 ## Backlog per i sottoprogetti futuri
 
@@ -129,11 +137,9 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-09-30 | Push del branch di ogni task e merge fast-forward su `main` ai gate di fase verificati: supera il divieto di merge/push su `main` dei piani Fase 1 e Fase 2 | utente |
 | 2026-09-30 | Documenti di handoff Codex del Task 10 archiviati in `docs/handoff/2026-08-17-phase-2-task-10/` | Claude |
 | 2026-09-30 | Push e merge fast-forward su `main` a ogni task: l'app non è in uso fino al completamento del programma | utente |
+| 2026-10-01 | Le route che chiamano provider rilasciano il lock di univocita prima dell'I/O di rete (il budget non accetta transazioni del chiamante; un lock durante retry di rete bloccherebbe tutte le scritture) | Claude, motivata nel Task 12 |
 
 ## Note di ripresa
-
-- **Task 12 interrotto (limite di utilizzo) con checkpoint pubblicato.** Fatto: Finnhub unico provider news live (header, simbolo NEWS verificato, venue USA, budget 55/min, max 50 articoli, data/URL validati); Alpha e Yahoo news fail-closed; news demo escluse da sentiment, riepilogo di mercato e feature ML, data non rinnovata; batch news default 10, max 25; correzione Critical trasversale: le route di refresh (`/data/refresh*`, `/news/refresh*`) tenevano `BEGIN IMMEDIATE` durante l'I/O e ogni refresh reale via API cadeva in `TRANSPORT_FAILED` (helper `_ensure_unambiguous_before_provider_calls`). Test: `tests/test_news_providers.py` 20 verdi; `pytest tests/test_api.py -k "news or data_refresh_route or refresh_asset or data_refresh"` 20 verdi.
-- **Resta per chiudere il Task 12:** aggiornare `.env.example`/`backend/.env.example` (Yahoo news non piu fonte, `FINNHUB_NEWS_MINUTE_LIMIT`, `FINNHUB_NEWS_MONTHLY_LIMIT`) e la sezione news del README; `ruff check backend scripts tests`; suite completa `pytest`; spuntare le checkbox del Task 12 nel piano; registrare le deviazioni (`sentiment_engine.py`, `ml_dataset_service.py`, `tests/test_provider_budget.py` spostato da Yahoo a Finnhub, fix route dati); commit `fix: govern real news providers and fallbacks`, push, merge fast-forward su `main`.
 
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.

@@ -784,6 +784,7 @@ class MarketDataService:
             LEFT JOIN instruments AS instrument
               ON instrument.id = listing.instrument_id
             WHERE UPPER(asset.symbol) = UPPER(?)
+            ORDER BY asset.id
             LIMIT 1
             """,
             (symbol,),

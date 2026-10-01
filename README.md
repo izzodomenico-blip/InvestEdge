@@ -284,13 +284,16 @@ Il modulo News collega notizie agli asset senza fare scraping web e senza trasfo
 
 Provider disponibili:
 
-- `AlphaVantageNewsProvider`: usa Alpha Vantage News & Sentiment solo se `ENABLE_REAL_NEWS=true` e la chiave Alpha Vantage e configurata.
-- `NewsProviderMock`: fallback deterministico per test, demo e assenza di configurazione reale.
+- `FinnhubNewsProvider`: unico provider news live. Richiede `ENABLE_REAL_NEWS=true`, `FINNHUB_API_KEY` (inviata solo nell'header `X-Finnhub-Token`), un simbolo `provider_symbols` Finnhub `NEWS/VERIFIED` del listing e una venue USA supportata (`XNYS`, `XNAS`, `XASE`, `ARCX`, `BATS`). Budget locale 55/minuto, piu i limiti giornaliero (`NEWS_DAILY_LIMIT`) e mensile (`FINNHUB_NEWS_MONTHLY_LIMIT`); al massimo 50 articoli per risposta, scartati quelli senza orario valido o con orario futuro, URL accettati solo se http(s) pubblici.
+- `AlphaVantageNewsProvider`: disabilitato con reason code `SECRET_IN_QUERY_POLICY` (la key andrebbe in query string); non costruisce URL.
+- `YahooNewsProvider`: disabilitato con reason code `NOT_PRIMARY_POLICY`; nessuna richiesta di rete.
+- `NewsProviderMock`: news demo/locali per test, demo e fallback. Restano visibili (provider `mock_news`, fonte "InvestEdge Demo") ma non entrano mai in sentiment, `news_score`/`final_score`, riepilogo di mercato o feature ML, e un refresh non ne rinnova la data di pubblicazione.
 
 Modalita operative:
 
 - con `ENABLE_REAL_NEWS=false` il backend non chiama API esterne e usa news demo/locali;
-- con real news abilitate ma API key assente, l'app non va in crash e usa news locali;
+- con real news abilitate ma key Finnhub assente, simbolo NEWS non verificato o venue non supportata, l'app non chiama Finnhub e usa news locali;
+- `POST /news/refresh-all` aggiorna soltanto gli asset attivi: 10 di default, al massimo 25 (`limit` fra 1 e 25), e inoltra `force` come semplice bypass della cache;
 - se la cache news e valida, il backend riusa `api_cache`;
 - se il limite giornaliero e raggiunto o il provider fallisce, vengono usate news gia presenti nel database o fallback demo;
 - dashboard e watchlist non avviano chiamate news esterne automaticamente;
@@ -300,6 +303,9 @@ Variabili news:
 
 ```env
 ENABLE_REAL_NEWS=false
+FINNHUB_API_KEY=
+FINNHUB_NEWS_MINUTE_LIMIT=55
+FINNHUB_NEWS_MONTHLY_LIMIT=0
 NEWS_CACHE_TTL_HOURS=6
 NEWS_DAILY_LIMIT=20
 NEWS_SENTIMENT_WEIGHT=5
