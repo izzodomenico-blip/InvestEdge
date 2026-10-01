@@ -24,6 +24,11 @@ from backend.app.data_providers import (
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.models.market_data import MarketObservationEnvelope
 from backend.app.services.common import now_utc as _now
+from backend.app.services.data_coverage_service import (
+    CoverageInvariantError,
+    DataCoverageService,
+    provider_status_details,
+)
 from backend.app.services.instrument_quality_service import InstrumentQualityService
 from backend.app.services.instrument_service import InstrumentService
 from backend.app.services.market_observation_service import MarketObservationService
@@ -743,8 +748,13 @@ class MarketDataService:
             "message": message,
         }
 
-    def get_global_status(self, connection: sqlite3.Connection) -> dict[str, Any]:
+    def get_global_status(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
         settings = get_settings()
+        moment = now or datetime.now(UTC)
         registry = ProviderRegistry(settings, connection)
         stats = self._cache_stats(connection)
         latest_row = connection.execute(
@@ -770,13 +780,23 @@ class MarketDataService:
         else:
             data_mode = "MIXED"
 
+        # Estensioni additive: budget/cooldown/esito per provider e sintesi della copertura.
+        details = provider_status_details(connection, registry, moment)
+        try:
+            coverage_summary = DataCoverageService(settings).summary(connection, moment)
+        except CoverageInvariantError:
+            # Fail-soft per la consultazione: lo status legacy resta disponibile.
+            coverage_summary = None
         return {
             "enable_real_data": settings.enable_real_data,
-            "provider_status": registry.statuses(),
+            "provider_status": [
+                {**status, **details.get(status["provider"], {})} for status in registry.statuses()
+            ],
             "api_usage": registry.usage_rows(),
             "cache_stats": stats,
             "global_last_update": latest_row["last_update"] if latest_row else None,
             "data_mode": data_mode,
+            "coverage_summary": coverage_summary,
         }
 
     def get_usage(self, connection: sqlite3.Connection) -> list[dict[str, Any]]:

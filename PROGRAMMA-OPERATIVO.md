@@ -6,13 +6,13 @@ Ultimo aggiornamento: 2026-10-01.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 16 — API e metriche misurabili di copertura dati.**
+**SP2a · Fase 2 · Task 17 — Copertura, qualità e budget nel Data Center.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 16*.
-- Branch: `codex/investedge-phase-2-task-16`.
-- Base remota: `origin/codex/investedge-phase-2-task-15`.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 17*.
+- Branch: `codex/investedge-phase-2-task-17`.
+- Base remota: `origin/codex/investedge-phase-2-task-16`.
 - Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01), salvo diversa indicazione dell'utente.
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 16.
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 17.
 
 ## Legenda
 
@@ -86,8 +86,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + `edbc07e` | 2026-10-01 | Claude |
 | 13 | Refresh lazy, prioritari, deduplicati | FATTO | `b1a39e2` | 2026-10-01 | Claude |
 | 14 | API catalogo e conferme versionate | FATTO | `62ed48b` | 2026-10-01 | Claude |
-| 15 | Catalogo paginato nella pagina Universe | FATTO | branch `codex/investedge-phase-2-task-15` | 2026-10-01 | Claude |
-| 16 | API e metriche di copertura dati | NON INIZIATO | — | — | — |
+| 15 | Catalogo paginato nella pagina Universe | FATTO | `30069f0` | 2026-10-01 | Claude |
+| 16 | API e metriche di copertura dati | FATTO | branch `codex/investedge-phase-2-task-16` | 2026-10-01 | Claude |
 | 17 | Copertura, qualità e budget nel Data Center | NON INIZIATO | — | — | — |
 | 18 | Audit cumulativo e report Fase 2 | NON INIZIATO | — | — | — |
 
@@ -142,6 +142,15 @@ Evidenza Task 15 (2026-10-01, Claude):
 - minori aperti: se il totale scende sotto l'offset corrente la pagina vuota mostra un numero di pagina incoerente (resta il pulsante "Precedente"); lo stato del tab catalogo si azzera cambiando tab;
 - gate: `npm run test:run -- UniversePage.test.tsx` = 9 passati; `npm run build` exit 0; backend invariato: suite `pytest` = 665 passati; `git diff --check` verde.
 
+Evidenza Task 16 (2026-10-01, Claude):
+
+- `GET /data/coverage` (`DataCoverageService`): stessa connessione, stessa transazione di lettura e stesso `measured_at`; solo l'ultimo snapshot TR `COMPLETE` e l'ultimo resolution case per entry (`ROW_NUMBER` su id), ogni entry `ACCEPTED` in un solo bucket (`UNPROCESSED` senza case); percentuali con denominatore esplicito e `0.0` a denominatore zero; tier su instrument distinti; TR con bucket `UNRESOLVED_IDENTITY`; gruppi per asset class e MIC (`UNRESOLVED`); provider eligible → unmapped/mapped → fresh/stale/missing con freschezza alla misura, quality e delay bucket sull'ultima revisione, rejection non risolte, attribution; FX separato da `fx_rates` (direct/inverse, `ECB_FX_MAX_AGE_DAYS`, reciprocita di `FXService`, `rate_to_eur` stringa decimale JSON o `null`, EUR identita fuori denominatore, cambi congelati intatti); coda `PENDING`/`BUDGET_DEFERRED`; invarianti di partizione verificate prima della risposta (violazione → 500 `COVERAGE_INVARIANT_FAILED`); nessuna chiamata provider (trasporto HTTP bloccato nei test) e nessuna scrittura (`total_changes` invariato);
+- `/data/status` additivo: `coverage_summary` nullable (null se un'invariante fallisce) e, per provider, `capabilities`, `budget_windows` minuto/giorno/mese con `limit`/`used`/`remaining`/`reset_at`, `cooldown_until`, `availability_state`/`availability_reason`, `last_outcome`/`last_outcome_at`; `daily_limit` e `calls_today` invariati e coerenti con la finestra giornaliera; nessuna key, URL, endpoint o fingerprint;
+- scelte interpretative registrate: `rejection_reasons` con prefisso `PARSE:`/`RESOLUTION:`; `provider_coverage` sulle sole coppie mappabili su listing (NEWS escluso: non produce observation); listing risolti = metadata VERIFIED + case `RESOLVED` e `ACTIVE` (i listing legacy degli asset seed non entrano nei denominatori provider); bucket di ritardo dal `delay_seconds` all'ingestione; nuovo schema `DataCoverageSummaryOut`; `get_global_status(now=None)` opzionale per test deterministici; riuso di helper privati esistenti (`_window_values`, `_policy_limits`, `_PROVIDER_INSTRUMENT_TYPES`, `ProviderBudgetManager._active_cooldown`/`_minimum_limit`, `provider._budget_policy`) senza toccare file fuori elenco; nella fixture la richiesta `BUDGET_DEFERRED` e impostata direttamente in tabella;
+- prestazioni (DB temporaneo sintetico, trasporto HTTP bloccato): 20.000 entry, 10.000 listing risolti, 500 mappati × 30 barre → `measure` ~170 ms; piani con `idx_catalog_entries_snapshot_row`, `idx_instrument_resolution_cases_entry_latest`, `idx_market_observations_latest` e sottoquery non correlate (`LIST SUBQUERY`), nessuna sottoquery correlata per riga del catalogo;
+- minori aperti: lo stato TR `VERIFIED` viene dalla projection del listing senza applicare `TRADE_REPUBLIC_VERIFIED_MAX_AGE_DAYS`; ECB non compare in `provider_status` (budget FX non visibile nello status); `/data/status` esegue anche la misura di copertura; un errore SQL inatteso della copertura non e fail-soft (lo sono solo le invarianti);
+- gate: `pytest tests\test_data_coverage.py` = 12 passati; `pytest tests\test_api.py -k "coverage or data_status"` = 4 passati; suite completa `pytest -p no:cacheprovider` = 679 passati (0 falliti, JUnit XML); `ruff check backend scripts tests` verde; `git diff --check` verde; frontend non toccato.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -170,6 +179,7 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-01 | Le route che chiamano provider rilasciano il lock di univocita prima dell'I/O di rete (il budget non accetta transazioni del chiamante; un lock durante retry di rete bloccherebbe tutte le scritture) | Claude, motivata nel Task 12 |
 | 2026-10-01 | Una nuova versione del provider symbol puo sostituire (`supersedes`) la versione ritirata dello stesso listing anche con simbolo diverso; trigger estesi con migrazione | Claude, motivata nel Task 14 |
 | 2026-10-01 | Task 15 eseguito nella stessa chat del Task 14 (deroga alla regola "nuova chat per task") | utente |
+| 2026-10-01 | Copertura: denominatori provider sui soli listing risolti (metadata VERIFIED + case RESOLVED, ACTIVE) e sulle coppie mappabili su listing (coingecko EOD/QUOTE, finnhub QUOTE, stooq EOD); `rejection_reasons` con prefisso `PARSE:`/`RESOLUTION:`; invariante violata → `/data/coverage` 500 e `coverage_summary` null | Claude, motivata nel Task 16 |
 
 ## Note di ripresa
 

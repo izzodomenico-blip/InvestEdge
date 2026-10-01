@@ -31,6 +31,7 @@ from backend.app.models import (
     BacktestSummaryOut,
     BackupOut,
     DashboardOut,
+    DataCoverageOut,
     DataRefreshAllOut,
     DataRefreshResultOut,
     DataStatusOut,
@@ -122,6 +123,7 @@ from backend.app.services.catalog_service import (
     search_instruments,
 )
 from backend.app.services.dashboard_service import get_dashboard
+from backend.app.services.data_coverage_service import CoverageInvariantError, DataCoverageService
 from backend.app.services.fx_service import FXService
 from backend.app.services.instrument_resolution_service import (
     CatalogResolutionError,
@@ -158,6 +160,7 @@ catalog_service = CatalogService()
 instrument_resolution_service = InstrumentResolutionService()
 listing_confirmation_service = ListingConfirmationService()
 fx_service = FXService()
+data_coverage_service = DataCoverageService()
 
 
 def _get_unique_asset(connection: sqlite3.Connection, symbol: str) -> AssetOut | None:
@@ -973,6 +976,19 @@ def get_symbol_news(symbol: str, limit: int = Query(default=50, ge=1, le=200)) -
 def data_status() -> DataStatusOut:
     with db_session() as connection:
         return DataStatusOut(**market_data_service.get_global_status(connection))
+
+
+@router.get("/data/coverage", response_model=DataCoverageOut)
+def data_coverage() -> DataCoverageOut:
+    """Copertura misurata sul database locale: nessuna chiamata provider, nessuna scrittura."""
+    try:
+        with db_session() as connection:
+            return data_coverage_service.measure(connection, datetime.now(UTC))
+    except CoverageInvariantError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"reason_code": "COVERAGE_INVARIANT_FAILED"},
+        ) from None
 
 
 @router.post("/data/catalog/refresh", response_model=CatalogIngestResultOut)

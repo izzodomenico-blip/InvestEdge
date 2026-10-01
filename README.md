@@ -275,6 +275,18 @@ I refresh passano da una coda (`refresh_requests`, esiti in `refresh_runs`) con 
 - Senza `force` un dato fresco viene saltato; con `force` si salta la freschezza e si ignora la cache, ma quota, cooldown, deduplica e validazione restano obbligatori. Un provider in cooldown rinvia l'unita senza consumare budget.
 - Script: `backend\.venv\Scripts\python.exe backend\scripts\activate_real_data.py --limit 10` mostra l'anteprima; aggiungere `--execute` per eseguire. Default del batch configurabile con `REFRESH_BATCH_DEFAULT_LIMIT` (10).
 
+### Copertura dati misurabile
+
+`GET /data/coverage` misura la copertura sul database locale, senza chiamate provider e senza scritture: tutte le query usano la stessa connessione, la stessa transazione di lettura e lo stesso `measured_at`. Ogni percentuale ha un denominatore esplicito e vale `0.0` quando il denominatore e zero; nessun numero di strumenti o percentuale obiettivo e promesso.
+
+- Catalogo: solo l'ultimo snapshot `COMPLETE` del catalogo Trade Republic. `parse_denominator` = entry `ACCEPTED`/`AMBIGUOUS`/`REJECTED`; `resolution_denominator` = entry `ACCEPTED`, ciascuna in un solo bucket del suo ultimo resolution case (`RESOLVED`, `AMBIGUOUS`, `UNMATCHED`, `REJECTED`) oppure `UNPROCESSED`. `resolved_percent` usa soltanto gli `ACCEPTED`. `rejection_reasons` tiene distinte le cause del parser (`PARSE:<codice>`) e della resolution (`RESOLUTION:<codice>`).
+- Tier: instrument distinti collegati alle entry `ACCEPTED` correnti. Stato Trade Republic: denominatore = entry `ACCEPTED`; le entry senza listing risolto restano nel bucket `UNRESOLVED_IDENTITY`. Gruppi per asset class e per MIC (`UNRESOLVED` se manca il listing risolto o il MIC).
+- Provider (`coingecko` EOD/QUOTE, `finnhub` QUOTE, `stooq` EOD): `eligible_listings` = listing attivi risolti (metadata verificati e case `RESOLVED`) compatibili con la capability, partizionati in `unmapped`/`mapped` e i mapped in `fresh`/`stale`/`missing_observation`. La freschezza usa la policy delle observation al momento della misura; il bucket di ritardo (`0-5m`, `5-30m`, `30m-24h`, `1-4d`, `>4d`) usa il ritardo all'ingestione dell'ultima revisione. `rejected_observations` conta le rejection non ancora risolte. I listing legacy degli asset seed non sono risolti e non entrano nei denominatori provider.
+- FX: valute non-EUR distinte di asset attivi, posizioni con quantita positiva e listing risolti; per ciascuna l'ultima riga diretta `valuta/EUR`, altrimenti l'inversa, con la soglia `ECB_FX_MAX_AGE_DAYS` e la reciprocita di `FXService`. `rate_to_eur` e una stringa decimale JSON (`null` se `MISSING`). EUR resta identita e non entra nel denominatore; i cambi congelati di posizioni e ordini non vengono toccati.
+- Coda: `pending_refresh` (`PENDING`) e `budget_deferred` (`BUDGET_DEFERRED`).
+
+`GET /data/status` resta compatibile e aggiunge `coverage_summary` (nullable: `null` se una partizione non somma al proprio denominatore, mentre `/data/coverage` risponde 500 con `COVERAGE_INVARIANT_FAILED`). Ogni provider aggiunge `capabilities`, `budget_windows` (minuto/giorno/mese con `limit`, `used`, `remaining`, `reset_at`), `cooldown_until`, `availability_state`/`availability_reason` e `last_outcome`/`last_outcome_at`; `daily_limit` e `calls_today` restano coerenti con la finestra giornaliera. Nessuna key, URL, endpoint o fingerprint viene esposto.
+
 Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backend/.env` puo contenere chiavi reali e non deve essere committato.
 
 ```env
@@ -385,6 +397,7 @@ Endpoint iniziali:
 - `GET /backtests/{backtest_id}`
 - `DELETE /backtests/{backtest_id}`
 - `GET /data/status`
+- `GET /data/coverage`
 - `GET /data/status/{symbol}`
 - `POST /data/catalog/refresh?force=false`
 - `POST /data/catalog/{snapshot_id}/resolve?offset=0&limit=5`

@@ -3616,6 +3616,149 @@ def test_data_status_endpoint(client: TestClient) -> None:
     assert data["cache_stats"]["entries"] >= 0
 
 
+_DATA_STATUS_LEGACY_FIELDS = [
+    "enable_real_data",
+    "provider_status",
+    "api_usage",
+    "cache_stats",
+    "global_last_update",
+    "data_mode",
+]
+_PROVIDER_STATUS_LEGACY_FIELDS = [
+    "provider",
+    "enabled",
+    "api_key_configured",
+    "daily_limit",
+    "calls_today",
+    "supports",
+]
+_DATA_COVERAGE_FIELDS = [
+    "measured_at",
+    "latest_catalog_snapshot_id",
+    "latest_catalog_retrieved_at",
+    "latest_catalog_sha256",
+    "parse_accepted_entries",
+    "parse_ambiguous_entries",
+    "parse_rejected_entries",
+    "parse_denominator",
+    "resolution_resolved_entries",
+    "resolution_ambiguous_entries",
+    "resolution_unmatched_entries",
+    "resolution_rejected_entries",
+    "resolution_unprocessed_entries",
+    "resolution_denominator",
+    "resolved_percent",
+    "tier_denominator",
+    "tier_counts",
+    "tier_percentages",
+    "trade_republic_denominator",
+    "trade_republic_status_counts",
+    "trade_republic_verified_percent",
+    "by_asset_class",
+    "by_market",
+    "rejection_reasons",
+    "provider_coverage",
+    "fx_currency_denominator",
+    "fx_fresh_currencies",
+    "fx_stale_currencies",
+    "fx_missing_currencies",
+    "fx_coverage",
+    "pending_refresh",
+    "budget_deferred",
+]
+
+
+def test_data_coverage_endpoint_serializes_fx_rates_as_decimal_strings(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decimal import Decimal
+
+    from backend.app.database import db_session
+    from backend.app.services.data_coverage_service import CoverageInvariantError, DataCoverageService
+
+    network_calls = _forbid_network(monkeypatch)
+    with db_session() as connection:
+        connection.execute(
+            "INSERT INTO assets (symbol, name, asset_type, currency) VALUES ('CHFX', 'Swiss Fixture', 'stock', 'CHF')"
+        )
+
+    response = client.get("/data/coverage")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == _DATA_COVERAGE_FIELDS
+    # Il seed attiva soltanto asset legacy: nessun catalogo TR, denominatori espliciti a zero.
+    assert body["latest_catalog_snapshot_id"] is None
+    assert (body["parse_denominator"], body["resolution_denominator"], body["resolved_percent"]) == (0, 0, 0.0)
+    assert [(item["provider"], item["capability"]) for item in body["provider_coverage"]] == [
+        ("coingecko", "EOD"),
+        ("coingecko", "QUOTE"),
+        ("finnhub", "QUOTE"),
+        ("stooq", "EOD"),
+    ]
+    fx = {item["from_currency"]: item for item in body["fx_coverage"]}
+    assert list(fx) == ["CHF", "USD"]
+    assert (
+        body["fx_currency_denominator"],
+        body["fx_fresh_currencies"],
+        body["fx_stale_currencies"],
+        body["fx_missing_currencies"],
+    ) == (2, 1, 0, 1)
+    assert isinstance(fx["USD"]["rate_to_eur"], str)
+    assert Decimal(fx["USD"]["rate_to_eur"]) == Decimal("0.92")
+    assert (fx["USD"]["status"], fx["USD"]["direction"], fx["USD"]["to_currency"]) == ("FRESH", "DIRECT", "EUR")
+    assert '"rate_to_eur":"0.92"' in response.text
+    assert fx["CHF"]["rate_to_eur"] is None
+    assert '"rate_to_eur":null' in response.text
+    assert fx["CHF"]["status"] == "MISSING"
+    assert network_calls == []
+
+    def broken(self, connection, measured_at):  # noqa: ANN001, ANN202
+        raise CoverageInvariantError("parse_partition")
+
+    monkeypatch.setattr(DataCoverageService, "measure", broken)
+    failed = client.get("/data/coverage")
+    assert failed.status_code == 500
+    assert failed.json() == {"detail": {"reason_code": "COVERAGE_INVARIANT_FAILED"}}
+    status_response = client.get("/data/status")
+    assert status_response.status_code == 200
+    assert status_response.json()["coverage_summary"] is None
+
+
+def test_data_status_compat_keeps_legacy_fields_and_adds_budget_and_coverage(client: TestClient) -> None:
+    response = client.get("/data/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert list(body)[: len(_DATA_STATUS_LEGACY_FIELDS)] == _DATA_STATUS_LEGACY_FIELDS
+    assert body["data_mode"] == "SEED"
+    summary = body["coverage_summary"]
+    assert summary is not None
+    assert summary["resolution_denominator"] == 0
+    assert summary["resolved_percent"] == 0.0
+    assert (
+        summary["fx_currency_denominator"],
+        summary["fx_fresh_currencies"],
+        summary["fx_stale_currencies"],
+        summary["fx_missing_currencies"],
+    ) == (1, 1, 0, 0)
+    for provider in body["provider_status"]:
+        assert list(provider)[: len(_PROVIDER_STATUS_LEGACY_FIELDS)] == _PROVIDER_STATUS_LEGACY_FIELDS
+        windows = {window["window"]: window for window in provider["budget_windows"]}
+        assert list(windows) == ["MINUTE", "DAY", "MONTH"]
+        # I campi legacy restano coerenti con la finestra giornaliera del budget.
+        assert (windows["DAY"]["limit"] or 0) == provider["daily_limit"]
+        assert provider["calls_today"] <= windows["DAY"]["used"]
+        assert provider["availability_state"] in {"AVAILABLE", "DISABLED", "COOLDOWN"}
+    stooq = next(item for item in body["provider_status"] if item["provider"] == "stooq")
+    assert stooq["capabilities"] == ["EOD"]
+    assert (stooq["availability_state"], stooq["availability_reason"]) == ("DISABLED", "OPT_IN_DISABLED")
+    assert stooq["last_outcome"] is None
+    assert "http" not in response.text
+    assert "fingerprint" not in response.text
+
+
 def test_asset_data_status_endpoint(client: TestClient) -> None:
     response = client.get("/data/status/AAPL")
 

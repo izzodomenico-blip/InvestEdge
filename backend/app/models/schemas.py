@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -9,7 +10,13 @@ from backend.app.models.market_data import (
     EffectiveObservationQuality,
     SourceObservationQuality,
 )
-from backend.app.services.provider_budget_service import ProviderCapability
+from backend.app.services.provider_budget_service import (
+    AvailabilityReason,
+    AvailabilityState,
+    BudgetWindow,
+    ProviderCapability,
+    RequestOutcome,
+)
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
 InstrumentType = Literal[
@@ -1056,6 +1063,14 @@ class AllocationPlanOut(BaseModel):
     confirmation_token: str
 
 
+class ProviderBudgetWindowOut(BaseModel):
+    window: BudgetWindow
+    limit: int | None
+    used: int
+    remaining: int | None
+    reset_at: datetime
+
+
 class DataProviderStatusOut(BaseModel):
     provider: str
     enabled: bool
@@ -1063,6 +1078,14 @@ class DataProviderStatusOut(BaseModel):
     daily_limit: int
     calls_today: int
     supports: list[str] = Field(default_factory=list)
+    # Estensioni additive: nessuna key, URL, endpoint o fingerprint.
+    capabilities: list[ProviderCapability] = Field(default_factory=list)
+    budget_windows: list[ProviderBudgetWindowOut] = Field(default_factory=list)
+    cooldown_until: datetime | None = None
+    availability_state: AvailabilityState | None = None
+    availability_reason: AvailabilityReason | None = None
+    last_outcome: RequestOutcome | None = None
+    last_outcome_at: datetime | None = None
 
 
 class ApiUsageOut(BaseModel):
@@ -1073,6 +1096,105 @@ class ApiUsageOut(BaseModel):
     updated_at: str | None = None
 
 
+class CoverageCount(BaseModel):
+    key: str
+    total: int
+    resolved: int
+    qualified: int
+    observable: int
+    reference_only: int
+
+
+class ProviderCoverageOut(BaseModel):
+    provider: str
+    capability: ProviderCapability
+    eligible_listings: int
+    unmapped_listings: int
+    mapped_listings: int
+    fresh_listings: int
+    stale_listings: int
+    missing_observation_listings: int
+    rejected_observations: int
+    quality_counts: dict[str, int]
+    delay_bucket_counts: dict[str, int]
+    latest_provider_observed_at: datetime | None
+    latest_ingested_at: datetime | None
+    attribution: str | None
+
+
+FxCoverageStatus = Literal["FRESH", "STALE", "MISSING"]
+FxRateDirection = Literal["DIRECT", "INVERSE"]
+
+
+class FxCoverageOut(BaseModel):
+    from_currency: str
+    to_currency: Literal["EUR"]
+    status: FxCoverageStatus
+    direction: FxRateDirection | None
+    provider: str | None
+    # Pydantic serializza Decimal come stringa decimale JSON (mai binary float) o null.
+    rate_to_eur: Decimal | None
+    observed_at: datetime | None
+    ingested_at: datetime | None
+    age_seconds: int | None
+    quality: str | None
+
+
+class DataCoverageOut(BaseModel):
+    measured_at: datetime
+    latest_catalog_snapshot_id: int | None
+    latest_catalog_retrieved_at: datetime | None
+    latest_catalog_sha256: str | None
+    parse_accepted_entries: int
+    parse_ambiguous_entries: int
+    parse_rejected_entries: int
+    parse_denominator: int
+    resolution_resolved_entries: int
+    resolution_ambiguous_entries: int
+    resolution_unmatched_entries: int
+    resolution_rejected_entries: int
+    resolution_unprocessed_entries: int
+    resolution_denominator: int
+    resolved_percent: float
+    tier_denominator: int
+    tier_counts: dict[QualityTier, int]
+    tier_percentages: dict[QualityTier, float]
+    trade_republic_denominator: int
+    trade_republic_status_counts: dict[str, int]
+    trade_republic_verified_percent: float
+    by_asset_class: list[CoverageCount]
+    by_market: list[CoverageCount]
+    rejection_reasons: dict[str, int]
+    provider_coverage: list[ProviderCoverageOut]
+    fx_currency_denominator: int
+    fx_fresh_currencies: int
+    fx_stale_currencies: int
+    fx_missing_currencies: int
+    fx_coverage: list[FxCoverageOut]
+    pending_refresh: int
+    budget_deferred: int
+
+
+class DataCoverageSummaryOut(BaseModel):
+    """Sintesi di `DataCoverageOut` per `/data/status`, con gli stessi denominatori espliciti."""
+
+    measured_at: datetime
+    latest_catalog_snapshot_id: int | None
+    latest_catalog_retrieved_at: datetime | None
+    resolution_denominator: int
+    resolved_percent: float
+    tier_denominator: int
+    tier_percentages: dict[QualityTier, float]
+    trade_republic_denominator: int
+    trade_republic_verified_percent: float
+    fx_currency_denominator: int
+    fx_fresh_currencies: int
+    fx_stale_currencies: int
+    fx_missing_currencies: int
+    pending_refresh: int
+    budget_deferred: int
+
+
 class DataStatusOut(BaseModel):
     enable_real_data: bool
     provider_status: list[DataProviderStatusOut]
@@ -1080,6 +1202,7 @@ class DataStatusOut(BaseModel):
     cache_stats: dict[str, int]
     global_last_update: str | None = None
     data_mode: Literal["SEED", "MIXED", "REAL"]
+    coverage_summary: DataCoverageSummaryOut | None = None
 
 
 class AssetDataStatusOut(BaseModel):

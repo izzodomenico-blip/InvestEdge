@@ -1924,11 +1924,11 @@ class DataCoverageOut(BaseModel):
 
 Nuovo endpoint `GET /data/coverage`; `/data/status` riceve un campo nullable/additivo `coverage_summary`. Percentuali hanno denominatore esplicito e `0.0` quando il totale è zero. Catalog count/resolution/rejection usano esclusivamente l'ultimo `catalog_snapshots.status="COMPLETE"`; per ogni entry ACCEPTED conta soltanto l'ultimo resolution case, oppure `resolution_unprocessed_entries` se non esiste. `parse_denominator` conta tutte le entry ACCEPTED/AMBIGUOUS/REJECTED dello snapshot e misura il parsing; deve valere `parse_accepted_entries + parse_ambiguous_entries + parse_rejected_entries == parse_denominator`. `resolution_denominator` coincide con `parse_accepted_entries`; deve valere `resolution_resolved_entries + resolution_ambiguous_entries + resolution_unmatched_entries + resolution_rejected_entries + resolution_unprocessed_entries == resolution_denominator`. Le rejection parser e resolution restano quindi distinte. `resolved_percent` usa soltanto `resolution_resolved_entries/resolution_denominator`. `tier_denominator` conta instrument distinti collegati alle entry ACCEPTED correnti. `trade_republic_denominator` coincide con le entry ACCEPTED correnti: ogni entry senza listing risolto entra nel bucket `UNRESOLVED_IDENTITY`, così gli irrisolti non spariscono dal denominatore TR; le altre entrano nello stato del listing. Le versioni precedenti restano consultabili ma non entrano nei denominatori correnti. `provider_coverage` esclude capability FX/listing: FX usa esclusivamente i campi `fx_*` derivati da `fx_rates`.
 
-- [ ] **Step 1: Scrivere test RED su metriche**
+- [x] **Step 1: Scrivere test RED su metriche**
 
 Costruire fixture DB con due snapshot COMPLETE più uno FAILED, parse accepted/ambiguous/rejected, resolution case storici e latest per tutti gli stati `RESOLVED|AMBIGUOUS|UNMATCHED|REJECTED`, entry ACCEPTED mai processata, tre tier, TR unresolved/cataloged/verified prodotto tramite attestation service Task 14, provider EOD/QUOTE, mapping provider assente, mapping presente senza observation, dati fresh/stale/rejected e request deferred. Per FX usare `FXService.refresh_ecb()` con client fixture: una valuta fresh diretta, una inverse, una stale, una missing e EUR identity; verificare producer→coverage, denominatore e somma fresh/stale/missing senza creare listing/observation. Chiamare l'endpoint reale con `TestClient` e asserire che `rate_to_eur` valido sia una stringa decimale JSON e missing sia `null`, non un numero binary-float. Verificare inoltre che solo latest COMPLETE/latest case contino; le due invarianti di somma; rejection parser distinta da resolution; `resolved_percent` calcolato solo sugli ACCEPTED; irrisolti inclusi nel denominatore TR; conteggi e percentuali tier/TR; denominatore provider/capability; distinzione unmapped/missing observation; gruppi asset class/market, checksum, reason code, zero denominator, ordering, observed/ingested/delay e assenza di promesse statiche.
 
-- [ ] **Step 2: Eseguire RED backend**
+- [x] **Step 2: Eseguire RED backend**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_data_coverage.py tests\test_api.py -k "coverage or data_status_compat" -q
@@ -1936,21 +1936,21 @@ Costruire fixture DB con due snapshot COMPLETE più uno FAILED, parse accepted/a
 
 Expected: failure perché servizio/endpoint/campi non esistono.
 
-- [ ] **Step 3: Implementare aggregazioni coerenti**
+- [x] **Step 3: Implementare aggregazioni coerenti**
 
 Eseguire tutte le query con lo stesso `measured_at` e la stessa connessione. Selezionare prima latest snapshot COMPLETE e latest resolution case per entry con CTE/window deterministica; classificare con `CASE` ogni ACCEPTED in esattamente un bucket resolution, usando `UNPROCESSED` quando manca il case. Verificare le invarianti prima di costruire l'output. `resolved_percent = round(resolution_resolved_entries * 100 / resolution_denominator, 2)`; ogni tier percent usa `tier_denominator`; TR verified percent usa `trade_republic_denominator` e le entry senza listing restano `UNRESOLVED_IDENTITY`. “Fresh” usa la policy observation al momento della misura, non un flag persistito. Per market usare MIC; listing senza MIC sono bucket `UNRESOLVED`. Contare il catalogo una volta per `catalog_entry`, non per provider symbol o observation.
 
-- [ ] **Step 4: Calcolare copertura, qualità e ritardo per provider**
+- [x] **Step 4: Calcolare copertura, qualità e ritardo per provider**
 
 Per ogni provider/capability non-FX definire `eligible_listings` come i listing risolti il cui tipo/metadata soddisfa la capability. Partizionare esattamente quel denominatore in `unmapped_listings` e `mapped_listings`; partizionare poi i mapped in `fresh_listings`, `stale_listings` e `missing_observation_listings`. Calcolare quality/delay bucket (`0-5m`, `5-30m`, `30m-24h`, `1-4d`, `>4d`), ultimo observed/ingested, rejection correnti e attribution. Usare l'ultima revisione observation valida e non moltiplicare listing per revision/eventi fallback.
 
 Per FX costruire il set deterministico delle currency non-EUR distinte presenti in `assets`, `portfolio_positions` con quantità positiva e listing risolti. Per ciascuna cercare l'ultima riga diretta `currency/EUR`, altrimenti l'inversa `EUR/currency`, applicando la stessa soglia `ECB_FX_MAX_AGE_DAYS` e la stessa reciprocità di `FXService`; nessuna rete viene chiamata. Partizionare il denominatore in FRESH/STALE/MISSING e verificare la somma. EUR identity resta semantica `rate=1` di `FXService` ma non entra nel denominatore non-EUR. Non modificare o ricalcolare `fx_rate_to_base` congelati di posizioni/ordini.
 
-- [ ] **Step 5: Estendere status provider additivamente e testare i timestamp**
+- [x] **Step 5: Estendere status provider additivamente e testare i timestamp**
 
 Aggiungere capability, finestre minute/day/month con limit/used/remaining/reset_at, cooldown e ultimo outcome/reason. Non esporre key, URL, endpoint o fingerprint; i vecchi campi restano coerenti con la finestra giornaliera.
 
-- [ ] **Step 6: Eseguire GREEN backend**
+- [x] **Step 6: Eseguire GREEN backend**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_data_coverage.py tests\test_api.py tests\test_provider_budget.py tests\test_refresh_planner.py tests\test_fx_service.py tests\test_portfolio_accounting.py -q
@@ -1959,7 +1959,7 @@ Aggiungere capability, finestre minute/day/month con limit/used/remaining/reset_
 
 Expected: metriche/status backend verdi e Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su latest snapshot/case, denominatori/percentuali, join moltiplicativi, freshness time-dependent, coverage FX separata/direct/inverse/identity, campi frozen EUR, observed/ingested/delay, segreti e attribuzioni. Correggere Critical/Important e ripetere Step 6.
 
