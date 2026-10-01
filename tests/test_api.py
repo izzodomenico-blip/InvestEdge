@@ -586,9 +586,10 @@ def test_provider_refresh_guard_checks_symbol_then_releases_lock_before_network(
 
     def probe_concurrent_duplicate(
         connection: sqlite3.Connection,
-        symbol: str,
+        asset: sqlite3.Row,
         force: bool = False,
     ) -> dict[str, object]:
+        symbol = asset["symbol"]
         assert symbol == "RACELOCK"
         assert force is False
         assert connection.in_transaction is False
@@ -603,7 +604,7 @@ def test_provider_refresh_guard_checks_symbol_then_releases_lock_before_network(
                 )
         except sqlite3.OperationalError as exc:
             lock_errors.append(str(exc))
-        resolved.append(int(routes.market_data_service._asset(connection, symbol)["id"]))
+        resolved.append(int(asset["id"]))
         return {
             "symbol": symbol,
             "provider": "probe",
@@ -618,7 +619,7 @@ def test_provider_refresh_guard_checks_symbol_then_releases_lock_before_network(
 
     monkeypatch.setattr(
         routes.market_data_service,
-        "refresh_asset_prices",
+        "refresh_asset_row",
         probe_concurrent_duplicate,
     )
 
@@ -4125,3 +4126,122 @@ def test_news_refresh_all_is_bounded_and_forwards_force(
     assert maximum.status_code == 200
     assert maximum.json()["summary"]["requested"] == 25
     assert len({symbol for symbol, _force in calls}) == 25
+
+
+_DATA_REFRESH_RESULT_FIELDS = {
+    "symbol",
+    "provider",
+    "rows_inserted",
+    "rows_updated",
+    "used_cache",
+    "used_fallback",
+    "message",
+}
+
+
+def test_data_refresh_all_defaults_to_10_and_keeps_legacy_payload(client: TestClient) -> None:
+    response = client.post("/data/refresh-all")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data["summary"]) == {"requested", "updated", "fallback", "rows_inserted", "rows_updated"}
+    assert data["summary"]["requested"] == 10
+    assert len(data["results"]) == 10
+    assert all(set(item) == _DATA_REFRESH_RESULT_FIELDS for item in data["results"])
+    assert client.post("/data/refresh-all", params={"limit": "26"}).status_code == 422
+
+
+def test_data_refresh_all_prioritizes_positions_and_forwards_force(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.api import routes
+    from backend.app.database import db_session
+
+    forces: list[tuple[str, bool]] = []
+
+    def fake_row(connection, asset, force=False):  # noqa: ANN001, ANN202
+        forces.append((asset["symbol"], force))
+        return {
+            "symbol": asset["symbol"],
+            "provider": "fixture",
+            "rows_inserted": 1,
+            "rows_updated": 0,
+            "used_cache": False,
+            "used_fallback": False,
+            "message": "ok",
+        }
+
+    monkeypatch.setattr(routes.market_data_service, "refresh_asset_row", fake_row)
+    with db_session() as connection:
+        held = {
+            row["symbol"]
+            for row in connection.execute(
+                """
+                SELECT asset.symbol FROM portfolio_positions AS position
+                JOIN assets AS asset ON asset.id = position.asset_id
+                WHERE position.quantity != 0
+                """
+            )
+        }
+
+    response = client.post("/data/refresh-all", params={"limit": "3", "force": "true"})
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["updated"] == 3
+    assert all(force is True for _symbol, force in forces)
+    assert {symbol for symbol, _force in forces} <= held
+
+
+def test_single_refresh_enqueues_requested_unit_with_force(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    response = client.post("/data/refresh/AAPL", params={"force": "true"})
+
+    assert response.status_code == 200
+    assert set(response.json()) == _DATA_REFRESH_RESULT_FIELDS
+    with db_session() as connection:
+        row = connection.execute(
+            """
+            SELECT request.reason, request.force, request.state
+            FROM refresh_requests AS request
+            JOIN assets AS asset ON asset.instrument_listing_id = request.listing_id
+            WHERE asset.symbol = 'AAPL'
+            ORDER BY request.id DESC LIMIT 1
+            """
+        ).fetchone()
+    assert (row["reason"], row["force"]) == ("REQUESTED", 1)
+    assert row["state"] in {"SUCCEEDED", "FAILED", "SKIPPED_FRESH"}
+
+
+def test_viewed_refresh_enqueues_single_non_forced_unit(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        listing_id = connection.execute(
+            "SELECT instrument_listing_id FROM assets WHERE symbol = 'MSFT'"
+        ).fetchone()[0]
+
+    first = client.post(f"/data/refresh/viewed/{listing_id}")
+    second = client.post(f"/data/refresh/viewed/{listing_id}")
+    missing = client.post("/data/refresh/viewed/999999")
+
+    assert first.status_code == 200
+    assert first.json()["refresh_request_id"] == second.json()["refresh_request_id"]
+    assert missing.status_code == 404
+    with db_session() as connection:
+        rows = connection.execute(
+            "SELECT reason, force, state FROM refresh_requests WHERE listing_id = ?",
+            (listing_id,),
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [("VIEWED", 0, "PENDING")]
+
+
+def test_catalog_eod_enqueue_endpoint_is_bounded(client: TestClient) -> None:
+    ok = client.post("/data/catalog/eod/enqueue", params={"after_listing_id": "0", "limit": "5"})
+
+    assert ok.status_code == 200
+    assert set(ok.json()) == {"enqueued", "next_cursor"}
+    assert client.post("/data/catalog/eod/enqueue", params={"limit": "26"}).status_code == 422
+    assert client.post("/data/catalog/eod/enqueue", params={"limit": "0"}).status_code == 422
+    assert client.post("/data/catalog/eod/enqueue", params={"after_listing_id": "-1"}).status_code == 422

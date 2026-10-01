@@ -252,6 +252,17 @@ Regole operative:
 - ogni chiamata reale incrementa `api_usage`;
 - le API key non vengono stampate nei log, nel frontend, nei test o in questa documentazione.
 
+### Refresh prioritario e limitato
+
+I refresh passano da una coda (`refresh_requests`, esiti in `refresh_runs`) con priorita esplicite: posizioni (10), candidati da segnali BUY/STRONG_BUY (20), watchlist attiva (30), refresh richiesto (40), strumento visualizzato (50), catalogo EOD (60). Ogni listing/capability ha al massimo un'unita aperta: una richiesta successiva puo solo alzare la priorita, anticipare l'orario o attivare `force`, mai disattivarlo.
+
+- `POST /data/refresh-all` esegue al massimo 25 unita (10 se `limit` e omesso) e non visita mai il catalogo; restituisce lo stesso formato `DataRefreshAllOut`.
+- `POST /data/refresh/{symbol}` accoda un'unita `REQUESTED` con il `force` ricevuto e la esegue subito.
+- `POST /data/refresh/viewed/{listing_id}` accoda un'unita `VIEWED` non forzata.
+- `POST /data/catalog/eod/enqueue?after_listing_id=0&limit=25` accoda il catalogo per pagine keyset (al massimo 25 listing esaminati, solo con mapping provider verificato e dati non freschi); `next_cursor` indica da dove ripartire.
+- Senza `force` un dato fresco viene saltato; con `force` si salta la freschezza e si ignora la cache, ma quota, cooldown, deduplica e validazione restano obbligatori. Un provider in cooldown rinvia l'unita senza consumare budget.
+- Script: `backend\.venv\Scripts\python.exe backend\scripts\activate_real_data.py --limit 10` mostra l'anteprima; aggiungere `--execute` per eseguire. Default del batch configurabile con `REFRESH_BATCH_DEFAULT_LIMIT` (10).
+
 Configura le variabili in `backend/.env` o nell'ambiente locale. Il file `backend/.env` puo contenere chiavi reali e non deve essere committato.
 
 ```env
@@ -362,6 +373,8 @@ Endpoint iniziali:
 - `POST /data/catalog/entries/{catalog_entry_id}/listing-metadata/apply`
 - `POST /data/refresh/{symbol}?force=false`
 - `POST /data/refresh-all?limit=5&force=false`
+- `POST /data/refresh/viewed/{listing_id}`
+- `POST /data/catalog/eod/enqueue?after_listing_id=0&limit=25`
 - `POST /data/fx/refresh?from_currency=USD`
 - `GET /data/usage`
 - `GET /news?limit=50&symbol=AAPL`

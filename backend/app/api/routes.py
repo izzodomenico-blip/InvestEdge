@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
@@ -72,7 +73,12 @@ from backend.app.models import (
     WalkForwardIn,
     WalkForwardOut,
 )
-from backend.app.models.schemas import AssetDeleteOut, CatalogIngestResultOut
+from backend.app.models.schemas import (
+    AssetDeleteOut,
+    CatalogEodEnqueueResult,
+    CatalogIngestResultOut,
+    RefreshRequestOut,
+)
 from backend.app.services import google_sheets_import_service
 from backend.app.services.action_board_service import get_action_board
 from backend.app.services.alert_service import (
@@ -92,7 +98,7 @@ from backend.app.services.assets_service import (
 )
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
-from backend.app.services.catalog_service import CatalogRefreshError, CatalogService
+from backend.app.services.catalog_service import CatalogRefreshError, CatalogService, enqueue_catalog_eod
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.fx_service import FXService
 from backend.app.services.instrument_resolution_service import (
@@ -107,6 +113,7 @@ from backend.app.services.news_engine import DEFAULT_REFRESH_ALL_LIMIT, MAX_REFR
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.prices_service import get_price_history
 from backend.app.services.provider_budget_service import ProviderBudgetExceeded
+from backend.app.services.refresh_planner_service import RefreshPlannerService
 from backend.app.services.report_service import orders_csv, portfolio_csv, report_summary, tax_csv
 from backend.app.services.scenario_service import run_scenario
 from backend.app.services.signals_service import get_signal_by_symbol, list_signals
@@ -118,6 +125,7 @@ portfolio_engine = PortfolioEngine()
 backtest_engine = BacktestEngine()
 allocation_engine = AllocationEngine()
 market_data_service = MarketDataService()
+refresh_planner = RefreshPlannerService(market_data_service)
 news_engine = NewsEngine()
 ml_engine = MLEngine()
 catalog_service = CatalogService()
@@ -1080,7 +1088,23 @@ def refresh_asset_data(symbol: str, force: bool = Query(default=False)) -> DataR
     try:
         with db_session() as connection:
             _ensure_unambiguous_before_provider_calls(connection, [symbol])
-            return DataRefreshResultOut(**market_data_service.refresh_asset_prices(connection, symbol, force=force))
+            asset = market_data_service._asset(connection, symbol)
+            if asset is None:
+                raise ValueError(f"Asset {symbol.upper()} non trovato.")
+            if asset["instrument_listing_id"] is None:
+                return DataRefreshResultOut(**market_data_service.refresh_asset_row(connection, asset, force=force))
+            # Refresh esplicito: accoda REQUESTED con il force ricevuto ed esegue subito quell'unita.
+            now = datetime.now(UTC)
+            request_id = refresh_planner.enqueue(
+                connection,
+                int(asset["instrument_listing_id"]),
+                "EOD",
+                "REQUESTED",
+                now,
+                force=force,
+            )
+            outcome = refresh_planner.run_request(connection, request_id, now)
+            return DataRefreshResultOut(**refresh_planner.legacy_result(connection, outcome, symbol=asset["symbol"]))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -1091,8 +1115,37 @@ def refresh_all_data(
     force: bool = Query(default=False),
 ) -> DataRefreshAllOut:
     with db_session() as connection:
-        _ensure_unambiguous_before_provider_calls(connection, _selected_asset_symbols(connection, limit))
+        # La selezione dipende dalle priorita del planner: si verificano tutti gli asset attivi.
+        _ensure_unambiguous_before_provider_calls(connection, _selected_asset_symbols(connection, None))
         return DataRefreshAllOut(**market_data_service.refresh_all_watchlist(connection, limit=limit, force=force))
+
+
+@router.post("/data/refresh/viewed/{listing_id}", response_model=RefreshRequestOut)
+def enqueue_viewed_refresh(listing_id: int) -> RefreshRequestOut:
+    with db_session() as connection:
+        row = connection.execute(
+            "SELECT id FROM instrument_listings WHERE id = ? AND listing_status = 'ACTIVE'",
+            (listing_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing non trovato o non attivo.")
+        request_id = refresh_planner.enqueue(connection, listing_id, "EOD", "VIEWED", datetime.now(UTC), force=False)
+        return RefreshRequestOut(refresh_request_id=request_id)
+
+
+@router.post("/data/catalog/eod/enqueue", response_model=CatalogEodEnqueueResult)
+def enqueue_catalog_eod_refresh(
+    after_listing_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=25),
+) -> CatalogEodEnqueueResult:
+    with db_session() as connection:
+        return enqueue_catalog_eod(
+            connection,
+            refresh_planner,
+            after_listing_id=after_listing_id,
+            limit=limit,
+            now=datetime.now(UTC),
+        )
 
 
 @router.post("/data/fx/refresh", response_model=FxRefreshResult)

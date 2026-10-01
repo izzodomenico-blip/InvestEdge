@@ -230,7 +230,13 @@ class NewsEngine:
         for symbol in symbols:
             try:
                 results.append(self.refresh_news_for_symbol(connection, symbol, force=force))
+                # Ogni simbolo e un'unita indipendente: le sue scritture diventano durevoli e la
+                # chiamata provider successiva parte senza transazione (richiesto dal budget).
+                if connection.in_transaction:
+                    connection.commit()
             except Exception:
+                if connection.in_transaction:
+                    connection.rollback()
                 results.append(
                     {
                         "symbol": symbol,

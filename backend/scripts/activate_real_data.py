@@ -1,47 +1,71 @@
-"""Refresh manuale dei prezzi reali rispettando il limite Alpha Vantage (5 chiamate/min).
+"""Refresh manuale dei dati reali tramite il planner prioritario e limitato.
 
-Uso una tantum: popola price_history con dati reali per azioni/ETF.
+Esegue al massimo `--limit` unita (1..25): posizioni, candidati da segnali e watchlist
+attiva, mai l'intero catalogo. Di default e una simulazione (`--dry-run`): mostra cosa
+verrebbe aggiornato senza scrivere nulla. Usa `--execute` per eseguire davvero.
+Quote, cooldown e cache sono gestiti dal budget dei provider: nessuna pausa fissa.
 """
 from __future__ import annotations
 
+import argparse
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from backend.app.database import db_session  # noqa: E402
 from backend.app.services.market_data_service import MarketDataService  # noqa: E402
+from backend.app.services.refresh_planner_service import (  # noqa: E402
+    MAX_REFRESH_BATCH,
+    RefreshPlannerService,
+)
 
-PACE_SECONDS = 13  # < 5 chiamate/min
-service = MarketDataService()
 
-with db_session() as connection:
-    rows = connection.execute(
-        "SELECT symbol, asset_type FROM assets "
-        "WHERE asset_type IN ('stock','etf','bond_etf') ORDER BY asset_type, symbol"
-    ).fetchall()
-    symbols = [(r["symbol"], r["asset_type"]) for r in rows]
+def _limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--limit deve essere un intero.") from exc
+    if not 1 <= limit <= MAX_REFRESH_BATCH:
+        raise argparse.ArgumentTypeError(f"--limit deve essere compreso fra 1 e {MAX_REFRESH_BATCH}.")
+    return limit
 
-print(f"Asset da aggiornare (Alpha Vantage): {len(symbols)}", flush=True)
-real = 0
-fallback = 0
-for index, (symbol, asset_type) in enumerate(symbols, start=1):
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--limit", type=_limit, required=True, help="Unita da aggiornare (1..25).")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", dest="execute", action="store_false", help="Solo anteprima (default).")
+    mode.add_argument("--execute", dest="execute", action="store_true", help="Esegue davvero il batch.")
+    parser.add_argument("--force", action="store_true", help="Ignora freschezza e cache (resta soggetto a budget).")
+    parser.set_defaults(execute=False)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    service = MarketDataService()
+    planner = RefreshPlannerService(service)
     with db_session() as connection:
-        result = service.refresh_asset_prices(connection, symbol, force=True)
-    used_fallback = result.get("used_fallback", True)
-    if used_fallback:
-        fallback += 1
-        print(f"  {index:2d}. {symbol:6s} [{asset_type}] -> SEED ({result.get('message','')})", flush=True)
-    else:
-        real += 1
-        print(
-            f"  {index:2d}. {symbol:6s} [{asset_type}] -> REALE "
-            f"(+{result.get('rows_inserted',0)} righe)",
-            flush=True,
-        )
-    if index < len(symbols):
-        time.sleep(PACE_SECONDS)
+        if not args.execute:
+            preview = planner.preview_watchlist(connection, args.limit)
+            print(f"Anteprima (nessuna scrittura): {len(preview)} unita.")
+            for item in preview:
+                print(f"  {item['priority']:>2} {item['reason']:<18} {item['symbol'] or '-':<8} listing {item['listing_id']}")
+            print("Per eseguire: --execute")
+            return 0
+        result = service.refresh_all_watchlist(connection, limit=args.limit, force=args.force)
+    summary = result["summary"]
+    print(
+        f"Eseguite {summary['requested']} unita: {summary['updated']} aggiornate, "
+        f"{summary['fallback']} in fallback o rinviate."
+    )
+    for item in result["results"]:
+        print(f"  {item['symbol']:<10} {'OK' if not item['used_fallback'] else 'FALLBACK'}  {item['message']}")
+    return 0
 
-print(f"\nRISULTATO: {real} reali, {fallback} su dati seed.", flush=True)
+
+if __name__ == "__main__":
+    raise SystemExit(main())

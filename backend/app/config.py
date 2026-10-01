@@ -54,6 +54,7 @@ class Settings:
     openfigi_monthly_limit: int = 1000
     ecb_fx_max_age_days: int = 7
     ecb_fx_cache_ttl_hours: int = 6
+    refresh_batch_default_limit: int = 10
     market_data_quote_max_age_minutes: int = 5
     market_data_delayed_max_age_minutes: int = 30
     market_data_eod_max_age_hours: int = 96
@@ -156,6 +157,7 @@ class Settings:
             openfigi_monthly_limit=int(os.getenv("OPENFIGI_MONTHLY_LIMIT", "1000")),
             ecb_fx_max_age_days=int(os.getenv("ECB_FX_MAX_AGE_DAYS", "7")),
             ecb_fx_cache_ttl_hours=int(os.getenv("ECB_FX_CACHE_TTL_HOURS", "6")),
+            refresh_batch_default_limit=int(os.getenv("REFRESH_BATCH_DEFAULT_LIMIT", "10")),
             market_data_quote_max_age_minutes=int(
                 os.getenv("MARKET_DATA_QUOTE_MAX_AGE_MINUTES", "5")
             ),

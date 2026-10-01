@@ -1107,6 +1107,15 @@ class DataRefreshAllOut(BaseModel):
     results: list[DataRefreshResultOut]
 
 
+class RefreshRequestOut(BaseModel):
+    refresh_request_id: int
+
+
+class CatalogEodEnqueueResult(BaseModel):
+    enqueued: int
+    next_cursor: int | None
+
+
 FxRefreshStatus = Literal["UPDATED", "NOT_MODIFIED"]
 
 

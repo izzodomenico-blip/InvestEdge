@@ -363,6 +363,45 @@ CREATE TABLE IF NOT EXISTS market_data_selection_events (
     FOREIGN KEY(selected_observation_id) REFERENCES market_observations(id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS refresh_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    capability TEXT NOT NULL CHECK(capability IN ('EOD', 'QUOTE')),
+    reason TEXT NOT NULL
+        CHECK(reason IN (
+            'POSITION', 'STRATEGY_CANDIDATE', 'WATCHLIST', 'REQUESTED', 'VIEWED', 'CATALOG_EOD'
+        )),
+    priority INTEGER NOT NULL CHECK(priority > 0),
+    force INTEGER NOT NULL DEFAULT 0 CHECK(force IN (0, 1)),
+    state TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK(state IN (
+            'PENDING', 'RUNNING', 'SUCCEEDED', 'SKIPPED_FRESH', 'BUDGET_DEFERRED', 'FAILED'
+        )),
+    requested_at TEXT NOT NULL,
+    not_before TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    last_reason_code TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS refresh_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    state TEXT NOT NULL
+        CHECK(state IN ('SUCCEEDED', 'SKIPPED_FRESH', 'BUDGET_DEFERRED', 'FAILED')),
+    provider TEXT,
+    rows_inserted INTEGER NOT NULL DEFAULT 0 CHECK(rows_inserted >= 0),
+    rows_updated INTEGER NOT NULL DEFAULT 0 CHECK(rows_updated >= 0),
+    used_cache INTEGER NOT NULL DEFAULT 0 CHECK(used_cache IN (0, 1)),
+    reason_code TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(request_id) REFERENCES refresh_requests(id) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS quality_assessments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     instrument_id INTEGER NOT NULL,
@@ -1006,6 +1045,13 @@ BEFORE DELETE ON quality_assessments
 BEGIN
     SELECT RAISE(ABORT, 'quality assessments are append-only');
 END;
+-- Una sola unita aperta (in attesa o rinviata) per listing/capability.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_refresh_requests_open_unit
+ON refresh_requests(listing_id, capability)
+WHERE state IN ('PENDING', 'BUDGET_DEFERRED');
+CREATE INDEX IF NOT EXISTS idx_refresh_requests_queue
+ON refresh_requests(state, priority, requested_at, listing_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_runs_request ON refresh_runs(request_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_asset_date ON price_history(asset_id, date);
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_asset ON portfolio_positions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(snapshot_date);

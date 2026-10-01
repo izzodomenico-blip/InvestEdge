@@ -463,3 +463,66 @@ def test_finnhub_empty_news_is_a_valid_empty_result() -> None:
 
     assert items == []
     assert used_cache is False
+
+
+def test_news_refresh_all_reaches_finnhub_for_every_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regressione: le scritture news del primo simbolo restavano in transazione e il budget
+    # rifiutava la chiamata Finnhub del secondo (TRANSPORT_FAILED -> fallback).
+    import backend.app.data_providers.transport as transport_module
+
+    connection = _initialize()
+    instrument_id = connection.execute(
+        """
+        INSERT INTO instruments (canonical_name, instrument_type, asset_class, source, source_date)
+        VALUES ('Microsoft Corp.', 'STOCK', 'EQUITY', 'test', '2026-10-01')
+        """
+    ).lastrowid
+    listing_id = connection.execute(
+        """
+        INSERT INTO instrument_listings (instrument_id, ticker, mic, venue_name, currency, timezone, source, source_date)
+        VALUES (?, 'MSFT', 'XNAS', 'Nasdaq', 'USD', 'America/New_York', 'test', '2026-10-01')
+        """,
+        (instrument_id,),
+    ).lastrowid
+    connection.execute(
+        """
+        INSERT INTO assets (symbol, name, asset_type, currency, risk_level, instrument_listing_id)
+        VALUES ('MSFT', 'Microsoft Corp.', 'stock', 'USD', 'medium', ?)
+        """,
+        (listing_id,),
+    )
+    connection.execute(
+        """
+        INSERT INTO provider_symbols (
+            provider, listing_id, capability, provider_symbol, normalized_symbol, status,
+            source, observed_at, verified_at, evidence_hash, version
+        )
+        VALUES ('finnhub', ?, 'NEWS', 'MSFT', 'MSFT', 'VERIFIED', 'test',
+                '2026-09-30T00:00:00Z', '2026-09-30T00:00:00Z', ?, 1)
+        """,
+        (listing_id, hashlib.sha256(b"msft news mapping").hexdigest()),
+    )
+    connection.commit()
+    symbols_seen: list[str] = []
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        symbols_seen.append(request.url.params["symbol"])
+        return _json_response([_article(f"{request.url.params['symbol']} news")])
+
+    monkeypatch.setattr(
+        transport_module.httpx,
+        "Client",
+        lambda *_args, **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setenv("ENABLE_REAL_NEWS", "true")
+    monkeypatch.setenv("FINNHUB_API_KEY", FINNHUB_KEY)
+    get_settings.cache_clear()
+    try:
+        result = NewsEngine().refresh_all_news(connection, limit=5)
+    finally:
+        get_settings.cache_clear()
+
+    assert sorted(symbols_seen) == ["AAPL", "MSFT"]
+    assert result["summary"]["updated"] == 2
+    assert all(item["provider"] == "finnhub_news" for item in result["results"])

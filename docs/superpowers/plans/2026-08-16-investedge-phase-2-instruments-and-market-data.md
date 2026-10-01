@@ -1504,11 +1504,11 @@ POST /data/catalog/eod/enqueue?after_listing_id=0&limit=25 -> CatalogEodEnqueueR
 
 Nuove tabelle `refresh_requests` e `refresh_runs`; `refresh_requests` persiste anche `force` e la unique pending key `(listing_id, capability)` evita duplicati. `run_batch` accetta `1 <= limit <= 25`; config default 10.
 
-- [ ] **Step 1: Scrivere test RED su priorità e limiti**
+- [x] **Step 1: Scrivere test RED su priorità e limiti**
 
 Testare ordinamento esatto, tie-breaker requested_at/listing_id, deduplica reason con priorità più alta, skip fresh, budget deferred senza consumo, retry futuro senza loop e batch massimo 25. Una pending `force=false` seguita dalla stessa unità `force=true` deve promuovere atomicamente il flag; il contrario non lo declassa e `run_batch` consuma il valore persistito. Con cache provider preesistente, il run non-force usa cache; il run force passa `bypass_cache=true`, esegue una richiesta fisica soggetta a quota/validation e aggiorna la cache; due unità force concorrenti per lo stesso fingerprint restano coalesciate. Per `/data/refresh-all` verificare firma legacy, propagazione `force`, omissione limit -> 10, payload `DataRefreshAllOut`, chiavi summary vigenti `requested/updated/fallback/rows_inserted/rows_updated` e ogni result con tutti i campi `DataRefreshResultOut`. Coprire inoltre refresh singolo requested, endpoint viewed singolo, catalog EOD keyset limit 1..25 con pagina 1 → esecuzione → pagina 2 senza skip e assenza query che scansioni tutto `instrument_listings`.
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_refresh_planner.py tests\test_api.py -k "refresh_planner or refresh_all or priority or no_bulk" -q
@@ -1516,19 +1516,19 @@ Testare ordinamento esatto, tie-breaker requested_at/listing_id, deduplica reaso
 
 Expected: failure perché refresh-all seleziona direttamente tutti gli `assets` e non esiste coda.
 
-- [ ] **Step 3: Implementare enqueue e scelta lazy**
+- [x] **Step 3: Implementare enqueue e scelta lazy**
 
 `enqueue()` aggiorna una request pending esistente se arriva una priorità più alta o timestamp più vecchio e applica sempre `force = existing.force OR incoming.force` nella stessa transazione. `run_batch()` seleziona con `ORDER BY priority, requested_at, listing_id LIMIT ?`, marca RUNNING in transazione breve, legge il `force` persistito e poi esegue un listing per volta. Con `force=false`, stato fresh produce `SKIPPED_FRESH`; con `force=true` si salta la freshness e si chiama l'adapter con `bypass_cache=true`, ma fingerprint/deduplica in-flight, quota/cooldown e validation restano obbligatori. Errori sanitizzati diventano `FAILED` e non bloccano le altre unità.
 
-- [ ] **Step 4: Adattare API e sorgenti di priorità**
+- [x] **Step 4: Adattare API e sorgenti di priorità**
 
 Refresh singolo risolve un solo active asset/listing univoco e accoda `REQUESTED` con il `force` ricevuto prima di eseguire. Refresh-all accoda con lo stesso flag: posizioni, candidati da segnali già esistenti e `assets` attivi; non accoda il catalogo. Un adapter converte ogni esito planner nel vigente `DataRefreshResultOut` (`symbol`, provider nullable, righe inserted/updated, cache/fallback e messaggio sanitizzato) e aggrega esattamente le chiavi summary Fase 1; gli stati deferred/failed sono fallback senza inventare provider o righe. `POST /data/refresh/viewed/{listing_id}` accoda una sola unità `VIEWED` non-force e sarà chiamato dal dettaglio Universe nel Task UI. `POST /data/catalog/eod/enqueue` usa keyset `WHERE listing_id > ? ORDER BY listing_id LIMIT ?` sui soli listing risolti, provider-mapped e non fresh, accoda al massimo 25 `CATALOG_EOD` non-force e restituisce come `next_cursor` l'ultimo listing ID esaminato o `NULL` a fine pagina. Non usa OFFSET: l'esecuzione della pagina precedente può cambiare freshness senza far saltare ID successivi. Non esiste default “tutto”. Impostare `limit=10` quando omesso per refresh-all e massimo 25 ovunque.
 
-- [ ] **Step 5: Correggere lo script operativo**
+- [x] **Step 5: Correggere lo script operativo**
 
 `activate_real_data.py` chiama esclusivamente il batch planner con `--limit` obbligatorio tra 1 e 25 e `--dry-run` default. Non cita Alpha come provider attivo, non dorme 13 secondi e non accetta un flag per tutto il catalogo.
 
-- [ ] **Step 6: Eseguire GREEN e regressione status**
+- [x] **Step 6: Eseguire GREEN e regressione status**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_refresh_planner.py tests\test_api.py tests\test_provider_budget.py tests\test_market_data_observations.py -q
@@ -1537,7 +1537,7 @@ Refresh singolo risolve un solo active asset/listing univoco e accoda `REQUESTED
 
 Expected: priorità/dedup/bounds verdi; route legacy compatibili; Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su starvation, race/doppia esecuzione, default limit, scansioni catalogo, forced refresh, cooldown e script. Correggere Critical/Important e ripetere Step 6.
 

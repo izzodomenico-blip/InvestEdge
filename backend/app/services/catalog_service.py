@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from backend.app.config import get_settings
 from backend.app.data_providers.trade_republic_catalog import (
@@ -20,11 +21,14 @@ from backend.app.data_providers.trade_republic_catalog import (
     parse_trade_republic_pdf,
 )
 from backend.app.data_providers.transport import SafeProviderTransport, SafeProviderTransportError
-from backend.app.models.schemas import CatalogFailureReason
+from backend.app.models.schemas import CatalogEodEnqueueResult, CatalogFailureReason
 from backend.app.services.provider_budget_service import (
     ProviderBudgetExceeded,
     ProviderBudgetPolicy,
 )
+
+if TYPE_CHECKING:
+    from backend.app.services.refresh_planner_service import RefreshPlannerService
 
 
 @dataclass(frozen=True)
@@ -339,3 +343,48 @@ class CatalogService:
             _record_failed_snapshot(connection, instant, "DOWNLOAD_FAILED", None)
             raise CatalogRefreshError("DOWNLOAD_FAILED")
         return ingest_trade_republic_catalog(connection, response.payload, instant)
+
+
+def enqueue_catalog_eod(
+    connection: sqlite3.Connection,
+    planner: RefreshPlannerService,
+    *,
+    after_listing_id: int,
+    limit: int,
+    now: datetime,
+) -> CatalogEodEnqueueResult:
+    """Accoda refresh EOD del catalogo per pagine keyset (mai OFFSET, mai scansioni complete).
+
+    Esamina al massimo `limit` listing attivi con `id > after_listing_id`; accoda soltanto
+    quelli con mapping provider EOD verificato e dati non freschi. `next_cursor` e l'ultimo
+    listing esaminato, `None` quando la pagina non e piena.
+    """
+    from backend.app.data_providers.provider_registry import ProviderRegistry
+    from backend.app.services.refresh_planner_service import MAX_REFRESH_BATCH
+
+    if isinstance(limit, bool) or not 1 <= int(limit) <= MAX_REFRESH_BATCH:
+        raise ValueError(f"La pagina del catalogo accetta da 1 a {MAX_REFRESH_BATCH} listing.")
+    if int(after_listing_id) < 0:
+        raise ValueError("Cursore del catalogo non valido.")
+    rows = connection.execute(
+        """
+        SELECT id
+        FROM instrument_listings
+        WHERE id > ? AND listing_status = 'ACTIVE'
+        ORDER BY id
+        LIMIT ?
+        """,
+        (int(after_listing_id), int(limit)),
+    ).fetchall()
+    registry = ProviderRegistry(get_settings(), connection)
+    enqueued = 0
+    for row in rows:
+        listing_id = int(row["id"])
+        if not registry.providers_for(connection, listing_id, "EOD"):
+            continue
+        if planner.market_data_service._has_fresh_observation(connection, listing_id, "EOD", now):
+            continue
+        planner.enqueue(connection, listing_id, "EOD", "CATALOG_EOD", now, force=False)
+        enqueued += 1
+    next_cursor = int(rows[-1]["id"]) if len(rows) == int(limit) else None
+    return CatalogEodEnqueueResult(enqueued=enqueued, next_cursor=next_cursor)

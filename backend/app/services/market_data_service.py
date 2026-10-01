@@ -54,9 +54,16 @@ class MarketDataService:
         asset = self._asset(connection, symbol)
         if asset is None:
             raise ValueError(f"Asset {symbol.upper()} non trovato.")
+        return self.refresh_asset_row(connection, asset, force=force)
 
-        settings = get_settings()
-        registry = ProviderRegistry(settings, connection)
+    def select_provider(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        registry: ProviderRegistry | None = None,
+    ) -> tuple[BaseMarketDataProvider | None, str | None, str]:
+        """Provider, simbolo provider e capability per un asset attivo (stessa regola del refresh)."""
+        registry = registry or ProviderRegistry(get_settings(), connection)
         provider: BaseMarketDataProvider | None = None
         provider_symbol: str | None = None
         listing_id = asset["instrument_listing_id"]
@@ -76,6 +83,16 @@ class MarketDataService:
                 provider_symbol = match.provider_symbol
         if provider is None and str(asset["asset_type"]).strip().lower() != "crypto":
             provider = self.get_provider_for_asset(connection, str(asset["asset_type"]))
+        return provider, provider_symbol, selected_capability
+
+    def refresh_asset_row(
+        self,
+        connection: sqlite3.Connection,
+        asset: sqlite3.Row,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        settings = get_settings()
+        provider, provider_symbol, selected_capability = self.select_provider(connection, asset)
 
         if not settings.enable_real_data:
             return self._fallback_result(
@@ -536,18 +553,15 @@ class MarketDataService:
         limit: int | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        query = """
-            SELECT symbol
-            FROM assets
-            ORDER BY asset_type, symbol
-        """
-        rows = connection.execute(query).fetchall()
-        selected_rows = rows[:limit] if limit else rows
-        symbols = [row["symbol"] for row in selected_rows]
-        results = [self.refresh_asset_prices(connection, symbol, force=force) for symbol in symbols]
+        """Refresh sempre limitato e prioritario: accoda posizioni, candidati e watchlist
+        attiva (mai il catalogo) ed esegue al massimo `limit` unita (default 10, max 25)."""
+        from backend.app.services.refresh_planner_service import RefreshPlannerService
+
+        planner = RefreshPlannerService(self)
+        results = planner.refresh_watchlist(connection, limit=limit, force=force, now=datetime.now(UTC))
         return {
             "summary": {
-                "requested": len(symbols),
+                "requested": len(results),
                 "updated": sum(1 for item in results if not item["used_fallback"]),
                 "fallback": sum(1 for item in results if item["used_fallback"]),
                 "rows_inserted": sum(int(item["rows_inserted"]) for item in results),
@@ -788,6 +802,28 @@ class MarketDataService:
             LIMIT 1
             """,
             (symbol,),
+        ).fetchone()
+
+    def _asset_for_listing(self, connection: sqlite3.Connection, listing_id: int) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT asset.id, asset.symbol, asset.asset_type, asset.risk_level,
+                   asset.currency, asset.instrument_listing_id,
+                   listing.mic AS listing_mic,
+                   listing.timezone AS listing_timezone,
+                   listing.currency AS listing_currency,
+                   instrument.id AS instrument_id,
+                   instrument.instrument_type
+            FROM assets AS asset
+            JOIN instrument_listings AS listing
+              ON listing.id = asset.instrument_listing_id
+            JOIN instruments AS instrument
+              ON instrument.id = listing.instrument_id
+            WHERE asset.instrument_listing_id = ?
+            ORDER BY asset.id
+            LIMIT 1
+            """,
+            (listing_id,),
         ).fetchone()
 
     def _fallback_result(

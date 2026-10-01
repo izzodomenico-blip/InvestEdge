@@ -6,12 +6,13 @@ Ultimo aggiornamento: 2026-09-30.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 13 — Refresh lazy, prioritari, deduplicati e limitati.**
+**SP2a · Fase 2 · Task 14 — API catalogo e conferme versionate di simboli e stato Trade Republic.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 13*.
-- Branch: `codex/investedge-phase-2-task-13`.
-- Base remota: `origin/codex/investedge-phase-2-task-12`.
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 13.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 14*.
+- Branch: `codex/investedge-phase-2-task-14`.
+- Base remota: `origin/codex/investedge-phase-2-task-13`.
+- Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01).
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 14.
 
 ## Legenda
 
@@ -82,8 +83,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 9 | Quote USA (Finnhub) | FATTO | `9503e70` | 2026-08-17 | Codex |
 | 10 | Prezzi crypto con identità CoinGecko | FATTO | `54b3faf` checkpoint + `49cdb82` | 2026-09-30 | Codex → Claude |
 | 11 | FX BCE verso EUR e fallback FRED | FATTO | `88fc20d` | 2026-09-30 | Claude |
-| 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + branch `codex/investedge-phase-2-task-12` | 2026-10-01 | Claude |
-| 13 | Refresh lazy, prioritari, deduplicati | NON INIZIATO | — | — | — |
+| 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + `edbc07e` | 2026-10-01 | Claude |
+| 13 | Refresh lazy, prioritari, deduplicati | FATTO | branch `codex/investedge-phase-2-task-13` | 2026-10-01 | Claude |
 | 14 | API catalogo e conferme versionate | NON INIZIATO | — | — | — |
 | 15 | Catalogo paginato nella pagina Universe | NON INIZIATO | — | — | — |
 | 16 | API e metriche di copertura dati | NON INIZIATO | — | — | — |
@@ -111,6 +112,15 @@ Evidenza Task 12 (2026-10-01, Claude):
 - **correzione Critical trasversale:** le route di refresh tenevano `BEGIN IMMEDIATE` durante le chiamate provider e il budget (Task 2) rifiuta transazioni del chiamante: ogni refresh reale via API (`/data/refresh*`, `/news/refresh*`) cadeva in `TRANSPORT_FAILED`. Ora il controllo di univocita resta sotto lock e il lock viene rilasciato prima dell'I/O di rete (`_ensure_unambiguous_before_provider_calls`); `_asset` sceglie sempre l'asset originale (`ORDER BY id`). Il test Task 5 sul lock e stato aggiornato al nuovo contratto;
 - deviazioni di file: `sentiment_engine.py`, `ml_dataset_service.py` (estensione demo), `market_data_service.py` (ordinamento `_asset`), `tests/test_provider_budget.py` (test di inoltro `force` spostato da Yahoo a Finnhub); `tests/test_alert_service.py` non richiedeva modifiche;
 - gate: suite completa `pytest` = 618 passati; `ruff check backend scripts tests` verde; `git diff --check` verde; commit sopra il Task 11: 2 (checkpoint per limite di utilizzo + completamento).
+
+Evidenza Task 13 (2026-10-01, Claude):
+
+- `RefreshPlannerService` con tabelle `refresh_requests`/`refresh_runs`: priorita POSITION 10 → CATALOG_EOD 60, una sola unita aperta per listing/capability (indice univoco parziale), `force` promosso e mai declassato, batch 1..25 (default `REFRESH_BATCH_DEFAULT_LIMIT=10`), skip dei dati freschi, rinvio senza consumo di budget su cooldown, errori sanitizzati che non bloccano le altre unita, selezione atomica (nessuna doppia esecuzione fra batch concorrenti);
+- `/data/refresh-all` sempre limitato e prioritario con payload `DataRefreshAllOut` invariato; `/data/refresh/{symbol}` accoda `REQUESTED` ed esegue; nuovi `POST /data/refresh/viewed/{listing_id}` e `POST /data/catalog/eod/enqueue` (keyset, mai OFFSET, mai scansioni complete); script `activate_real_data.py` con `--limit` obbligatorio, anteprima di default, nessuna pausa fissa;
+- **correzione Critical:** `ingest_batch` lascia la transazione al chiamante e il budget rifiutava le chiamate successive nello stesso batch (`TRANSPORT_FAILED` dalla seconda unita): ora planner e batch news confermano ogni unita; regressioni in `tests/test_refresh_planner.py` e `tests/test_news_providers.py`;
+- deviazioni: `news_engine.py` e `tests/test_news_providers.py` (stessa correzione sul batch news del Task 12); `market_data_service.py` rifattorizzato (`select_provider`, `refresh_asset_row`, `_asset_for_listing`) con firma pubblica invariata; il controllo di ambiguita di `/data/refresh-all` copre tutti gli asset attivi; test RACELOCK aggiornato a `refresh_asset_row`; il planner rifiuta transazioni del chiamante in sospeso (come il budget);
+- minore aperto: con budget giornaliero/mensile esaurito il rinvio e di 1 minuto (nessun consumo, ma l'unita viene riproposta a ogni batch); da affinare rinviando all'apertura della finestra successiva;
+- gate: suite completa `pytest` = 641 passati; `ruff check backend scripts tests` verde; `git diff --check` verde.
 
 ## Backlog per i sottoprogetti futuri
 
