@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from backend.app.config import get_settings
@@ -1001,6 +1002,11 @@ async def refresh_trade_republic_catalog(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"reason_code": "INVALID_CATALOG_REFRESH_REQUEST"},
         )
+    # Download, retry e parsing PDF sono sincroni: fuori dall'event loop.
+    return await run_in_threadpool(_refresh_trade_republic_catalog, force)
+
+
+def _refresh_trade_republic_catalog(force: bool) -> CatalogIngestResultOut:
     try:
         with db_session() as connection:
             result = catalog_service.refresh(connection, force=force)

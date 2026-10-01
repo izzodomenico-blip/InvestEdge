@@ -6,13 +6,11 @@ Ultimo aggiornamento: 2026-10-01.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 18 — Audit cumulativo e report Fase 2.**
+**SP1 — Laboratorio di verità: brainstorming → spec → piano, da approvare con l'utente prima di qualsiasi codice.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 18*.
-- Branch: `codex/investedge-phase-2-task-18`.
-- Base remota: `origin/codex/investedge-phase-2-task-17`.
-- Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01), salvo diversa indicazione dell'utente.
-- Vincolo: ultimo task della Fase 2; nessun lavoro su SP1 prima della sua chiusura.
+- Esecuzione: nuova chat con contesto pulito.
+- Ingressi: spec del programma §4–§7, backlog SP1 qui sotto, report Fase 2 `docs/reports/2026-08-16-phase-2-verification.md` (sezione *Residual risks*).
+- Vincolo: nessun codice SP1 prima dell'approvazione di spec e piano da parte dell'utente.
 
 ## Legenda
 
@@ -33,7 +31,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 | SP | Titolo | Stato | Spec | Piano | Branch finale | In `main` |
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
-| SP2a | Strumenti e dati di mercato (Fase 2) | IN CORSO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | a ogni task (dal Task 11) |
+| SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, fast-forward al Task 18 (2026-10-01; SHA nel commit successivo) |
 | SP1 | Laboratorio di verità | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -88,8 +86,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 14 | API catalogo e conferme versionate | FATTO | `62ed48b` | 2026-10-01 | Claude |
 | 15 | Catalogo paginato nella pagina Universe | FATTO | `30069f0` | 2026-10-01 | Claude |
 | 16 | API e metriche di copertura dati | FATTO | `d0d6b4c` | 2026-10-01 | Claude |
-| 17 | Copertura, qualità e budget nel Data Center | FATTO | branch `codex/investedge-phase-2-task-17` | 2026-10-01 | Claude |
-| 18 | Audit cumulativo e report Fase 2 | NON INIZIATO | — | — | — |
+| 17 | Copertura, qualità e budget nel Data Center | FATTO | `8d95373` | 2026-10-01 | Claude |
+| 18 | Audit cumulativo e report Fase 2 | FATTO | branch `codex/investedge-phase-2-task-18` | 2026-10-01 | Claude |
 
 Evidenza Task 10 (2026-09-30, Claude):
 
@@ -160,6 +158,36 @@ Evidenza Task 17 (2026-10-01, Claude):
 - minori aperti: un `rate_to_eur` in notazione scientifica (Decimal da float sotto 1e-6, es. `1E-7`) viene mostrato `—` (nessuna valuta BCE attuale e sotto quella soglia; correzione naturale nel backend con quantize); ECB assente da `provider_status`, quindi budget FX non visibile (gia noto dal Task 16); dopo il batch la pagina ricarica con lo skeleton completo (comportamento preesistente di `loadDataCenter`) e fra ricariche sovrapposte vince l'ultima risposta; l'esempio README `POST /news/refresh-all?limit=50` supera il massimo 25 (fuori scope, non modificato);
 - gate: `npm --prefix frontend run test:run -- DataCenterPage.test.tsx UniversePage.test.tsx` = 23 passati (14 Data Center + 9 Universe); `npm --prefix frontend run build` exit 0 (avviso dimensione bundle preesistente); `npm --prefix frontend audit --audit-level=high` exit 0; backend invariato: suite completa `pytest -p no:cacheprovider` = 679 passati (0 falliti, JUnit XML); `ruff check backend scripts tests` verde; `git diff --check` verde.
 
+Evidenza Task 18 (2026-10-01, Claude):
+
+- audit cumulativo `5649982..8d95373`: 20 commit lineari (0 merge, un parent ciascuno), 17 messaggi identici al piano più 2 checkpoint e il commit documentale `6dda839`; 99 file. File fuori elenco: 39 occorrenze, 3 non registrate (`finnhub_news.py` nel Task 2, `tests/test_database.py` nel Task 4, `models/__init__.py` nel Task 13), senza difetti; report `docs/reports/2026-08-16-phase-2-verification.md`;
+- review indipendente cumulativa (sola lettura): 2 Critical, 5 Important, 17 Minor; ogni rilievo accettato è stato riprodotto con un test RED e corretto nei path autorizzati:
+  - **C1:** `/data/status` e `/news/status` in 500 dopo la prima cache del trasporto (`expires_at` con "Z"); confronto UTC aware;
+  - **C2:** avvio impossibile dopo `seed --reset` o purge e ri-aggiunta di una crypto curata; il backfill riusa l'instrument che possiede il `COINGECKO_ID`;
+  - **I1:** skip "fresco" EOD con soglia stale 96 h; refresh EOD dovuto oltre 24 h;
+  - **I2:** sessione in corso salvata come EOD; CoinGecko accetta un giorno solo se il payload contiene il campione di chiusura; campo additivo `ProviderResponse.fetched_at`; Stooq scarta la riga del giorno locale del download;
+  - **I4:** messaggio guida dei 409 di import e allocation ripristinato in `api.ts`;
+  - **I5:** catalog refresh fuori dall'event loop (`run_in_threadpool`);
+  - **Minor 13 riclassificato Important:** `TIME_PERIOD` BCE futuro rifiutato (`FUTURE_TIMESTAMP`);
+  - **I3 rinviato su decisione dell'utente:** asset legacy non ricollegabili a listing risolti; README aggiornato, backlog;
+- re-review del delta: C1, I1, I2, I4, I5 e Minor 13 VERIFIED; C2 PARTIAL per il nuovo rilievo I-1 (listing crypto riaggiunto senza fuso `UTC`, barre CoinGecko rifiutate), corretto con TDD (`UPDATE` del fuso prima del controllo sull'attestazione); re-review dell'incremento: I-1 VERIFIED, "Ready to commit: Yes"; Minor M-1…M-4 nei rischi residui del report;
+- deviazioni:
+  - secret scan del piano a exit 1 su 15 falsi positivi (riferimenti a codice), affiancato da uno scan con stesso pattern e classificazione riga per riga: 0 valori letterali, 3 sintetici;
+  - `pytest.ini` ha già `addopts = -q`: i `-q` del piano nascondono il riepilogo, conteggi letti dal JUnit XML;
+  - lo smoke B del piano seleziona 0 test di `test_import_security.py`;
+  - `PROGRAMMA-OPERATIVO.md` aggiornato nello stesso commit (AGENTS.md §5);
+  - `ImportPage.tsx` e `AllocationPlanner.tsx` non autorizzati: fix I4 nel solo client;
+- verifiche aggiuntive:
+  - smoke di migrazione reale da un DB creato col codice `5649982`: righe preservate, backup pre-migrazione, rerun idempotente, backup fallito che blocca la migrazione;
+  - matrice provider offline in 3 scenari senza key né URL nelle risposte;
+  - suite completa con rete bloccata: 679 passati, 0 tentativi di rete;
+- gate finale:
+  - suite completa `pytest -p no:cacheprovider` = 687 passati (0 falliti, JUnit XML, exit 0; run finale dopo I-1);
+  - `ruff check backend scripts tests` verde; `compileall` exit 0; `pip check` pulito;
+  - `npm ci` exit 0; `npm run test:run` = 24 passati; `npm run build` exit 0; `npm audit --audit-level=high` exit 0 (2 low, 2 moderate invariati);
+  - smoke A 275 e smoke B 12 passati;
+  - scan finale: 98 file con il report, 0 valori letterali inattesi, 3 sintetici, 0 placeholder; `git diff --check` verde.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -173,6 +201,7 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 - **SP5:** radar con tasso storico dei profili simili, rischio, condizione di invalidazione; schede IPO con prospetto, management, soci, finanziatori, lock-up.
 - **SP6:** portafogli paper multipli, paper broker, profili di rischio a scelta dell'utente, adapter broker ufficiali disattivati, kill switch, runtime sempre acceso, riconciliazione, aggiornamento automatico schedulato.
 - **SP7:** Telegram bidirezionale con whitelist chat, codici di conferma e limiti.
+- **Da assegnare (primo SP che tocca i dati degli asset attivi, SP1 o SP2b):** ricollegamento esplicito di un asset legacy della Fase 1 a un listing `RESOLVED` dello stesso instrument (preview/apply con token SHA-256 e `compare_digest`, 409 senza mutazioni), rilievo I3 del Task 18; minori aperti nel report Fase 2, sezione *Residual risks*.
 
 ## Registro decisioni
 
@@ -190,6 +219,8 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-01 | Task 15 eseguito nella stessa chat del Task 14 (deroga alla regola "nuova chat per task") | utente |
 | 2026-10-01 | Copertura: denominatori provider sui soli listing risolti (metadata VERIFIED + case RESOLVED, ACTIVE) e sulle coppie mappabili su listing (coingecko EOD/QUOTE, finnhub QUOTE, stooq EOD); `rejection_reasons` con prefisso `PARSE:`/`RESOLUTION:`; invariante violata → `/data/coverage` 500 e `coverage_summary` null | Claude, motivata nel Task 16 |
 | 2026-10-01 | Gate audit del Task 17: aggiornamento del solo lockfile (`npm update browserslist`, nessun `--force`, `package.json` invariato) per eliminare advisory high su una dipendenza transitiva di build; moderate/low residui lasciati visibili | Claude, motivata nel Task 17 |
+| 2026-10-01 | Rilievo I3 (asset legacy senza percorso verso listing risolti) rinviato e documentato, nessun codice nuovo nel Task 18 | utente |
+| 2026-10-01 | Refresh EOD dovuto oltre 24 h, distinto dalla soglia stale di 96 h; una seduta che può essere ancora aperta non diventa mai barra EOD (`ProviderResponse.fetched_at` additivo) | Claude, motivata nel Task 18 |
 
 ## Note di ripresa
 
@@ -198,3 +229,5 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 - Test legati al calendario: un test non deve dipendere dalla data reale. Se un servizio legge `datetime.now`, il test blocca l'orologio (vedi `_freeze_service_clock` in `tests/test_market_data_observations.py`).
 - Test frontend con orari: fissare il fuso con `vi.stubEnv("TZ", ...)` (il build TypeScript non conosce `process`) e creare gli `Intl.DateTimeFormat` al render, non a livello di modulo.
 - `npm audit` dipende da advisory pubblicati dopo l'ultimo task: il gate puo fallire senza modifiche al codice.
+- `pytest.ini` imposta gia `addopts = -q`: aggiungere `-q` nasconde la riga di riepilogo; usare `--junitxml` per i conteggi.
+- Lo script di secret scan del piano Fase 2 segnala come candidati anche riferimenti a codice (assegnazioni di token calcolati da metodi o letti dalle settings): classificare ogni candidato rispetto alla riga sorgente prima di trattarlo come segreto.

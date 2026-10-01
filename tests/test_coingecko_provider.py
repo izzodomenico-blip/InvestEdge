@@ -362,6 +362,30 @@ def test_coingecko_market_chart_excludes_incomplete_current_utc_day() -> None:
     connection.close()
 
 
+def test_coingecko_cached_market_chart_never_turns_partial_day_into_eod_bar() -> None:
+    # Payload scaricato il 17/08 alle 16:00 e riusato dalla cache il 18/08 alle 10:00:
+    # il campione delle 15:00 del 17/08 resta parziale e non diventa la chiusura del 17/08.
+    connection, listing_id = _initialize_connection()
+    payload = {
+        "prices": [[1786924800000, 61500.25], [1786978800000, 61800.0]],
+        "total_volumes": [[1786924800000, 1300000000.0], [1786978800000, 900000000.0]],
+    }
+    listing = _listing(connection, listing_id)
+    _provider(connection, lambda _request: _json_response(payload)).fetch_daily(listing, 2)
+
+    def offline(_request):  # noqa: ANN001, ANN202
+        raise AssertionError("la seconda lettura deve usare la cache")
+
+    next_day = datetime(2026, 8, 18, 10, 0, tzinfo=UTC)
+    envelopes = _provider(connection, offline, now=next_day).fetch_daily(listing, 2)
+
+    assert [item.provider_observed_at for item in envelopes] == [
+        datetime(2026, 8, 16, 0, 0, tzinfo=UTC),
+    ]
+    assert envelopes[0].raw_fields["close"] == 61500.25
+    connection.close()
+
+
 def test_coingecko_market_chart_with_only_current_day_is_provider_no_data() -> None:
     connection, listing_id = _initialize_connection()
     payload = {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,11 +30,16 @@ from backend.app.services.data_coverage_service import (
     provider_status_details,
 )
 from backend.app.services.instrument_quality_service import InstrumentQualityService
-from backend.app.services.instrument_service import InstrumentService
+from backend.app.services.instrument_service import InstrumentService, parse_stored_utc
 from backend.app.services.market_observation_service import MarketObservationService
 from backend.app.services.portfolio_engine import PortfolioEngine
 from backend.app.services.scoring_engine import ScoringEngine
 from backend.app.services.sentiment_engine import aggregate_news_sentiment
+
+# Una barra EOD resta valida (non stale) fino a MARKET_DATA_EOD_MAX_AGE_HOURS per coprire
+# weekend e festivi, ma dopo un giorno puo esistere una seduta piu recente: oltre questa
+# eta il refresh non forzato non viene saltato (la cache del trasporto evita chiamate doppie).
+_EOD_REFRESH_DUE_AFTER = timedelta(hours=24)
 
 
 class MarketDataService:
@@ -989,6 +994,8 @@ class MarketDataService:
             return False
         if observed_at.tzinfo is None or observed_at.utcoffset() is None:
             return False
+        if capability.strip().upper() == "EOD" and now.astimezone(UTC) - observed_at > _EOD_REFRESH_DUE_AFTER:
+            return False
         return (
             MarketObservationService.effective_quality_for(
                 capability.strip().upper(),
@@ -1151,9 +1158,11 @@ class MarketDataService:
         if not row["expires_at"]:
             return "MISS"
         try:
-            return "HIT" if datetime.fromisoformat(row["expires_at"]) > datetime.now(UTC).replace(tzinfo=None) else "EXPIRED"
+            expires_at = parse_stored_utc(row["expires_at"])
         except ValueError:
             return "MISS"
+        # Righe legacy senza fuso e righe del trasporto con "Z" sono entrambe UTC.
+        return "HIT" if expires_at is not None and expires_at > datetime.now(UTC) else "EXPIRED"
 
     def _cache_stats(self, connection: sqlite3.Connection) -> dict[str, int]:
         rows = connection.execute(
@@ -1162,15 +1171,16 @@ class MarketDataService:
             FROM api_cache
             """
         ).fetchall()
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         valid = 0
         expired = 0
         for row in rows:
             try:
-                if row["expires_at"] and datetime.fromisoformat(row["expires_at"]) > now:
-                    valid += 1
-                else:
-                    expired += 1
+                expires_at = parse_stored_utc(row["expires_at"])
             except ValueError:
+                expires_at = None
+            if expires_at is not None and expires_at > now:
+                valid += 1
+            else:
                 expired += 1
         return {"entries": len(rows), "valid": valid, "expired": expired}

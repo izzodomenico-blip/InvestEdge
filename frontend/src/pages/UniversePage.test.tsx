@@ -370,4 +370,27 @@ describe("catalog API client", () => {
     expect((conflict as api.ApiError).detail).toEqual({ reason_code: "LISTING_NOT_RESOLVED" });
     expect(String(fetchMock.mock.calls[2][0])).toMatch(/\/assets\/from-listing\/5$/);
   });
+
+  it("keeps the Phase 1 guidance for stale import and allocation conflicts", async () => {
+    const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ detail: { reason_code: "RESOLUTION_CHANGED" } }), { status: 409 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const importConflict = await actual
+      .apiPost("/import/google-sheets/apply", { confirmation_token: "a".repeat(64) })
+      .catch((error: unknown) => error);
+    const allocationConflict = await actual
+      .apiPost("/allocation/apply", { confirmation_token: "b".repeat(64) })
+      .catch((error: unknown) => error);
+
+    for (const conflict of [importConflict, allocationConflict]) {
+      expect(conflict).toBeInstanceOf(actual.ApiError);
+      expect((conflict as api.ApiError).message).not.toContain("API request failed");
+      expect((conflict as api.ApiError).message).toContain("nuova anteprima");
+      expect((conflict as api.ApiError).message).toContain("ricalcola");
+      expect(actual.apiReasonCode(conflict)).toBe("RESOLUTION_CHANGED");
+    }
+  });
 });

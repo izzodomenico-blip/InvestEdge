@@ -235,6 +235,16 @@ class InstrumentService:
                 else:
                     identifier_id = int(identifier["id"])
 
+                # Anche un listing riaggiunto su un instrument gia attestato riceve il fuso
+                # UTC, richiesto dalle barre CoinGecko.
+                connection.execute(
+                    """
+                    UPDATE instrument_listings
+                    SET timezone = 'UTC'
+                    WHERE id = ? AND (timezone IS NULL OR TRIM(timezone) = '')
+                    """,
+                    (row["listing_id"],),
+                )
                 attestation = connection.execute(
                     """
                     SELECT 1
@@ -266,14 +276,6 @@ class InstrumentService:
                         observed_at_text,
                         evidence_hash,
                     ),
-                )
-                connection.execute(
-                    """
-                    UPDATE instrument_listings
-                    SET timezone = 'UTC'
-                    WHERE id = ? AND (timezone IS NULL OR TRIM(timezone) = '')
-                    """,
-                    (row["listing_id"],),
                 )
                 inserted += 1
             if owns_transaction:
@@ -560,7 +562,10 @@ class InstrumentService:
                     ).lastrowid
                 )
         else:
-            instrument_id = InstrumentService._create_instrument(
+            # Una crypto curata riaggiunta (purge o reset del seed) riusa l'instrument
+            # che possiede gia' il COINGECKO_ID, come il ramo ISIN.
+            curated_owner = InstrumentService._curated_crypto_owner(connection, asset_type, asset["symbol"])
+            instrument_id = curated_owner or InstrumentService._create_instrument(
                 connection,
                 asset,
                 instrument_type,
@@ -601,6 +606,25 @@ class InstrumentService:
                 """,
                 (identifier_id, _LEGACY_SOURCE, observed_at, evidence_hash),
             )
+
+    @staticmethod
+    def _curated_crypto_owner(connection: sqlite3.Connection, asset_type: str, symbol: object) -> int | None:
+        coingecko_id = _LEGACY_CURATED_CRYPTO_IDS.get(str(symbol).strip().upper())
+        if asset_type != "crypto" or coingecko_id is None:
+            return None
+        owners = connection.execute(
+            """
+            SELECT DISTINCT identifier.instrument_id
+            FROM instrument_identifiers AS identifier
+            JOIN instruments AS instrument ON instrument.id = identifier.instrument_id
+            WHERE identifier.scheme = 'COINGECKO_ID'
+              AND identifier.normalized_value = ?
+              AND identifier.scope = 'INSTRUMENT'
+              AND instrument.instrument_type = 'CRYPTO'
+            """,
+            (coingecko_id,),
+        ).fetchall()
+        return int(owners[0][0]) if len(owners) == 1 else None
 
     @staticmethod
     def _create_instrument(

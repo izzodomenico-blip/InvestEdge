@@ -25,6 +25,7 @@ from backend.app.services.common import (
 from backend.app.services.common import (
     signal_from_score as _signal_from_score,
 )
+from backend.app.services.instrument_service import parse_stored_utc
 from backend.app.services.provider_budget_service import ProviderAvailability
 from backend.app.services.sentiment_engine import (
     DEMO_NEWS_PROVIDERS,
@@ -586,16 +587,17 @@ class NewsEngine:
             WHERE provider LIKE '%news%'
             """
         ).fetchall()
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         valid = 0
         expired = 0
         for row in rows:
             try:
-                if row["expires_at"] and datetime.fromisoformat(row["expires_at"]) > now:
-                    valid += 1
-                else:
-                    expired += 1
+                expires_at = parse_stored_utc(row["expires_at"])
             except ValueError:
+                expires_at = None
+            if expires_at is not None and expires_at > now:
+                valid += 1
+            else:
                 expired += 1
         return {"entries": len(rows), "valid": valid, "expired": expired}
 

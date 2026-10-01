@@ -3230,6 +3230,33 @@ def test_catalog_refresh_failure_response_contains_only_stable_reason(
     assert "SENTINEL" not in response.text
 
 
+def test_catalog_refresh_runs_blocking_work_outside_the_event_loop(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Download, retry con sleep e parsing PDF sono sincroni: non devono bloccare l'event loop.
+    from backend.app.api import routes
+    from backend.app.services.catalog_service import CatalogRefreshError
+
+    loop_threads: list[bool] = []
+
+    class RecordingCatalogService:
+        def refresh(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            try:
+                asyncio.get_running_loop()
+                loop_threads.append(True)
+            except RuntimeError:
+                loop_threads.append(False)
+            raise CatalogRefreshError("DOWNLOAD_FAILED")
+
+    monkeypatch.setattr(routes, "catalog_service", RecordingCatalogService())
+
+    response = client.post("/data/catalog/refresh")
+
+    assert response.status_code == 502
+    assert loop_threads == [False]
+
+
 def test_catalog_resolve_route_pages_immutable_accepted_entries_and_validates_snapshot(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -3757,6 +3784,30 @@ def test_data_status_compat_keeps_legacy_fields_and_adds_budget_and_coverage(cli
     assert stooq["last_outcome"] is None
     assert "http" not in response.text
     assert "fingerprint" not in response.text
+
+
+def test_status_endpoints_count_cache_rows_written_by_governed_transport(client: TestClient) -> None:
+    # Il trasporto Fase 2 salva expires_at con suffisso "Z": lo status legacy non deve rompersi.
+    from datetime import UTC, datetime, timedelta
+
+    from backend.app.data_providers.transport import SafeProviderTransport
+    from backend.app.database import db_session
+
+    transport = SafeProviderTransport(allowed_hosts={"finnhub.io"})
+    now = datetime.now(UTC)
+    with db_session() as connection:
+        transport._save_cache(connection, "finnhub_news", "company-news:AAPL", "a" * 64, 200, [], "json", now, 3600)
+        transport._save_cache(
+            connection, "stooq", "eod:spy.us", "b" * 64, 200, "", "text", now - timedelta(days=2), 3600
+        )
+
+    data_status = client.get("/data/status")
+    news_status = client.get("/news/status")
+
+    assert data_status.status_code == 200
+    assert data_status.json()["cache_stats"] == {"entries": 2, "valid": 1, "expired": 1}
+    assert news_status.status_code == 200
+    assert news_status.json()["cache_status"] == {"entries": 1, "valid": 1, "expired": 0}
 
 
 def test_asset_data_status_endpoint(client: TestClient) -> None:

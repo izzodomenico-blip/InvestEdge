@@ -1218,6 +1218,80 @@ def test_seed_reset_backs_up_custom_legacy_database_before_migration(tmp_path, m
         assert connection.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "preserved-before-reset"
 
 
+def _curated_coingecko_owners(
+    database_path,  # noqa: ANN001
+    symbol: str,
+    coingecko_id: str,
+) -> tuple[int, set[int], str | None]:
+    with sqlite3.connect(database_path) as connection:
+        asset_instrument, listing_timezone = connection.execute(
+            """
+            SELECT listing.instrument_id, listing.timezone
+            FROM assets AS asset
+            JOIN instrument_listings AS listing ON listing.id = asset.instrument_listing_id
+            WHERE UPPER(asset.symbol) = ? AND asset.asset_type = 'crypto'
+            """,
+            (symbol,),
+        ).fetchone()
+        owners = {
+            int(row[0])
+            for row in connection.execute(
+                """
+                SELECT instrument_id FROM instrument_identifiers
+                WHERE scheme = 'COINGECKO_ID' AND normalized_value = ?
+                """,
+                (coingecko_id,),
+            )
+        }
+    return int(asset_instrument), owners, listing_timezone
+
+
+def test_seed_reset_then_restart_reuses_curated_crypto_identity(tmp_path, monkeypatch) -> None:
+    from backend.scripts.seed_database import seed_database
+
+    database_path = tmp_path / "seed-reset.db"
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))
+    get_settings.cache_clear()
+    try:
+        seed_database(reset=False)
+        init_db()
+        seed_database(reset=True)
+        # Riavvio dopo il reset documentato: la migrazione non deve fallire.
+        init_db()
+    finally:
+        get_settings.cache_clear()
+
+    # Le barre CoinGecko richiedono il fuso UTC sul listing collegato all'asset.
+    for symbol, coingecko_id in (("BTC", "bitcoin"), ("SOL", "solana")):
+        asset_instrument, owners, listing_timezone = _curated_coingecko_owners(database_path, symbol, coingecko_id)
+        assert owners == {asset_instrument}
+        assert listing_timezone == "UTC"
+
+
+def test_purged_curated_crypto_can_be_added_again_and_restarted(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "purge-readd.db"
+    _initialize_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO assets (symbol, name, asset_type, currency) VALUES ('SOL', 'Solana', 'crypto', 'EUR')"
+        )
+    _initialize_database(database_path, monkeypatch)
+    first_instrument, owners, _timezone = _curated_coingecko_owners(database_path, "SOL", "solana")
+    assert owners == {first_instrument}
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DELETE FROM assets WHERE symbol = 'SOL'")
+        connection.execute(
+            "INSERT INTO assets (symbol, name, asset_type, currency) VALUES ('SOL', 'Solana', 'crypto', 'EUR')"
+        )
+    _initialize_database(database_path, monkeypatch)
+
+    asset_instrument, owners, listing_timezone = _curated_coingecko_owners(database_path, "SOL", "solana")
+    assert asset_instrument == first_instrument
+    assert owners == {first_instrument}
+    assert listing_timezone == "UTC"
+
+
 def test_init_db_creates_traceable_fx_rates_and_lookup_index(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "fx.db"
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))

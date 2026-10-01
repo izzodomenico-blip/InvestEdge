@@ -52,6 +52,8 @@ class ProviderResponse:
     from_cache: bool
     attempts: int
     request_fingerprint: str
+    # Istante del download (anche per una risposta letta dalla cache): additivo.
+    fetched_at: datetime | None = None
 
 
 class SafeProviderTransportError(RuntimeError):
@@ -762,6 +764,7 @@ class SafeProviderTransport:
                         from_cache=False,
                         attempts=attempts,
                         request_fingerprint=prepared.request_fingerprint,
+                        fetched_at=_as_utc(attempt_now),
                     )
             except httpx.TimeoutException:
                 outcome = "RETRY_EXHAUSTED" if attempts >= max_attempts else "TIMED_OUT"
@@ -817,7 +820,7 @@ class SafeProviderTransport:
     ) -> ProviderResponse | None:
         row = connection.execute(
             """
-            SELECT response_json, payload, expires_at
+            SELECT response_json, payload, expires_at, last_update
             FROM api_cache
             WHERE cache_key = ?
             LIMIT 1
@@ -855,6 +858,7 @@ class SafeProviderTransport:
             from_cache=True,
             attempts=0,
             request_fingerprint=request_fingerprint,
+            fetched_at=_parse_timestamp(row["last_update"]),
         )
 
     def _save_cache(

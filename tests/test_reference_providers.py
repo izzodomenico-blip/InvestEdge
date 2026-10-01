@@ -173,6 +173,23 @@ def test_ecb_invalid_values_never_replace_last_good_rate(obs_value: str, reason:
     assert _fx_rows(connection) == [("USD", "EUR", 0.8, "2026-08-14", "ecb", "reference")]
 
 
+def test_ecb_future_time_period_never_becomes_the_latest_rate() -> None:
+    # NOW = 16/08: un TIME_PERIOD futuro diventerebbe il cambio piu recente e mai stale.
+    connection = _connection()
+    _insert_rate(connection, 0.8, "2026-08-14")
+    body = (
+        b"KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2026-08-20,1.0000\n"
+    )
+    provider = _ecb_provider(lambda _request: _csv_response(body))
+
+    with pytest.raises(ProviderError) as exc_info:
+        FXService(ecb_provider=provider).refresh_currency(connection, "USD", now=NOW)
+
+    assert str(exc_info.value) == "ecb:FX:FUTURE_TIMESTAMP"
+    assert _fx_rows(connection) == [("USD", "EUR", 0.8, "2026-08-14", "ecb", "reference")]
+
+
 @pytest.mark.parametrize("currency", ["EUR", "XYZ", "US1", "BGN"])
 def test_ecb_rejects_currencies_outside_allowlist_before_transport(currency: str) -> None:
     connection = _connection()

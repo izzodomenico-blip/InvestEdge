@@ -2149,7 +2149,7 @@ Non modificare file fuori da questo elenco. Una correzione deve includere il tes
 
 **Interfaces — Produces:** report con sezioni obbligatorie `Scope`, `Commit chain`, `Schema and migrations`, `Phase 1 compatibility`, `Catalog and identity`, `Observation quality gates`, `Provider matrix and budgets`, `EUR FX`, `Lazy refresh`, `Coverage metrics`, `Security and backups`, `Verification evidence`, `Independent review`, `Residual risks`. Ogni comando riporta exit code e conteggio verificato; ogni rischio ha impatto e mitigazione corrente.
 
-- [ ] **Step 1: Verificare storia lineare e scope cumulativo**
+- [x] **Step 1: Verificare storia lineare e scope cumulativo**
 
 ```powershell
 $phase2Base = (git rev-parse origin/codex/investedge-phase-2-plan).Trim()
@@ -2162,7 +2162,7 @@ git status --short
 
 Expected prima del commit finale: `17` commit lineari, solo file autorizzati dai Task 1–17, working tree pulito. Verificare per ogni commit un solo parent e il messaggio esatto del Task.
 
-- [ ] **Step 2: Eseguire suite completa backend e controlli statici**
+- [x] **Step 2: Eseguire suite completa backend e controlli statici**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest -q
@@ -2173,7 +2173,7 @@ Expected prima del commit finale: `17` commit lineari, solo file autorizzati dai
 
 Expected: tutti i test passano senza rete; Ruff e compileall exit 0; pip riporta `No broken requirements found.`. Annotare nel report il numero effettivo di test/casi, senza copiarlo come promessa in questo piano.
 
-- [ ] **Step 3: Eseguire suite, build e audit frontend**
+- [x] **Step 3: Eseguire suite, build e audit frontend**
 
 ```powershell
 npm --prefix frontend ci
@@ -2184,7 +2184,7 @@ npm --prefix frontend audit --audit-level=high
 
 Expected: test Vitest verdi, TypeScript/Vite build exit 0, nessuna vulnerabilità high/critical. Non usare fix automatici forzati.
 
-- [ ] **Step 4: Eseguire smoke fixture e gate dati**
+- [x] **Step 4: Eseguire smoke fixture e gate dati**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_instrument_catalog.py tests\test_instrument_resolution.py tests\test_market_data_observations.py tests\test_instrument_quality.py tests\test_eod_providers.py tests\test_finnhub_provider.py tests\test_coingecko_provider.py tests\test_fx_service.py tests\test_reference_providers.py tests\test_news_providers.py tests\test_refresh_planner.py tests\test_data_coverage.py -q
@@ -2193,7 +2193,7 @@ Expected: test Vitest verdi, TypeScript/Vite build exit 0, nessuna vulnerabilit�
 
 Expected: fixture smoke verde senza credenziali; gate valid/missing/stale/corrupt/ambiguous/rate-limit/fallback/dedup/tier/EUR verde; backup fail-closed e token stale verdi.
 
-- [ ] **Step 5: Eseguire scan segreti, marcatori incompleti e diff**
+- [x] **Step 5: Eseguire scan segreti, marcatori incompleti e diff**
 
 ```powershell
 $phase2Files = @(
@@ -2229,7 +2229,7 @@ git diff --check origin/codex/investedge-phase-2-plan...HEAD
 
 Expected: nessun candidate secret inatteso in file committed, modificati o untracked; sono tollerate soltanto sentinelle nominate `SENTINEL_*`, `TEST_*` o `DUMMY_*` dentro `tests/` e il report ne registra il conteggio. Il pattern copre assegnazioni/query/JSON/YAML con `:` o `=`, token Bearer e chiavi `sk-` di lunghezza realistica, senza intercettare i branch `task-N`. Nessun marcatore incompleto nel diff; `git diff --check` senza output. Le occorrenze preesistenti fuori dal diff non sono scansionate né modificate.
 
-- [ ] **Step 6: Richiedere review indipendente cumulativa**
+- [x] **Step 6: Richiedere review indipendente cumulativa**
 
 Usare `superpowers:requesting-code-review` con base `origin/codex/investedge-phase-2-plan`, head corrente e questo prompt minimo:
 
@@ -2239,11 +2239,11 @@ Review the cumulative Phase 2 diff against the approved broker-grade spec and th
 
 Expected: review ricevuta e registrata nel report. Riprodurre ogni rilievo; usare `superpowers:systematic-debugging` per failure o comportamento inatteso. Correggere tutti i Critical/Important nei path autorizzati, aggiungere il test mirato, poi ripetere Steps 2–5 e richiedere re-review del delta. I Minor residui devono essere rischi reali documentati, non difetti funzionali o di sicurezza rinviati.
 
-- [ ] **Step 7: Scrivere il report con evidenza reale**
+- [x] **Step 7: Scrivere il report con evidenza reale**
 
 Creare `docs/reports/2026-08-16-phase-2-verification.md` usando esclusivamente SHA, count, output e review appena osservati. Includere la matrice provider con capability effettive, limiti configurati, autenticazione, fallback e rischio; dichiarare esplicitamente che non sono state eseguite API live e che la copertura è una metrica dinamica, non un numero garantito.
 
-- [ ] **Step 8: Verifica finale, commit e push**
+- [x] **Step 8: Verifica finale, commit e push**
 
 Rieseguire `superpowers:verification-before-completion`, il controllo delle checkbox Task 1–18 e lo scan Step 5 dopo la creazione del report. Il secondo scan deve includere esplicitamente `docs/reports/2026-08-16-phase-2-verification.md` e ogni altra modifica/untracked del Task 18 prima dello staging.
 
@@ -2284,7 +2284,7 @@ git push -u origin HEAD
 
 Expected: un solo commit sopra Task 17; nessun file fuori scope è staged.
 
-- [ ] **Step 9: Eseguire gate remoto finale**
+- [x] **Step 9: Eseguire gate remoto finale**
 
 ```powershell
 $finalBranch = (git branch --show-current).Trim()

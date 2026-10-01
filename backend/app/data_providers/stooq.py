@@ -122,7 +122,21 @@ class StooqProvider(BaseMarketDataProvider):
             raise ProviderError("stooq:EOD:INVALID_PAYLOAD")
         if not response.payload:
             return []
-        return [self._envelope(listing, row, now) for row in response.payload]
+        envelopes = [self._envelope(listing, row, now) for row in response.payload]
+        # Il CSV ha solo la data: la riga del giorno locale del download puo essere una
+        # seduta ancora aperta e non diventa una barra EOD, nemmeno se riletta dalla cache.
+        try:
+            zone = ZoneInfo(str(self._listing_value(listing, "timezone") or "").strip())
+        except (ValueError, ZoneInfoNotFoundError):
+            return envelopes
+        download_day = (response.fetched_at or now).astimezone(zone).date()
+        return [
+            envelope
+            for envelope in envelopes
+            if "reason_code" in envelope.raw_fields
+            or envelope.provider_observed_at is None
+            or envelope.provider_observed_at.astimezone(zone).date() != download_day
+        ]
 
     def get_daily_prices(
         self,

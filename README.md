@@ -229,7 +229,7 @@ Le soglie sono configurabili tramite `MARKET_DATA_QUOTE_MAX_AGE_MINUTES` (defaul
 ### Attivazione rapida
 
 1. Copia `backend/.env.example` in `backend/.env`.
-2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Per le quote snapshot USA configura `FINNHUB_API_KEY` e un simbolo Finnhub `QUOTE/VERIFIED` sul listing. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
+2. Per i prezzi EOD imposta `ENABLE_REAL_DATA=true` e `ENABLE_STOOQ=true`; ogni listing deve avere un simbolo Stooq `VERIFIED` esplicito in `provider_symbols`. Limite noto: gli asset attivati prima della Fase 2 (inclusi azioni ed ETF del seed demo, come SPY o AAPL) hanno un listing legacy senza MIC che non diventa mai `RESOLVED`, quindi non possono ricevere un simbolo provider; attivare il listing risolto con lo stesso ticker risponde 409 `LEGACY_SYMBOL_CONFLICT`. Restano su dati seed finche un sottoprogetto successivo non aggiunge il ricollegamento esplicito; oggi ricevono dati reali solo i listing attivati dal catalogo e le cinque crypto curate. Per le quote snapshot USA configura `FINNHUB_API_KEY` e un simbolo Finnhub `QUOTE/VERIFIED` sul listing. Per le news Alpha Vantage, configura separatamente la key e `ENABLE_REAL_NEWS=true`.
 3. Riavvia `Avvia-InvestEdge.bat`.
 4. Apri la pagina **Dati** e clicca **Esegui batch prioritario (10)** (e nella pagina **News**, **Aggiorna tutte**).
 

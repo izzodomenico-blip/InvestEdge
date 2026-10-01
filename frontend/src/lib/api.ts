@@ -1053,6 +1053,15 @@ export type NewsSentimentSummary = {
 
 export type MarketNewsSummary = Omit<NewsSentimentSummary, "symbol" | "latest_news">;
 
+// I 409 di import/allocation apply espongono un reason_code (Fase 2): il messaggio
+// guida della Fase 1 resta visibile nelle pagine che mostrano `error.message`.
+const STALE_PREVIEW_MESSAGE =
+  "I dati sono cambiati dopo l'anteprima: genera una nuova anteprima dell'import o ricalcola l'allocazione prima di applicarla.";
+const REASON_CODE_MESSAGES: Record<string, string> = {
+  RESOLUTION_CHANGED: STALE_PREVIEW_MESSAGE,
+  LISTING_METADATA_CHANGED: STALE_PREVIEW_MESSAGE,
+};
+
 async function parseError(response: Response): Promise<ApiError> {
   const fallback = `API request failed: ${response.status}`;
   try {
@@ -1060,7 +1069,9 @@ async function parseError(response: Response): Promise<ApiError> {
     if (typeof payload.detail === "string") {
       return new ApiError(payload.detail, response.status, payload.detail);
     }
-    return new ApiError(fallback, response.status, payload.detail ?? null);
+    const reason = payload.detail?.reason_code;
+    const message = typeof reason === "string" ? REASON_CODE_MESSAGES[reason] : undefined;
+    return new ApiError(message ?? fallback, response.status, payload.detail ?? null);
   } catch {
     return new ApiError(fallback, response.status);
   }

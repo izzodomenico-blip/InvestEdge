@@ -121,7 +121,7 @@ class EcbFxProvider:
             )
         except _NotModified:
             return EcbFetchResult("NOT_MODIFIED", None)
-        return EcbFetchResult("UPDATED", self._quote_from_csv(currency, response.payload))
+        return EcbFetchResult("UPDATED", self._quote_from_csv(currency, response.payload, now))
 
     def fetch_reference_rates(self, connection: sqlite3.Connection, now: datetime) -> list[FXQuote]:
         try:
@@ -140,7 +140,7 @@ class EcbFxProvider:
         payload = response.payload
         if not isinstance(payload, bytes | bytearray):
             raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
-        return self._quotes_from_daily_xml(bytes(payload))
+        return self._quotes_from_daily_xml(bytes(payload), now)
 
     def _request(
         self,
@@ -183,7 +183,7 @@ class EcbFxProvider:
             raise ProviderError(f"ecb:FX:{exc.code}") from None
 
     @staticmethod
-    def _quote_from_csv(currency: str, payload: object) -> FXQuote:
+    def _quote_from_csv(currency: str, payload: object, now: datetime) -> FXQuote:
         if not isinstance(payload, list) or len(payload) > ECB_MAX_CSV_ROWS:
             raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
         observations: list[tuple[str, str]] = []
@@ -200,6 +200,7 @@ class EcbFxProvider:
                 observed = date.fromisoformat(str(row.get("TIME_PERIOD") or "").strip())
             except ValueError:
                 raise ProviderError("ecb:FX:MALFORMED_PAYLOAD") from None
+            _reject_future(observed, now)
             observations.append((observed.isoformat(), str(row.get("OBS_VALUE") or "").strip()))
         if not observations:
             raise ProviderError("ecb:FX:PROVIDER_NO_DATA")
@@ -208,7 +209,7 @@ class EcbFxProvider:
         return FXQuote(currency, "EUR", 1.0 / ecb_rate, observed_at, "ecb", "reference")
 
     @staticmethod
-    def _quotes_from_daily_xml(payload: bytes) -> list[FXQuote]:
+    def _quotes_from_daily_xml(payload: bytes, now: datetime) -> list[FXQuote]:
         uppercase_payload = payload.upper()
         if b"<!DOCTYPE" in uppercase_payload or b"<!ENTITY" in uppercase_payload:
             raise ProviderError("ecb:FX:XML_ENTITIES_NOT_ALLOWED")
@@ -223,9 +224,11 @@ class EcbFxProvider:
             if not observed_at:
                 continue
             try:
-                observed = date.fromisoformat(observed_at.strip()).isoformat()
+                observed_day = date.fromisoformat(observed_at.strip())
             except ValueError:
                 raise ProviderError("ecb:FX:MALFORMED_PAYLOAD") from None
+            _reject_future(observed_day, now)
+            observed = observed_day.isoformat()
             for rate_element in element:
                 currency = rate_element.attrib.get("currency", "").strip().upper()
                 raw_rate = rate_element.attrib.get("rate")
@@ -243,6 +246,12 @@ class EcbFxProvider:
 
 class _NotModified(Exception):
     pass
+
+
+def _reject_future(observed: date, now: datetime) -> None:
+    # Un cambio datato dopo il giorno UTC corrente diventerebbe il piu recente e mai stale.
+    if observed > now.astimezone(UTC).date():
+        raise ProviderError("ecb:FX:FUTURE_TIMESTAMP")
 
 
 def _parse_rate(raw_value: str) -> float:

@@ -122,6 +122,7 @@ def _stooq_provider(
     handler,  # noqa: ANN001
     *,
     enabled: bool = True,
+    now: datetime = NOW,
 ):
     from backend.app.data_providers.stooq import StooqProvider
 
@@ -132,13 +133,13 @@ def _stooq_provider(
     )
     transport = SafeProviderTransport(
         allowed_hosts={"stooq.com"},
-        clock=lambda: NOW,
+        clock=lambda: now,
     ).with_client(httpx.Client(transport=httpx.MockTransport(handler)))
     return StooqProvider(
         settings,
         connection,
         transport=transport,
-        clock=lambda: NOW,
+        clock=lambda: now,
         sleeper=lambda _delay: None,
     )
 
@@ -225,6 +226,32 @@ def test_stooq_parses_fixture_with_fixed_https_host_path_and_validator_decimals(
     assert validated.observation.open == Decimal("100.10")
     assert validated.observation.close == Decimal("104.75")
     assert validated.observation.volume == Decimal("1200")
+    connection.close()
+
+
+def test_stooq_never_turns_the_download_day_session_into_an_eod_bar() -> None:
+    # NOW = lunedi 17/08 12:00 a New York: la riga del 17/08 e una seduta ancora aperta.
+    connection, listing_id = _initialize_connection()
+    payload = (
+        b"Date,Open,High,Low,Close,Volume\n"
+        b"2026-08-14,100.10,105.25,99.50,104.75,1200\n"
+        b"2026-08-17,104.80,106.00,104.00,105.10,300\n"
+    )
+    listing = _listing(connection, listing_id)
+
+    downloaded = _stooq_provider(connection, lambda _request: _csv_response(payload)).fetch_observations(
+        listing, None, None
+    )
+
+    def offline(_request):  # noqa: ANN001, ANN202
+        raise AssertionError("la seconda lettura deve usare la cache")
+
+    next_day = datetime(2026, 8, 18, 14, 0, tzinfo=UTC)
+    cached = _stooq_provider(connection, offline, now=next_day).fetch_observations(listing, None, None)
+
+    expected = [datetime(2026, 8, 14, 4, tzinfo=UTC)]
+    assert [item.provider_observed_at for item in downloaded] == expected
+    assert [item.provider_observed_at for item in cached] == expected
     connection.close()
 
 

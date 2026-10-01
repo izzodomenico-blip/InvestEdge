@@ -254,6 +254,59 @@ def test_fresh_unit_is_skipped_without_provider_call_unless_forced(monkeypatch: 
     assert calls == [True]
 
 
+def test_eod_bar_older_than_a_day_is_refreshed_even_if_not_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    from zoneinfo import ZoneInfo
+
+    from backend.app.models.market_data import MarketObservationEnvelope
+    from backend.app.services.market_observation_service import MarketObservationService
+
+    connection = _initialize()
+    listing = _add_listing(connection, "AAA")
+    # Mercoledi 30/09 dopo la chiusura USA; ultima barra Stooq di lunedi 28/09 (mezzanotte locale).
+    now = datetime(2026, 9, 30, 22, 0, tzinfo=UTC)
+    bar_day = datetime(2026, 9, 28, tzinfo=ZoneInfo("America/New_York"))
+    envelope = MarketObservationEnvelope(
+        listing_id=listing,
+        provider="stooq",
+        capability="EOD",
+        operation="stooq_daily",
+        received_at=now - timedelta(days=1),
+        provider_observed_at=bar_day,
+        timezone="America/New_York",
+        session="REGULAR",
+        currency="USD",
+        source_quality="eod",
+        kind="BAR",
+        raw_fields={"close": "100", "volume": "10"},
+        raw_payload_sha256=hashlib.sha256(b"monday-bar").hexdigest(),
+    )
+    MarketObservationService().ingest_batch(connection, [envelope], now - timedelta(days=1))
+    connection.commit()
+    # Non e ancora stale (96 ore), ma una seduta piu recente puo esistere.
+    assert MarketObservationService.effective_quality_for("EOD", "eod", bar_day, now) == "eod"
+    calls: list[bool] = []
+
+    def refresh_row(self, connection, asset, force=False):  # noqa: ANN001, ANN202
+        calls.append(force)
+        return {
+            "symbol": asset["symbol"],
+            "provider": "stooq",
+            "rows_inserted": 2,
+            "rows_updated": 0,
+            "used_cache": False,
+            "used_fallback": False,
+            "message": "ok",
+        }
+
+    monkeypatch.setattr(MarketDataService, "refresh_asset_row", refresh_row)
+    planner = RefreshPlannerService()
+    planner.enqueue(connection, listing, "EOD", "POSITION", now)
+    result = planner.run_batch(connection, 5, now)
+
+    assert (result.selected, result.skipped_fresh, result.succeeded) == (1, 0, 1)
+    assert calls == [False]
+
+
 def test_budget_cooldown_defers_without_reservation_or_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENABLE_REAL_DATA", "true")
     monkeypatch.setenv("ENABLE_STOOQ", "true")

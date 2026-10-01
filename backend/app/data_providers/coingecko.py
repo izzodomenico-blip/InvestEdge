@@ -262,6 +262,7 @@ class CoinGeckoProvider(BaseMarketDataProvider):
         # giorno UTC in corso e incompleto e non diventa una barra EOD.
         current_day = received_at.astimezone(UTC).date()
         samples_by_day: dict[date, tuple[int, int, object, object]] = {}
+        latest_observed_at: datetime | None = None
         for index, (price_item, volume_item) in enumerate(zip(prices, volumes, strict=True)):
             if (
                 not isinstance(price_item, list)
@@ -297,6 +298,8 @@ class CoinGeckoProvider(BaseMarketDataProvider):
                         payload,
                     )
                 ]
+            if latest_observed_at is None or observed_at > latest_observed_at:
+                latest_observed_at = observed_at
             bar_day = (observed_at - timedelta(milliseconds=1)).date()
             if bar_day >= current_day:
                 continue
@@ -309,6 +312,16 @@ class CoinGeckoProvider(BaseMarketDataProvider):
             )
             if current is None or candidate[:2] >= current[:2]:
                 samples_by_day[bar_day] = candidate
+
+        # Un giorno e completo solo se il payload contiene il campione che lo chiude
+        # (00:00 UTC del giorno dopo o successivo): un payload riletto dalla cache il
+        # giorno dopo non completa la sessione parziale del download.
+        samples_by_day = {
+            bar_day: sample
+            for bar_day, sample in samples_by_day.items()
+            if latest_observed_at is not None
+            and datetime.combine(bar_day + timedelta(days=1), day_time.min, tzinfo=UTC) <= latest_observed_at
+        }
 
         if not samples_by_day:
             return [
