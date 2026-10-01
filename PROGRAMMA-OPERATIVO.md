@@ -31,7 +31,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 | SP | Titolo | Stato | Spec | Piano | Branch finale | In `main` |
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
-| SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, fast-forward al Task 18 (2026-10-01; SHA nel commit successivo) |
+| SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
 | SP1 | Laboratorio di verità | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -87,7 +87,7 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 15 | Catalogo paginato nella pagina Universe | FATTO | `30069f0` | 2026-10-01 | Claude |
 | 16 | API e metriche di copertura dati | FATTO | `d0d6b4c` | 2026-10-01 | Claude |
 | 17 | Copertura, qualità e budget nel Data Center | FATTO | `8d95373` | 2026-10-01 | Claude |
-| 18 | Audit cumulativo e report Fase 2 | FATTO | branch `codex/investedge-phase-2-task-18` | 2026-10-01 | Claude |
+| 18 | Audit cumulativo e report Fase 2 | FATTO | `6acd3c4` | 2026-10-01 | Claude |
 
 Evidenza Task 10 (2026-09-30, Claude):
 
