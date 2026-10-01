@@ -1,15 +1,48 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
-from backend.app.models import AssetClass, InstrumentType
+from backend.app.models import (
+    AssetClass,
+    InstrumentType,
+    ProviderSymbolApplyIn,
+    ProviderSymbolApplyOut,
+    ProviderSymbolPreviewIn,
+    ProviderSymbolPreviewOut,
+    TradeRepublicAttestationApplyIn,
+    TradeRepublicAttestationOut,
+    TradeRepublicAttestationPreviewIn,
+    TradeRepublicAttestationPreviewOut,
+)
 
 _ISIN_PATTERN = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
+_SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_SOURCE_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
+# Normalizzazione provider-specifica: forma attesa dal provider, mai derivata dal ticker.
+_PROVIDER_SYMBOL_PATTERNS = {
+    "stooq": re.compile(r"^[a-z0-9^][a-z0-9.\-_]{0,31}$"),
+    "finnhub": re.compile(r"^[A-Z0-9][A-Z0-9.\-:]{0,31}$"),
+    "coingecko": re.compile(r"^[a-z0-9][a-z0-9\-]{0,99}$"),
+}
+_PROVIDER_CAPABILITIES = {
+    "stooq": frozenset({"EOD"}),
+    "finnhub": frozenset({"QUOTE", "NEWS"}),
+    "coingecko": frozenset({"EOD", "QUOTE"}),
+}
+_PROVIDER_INSTRUMENT_TYPES = {
+    "stooq": frozenset({"STOCK", "ETF", "BOND", "ETC", "ETN"}),
+    "finnhub": frozenset({"STOCK", "ETF"}),
+    "coingecko": frozenset({"CRYPTO"}),
+}
 _LEGACY_SOURCE = "LEGACY_ACTIVE_ASSET"
 _LEGACY_CURATED_SOURCE = "LEGACY_CURATED"
 _LEGACY_CURATED_CRYPTO_IDS = {
@@ -52,7 +85,71 @@ class AmbiguousInstrumentError(ValueError):
         )
 
 
+class ListingConfirmationError(ValueError):
+    """Errore stabile e sanitizzato delle conferme locali di listing."""
+
+    def __init__(
+        self,
+        reason_code: str,
+        kind: Literal["invalid", "conflict", "not_found"],
+    ) -> None:
+        self.reason_code = reason_code
+        self.kind = kind
+        super().__init__(reason_code)
+
+
+def parse_stored_utc(value: object) -> datetime | None:
+    """Converte un timestamp salvato (ISO, `Z` o SQLite senza fuso) in UTC."""
+    if value is None or not str(value).strip():
+        return None
+    parsed = datetime.fromisoformat(str(value).strip())
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _utc_text(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_hash(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 class InstrumentService:
+    @staticmethod
+    def resolved_listing(
+        connection: sqlite3.Connection,
+        listing_id: int,
+    ) -> sqlite3.Row | None:
+        """Listing RESOLVED: metadata VERIFIED corrente e almeno un case RESOLVED."""
+        return connection.execute(
+            """
+            SELECT listing.*, instrument.instrument_type, instrument.canonical_name,
+                   metadata.instrument_type AS verified_instrument_type
+            FROM instrument_listings AS listing
+            JOIN instruments AS instrument ON instrument.id = listing.instrument_id
+            JOIN listing_metadata_versions AS metadata
+              ON metadata.instrument_listing_id = listing.id
+             AND metadata.status = 'VERIFIED'
+            WHERE listing.id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM instrument_resolution_cases AS resolution
+                  WHERE resolution.selected_listing_id = listing.id
+                    AND resolution.status = 'RESOLVED'
+              )
+            """,
+            (listing_id,),
+        ).fetchone()
+
     @staticmethod
     def backfill_curated_crypto_ids(
         connection: sqlite3.Connection,
@@ -538,3 +635,450 @@ class InstrumentService:
             return None
         normalized = "".join(value.split()).upper()
         return normalized if _ISIN_PATTERN.fullmatch(normalized) else None
+
+
+@dataclass(frozen=True)
+class _ProviderSymbolRequest:
+    provider: str
+    capability: str
+    provider_symbol: str
+    normalized_symbol: str
+    source: str
+    observed_at: str
+    expected_currency: str
+    evidence_hash: str
+
+
+@dataclass(frozen=True)
+class _AttestationRequest:
+    status: str
+    source: str
+    observed_at: str
+    evidence_hash: str
+
+
+class ListingConfirmationService:
+    """Conferme locali e versionate di provider symbol e stato Trade Republic.
+
+    Preview e apply leggono e scrivono solo il database locale: nessuna chiamata a
+    provider, nessun login, nessuna automazione dell'app Trade Republic.
+    """
+
+    def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    def preview_provider_symbol(
+        self,
+        connection: sqlite3.Connection,
+        listing_id: int,
+        payload: ProviderSymbolPreviewIn,
+    ) -> ProviderSymbolPreviewOut:
+        request = self._provider_symbol_request(payload)
+        listing = self._require_resolved_listing(connection, listing_id)
+        self._check_provider_listing(listing, request)
+        self._ensure_provider_symbol_free(connection, listing_id, request)
+        current = self._current_provider_symbol(connection, listing_id, request)
+        current_version = int(current["version"]) if current is not None else None
+        return ProviderSymbolPreviewOut(
+            listing_id=listing_id,
+            normalized_provider_symbol=request.provider_symbol,
+            current_version=current_version,
+            confirmation_token=self._provider_symbol_token(listing_id, request, current_version),
+        )
+
+    def apply_provider_symbol(
+        self,
+        connection: sqlite3.Connection,
+        listing_id: int,
+        payload: ProviderSymbolApplyIn,
+    ) -> ProviderSymbolApplyOut:
+        request = self._provider_symbol_request(payload)
+        self._begin(connection)
+        try:
+            listing = self._require_resolved_listing(connection, listing_id)
+            self._check_provider_listing(listing, request)
+            current = self._current_provider_symbol(connection, listing_id, request)
+            if current is not None and self._provider_symbol_matches(current, request):
+                connection.commit()
+                return self._provider_symbol_out(current)
+            self._ensure_provider_symbol_free(connection, listing_id, request)
+            current_version = int(current["version"]) if current is not None else None
+            expected_token = self._provider_symbol_token(listing_id, request, current_version)
+            if not hmac.compare_digest(payload.confirmation_token, expected_token):
+                raise ListingConfirmationError("PROVIDER_SYMBOL_CHANGED", "conflict")
+            # Ordine obbligato: ritiro della versione corrente, poi nuova VERIFIED.
+            if current is not None:
+                connection.execute(
+                    "UPDATE provider_symbols SET status = 'RETIRED' WHERE id = ?",
+                    (int(current["id"]),),
+                )
+            latest = connection.execute(
+                """
+                SELECT MAX(version) AS version
+                FROM provider_symbols
+                WHERE UPPER(provider) = UPPER(?) AND listing_id = ? AND UPPER(capability) = ?
+                """,
+                (request.provider, listing_id, request.capability),
+            ).fetchone()
+            symbol_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO provider_symbols (
+                        provider, listing_id, capability, provider_symbol, normalized_symbol,
+                        status, source, observed_at, verified_at, evidence_hash, version,
+                        supersedes_provider_symbol_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request.provider,
+                        listing_id,
+                        request.capability,
+                        request.provider_symbol,
+                        request.normalized_symbol,
+                        request.source,
+                        request.observed_at,
+                        request.observed_at,
+                        request.evidence_hash,
+                        int(latest["version"] or 0) + 1,
+                        int(current["id"]) if current is not None else None,
+                    ),
+                ).lastrowid
+            )
+            created = connection.execute(
+                "SELECT * FROM provider_symbols WHERE id = ?",
+                (symbol_id,),
+            ).fetchone()
+            connection.commit()
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            raise ListingConfirmationError("PROVIDER_SYMBOL_CHANGED", "conflict") from None
+        except Exception:
+            connection.rollback()
+            raise
+        return self._provider_symbol_out(created)
+
+    def preview_trade_republic_attestation(
+        self,
+        connection: sqlite3.Connection,
+        listing_id: int,
+        payload: TradeRepublicAttestationPreviewIn,
+    ) -> TradeRepublicAttestationPreviewOut:
+        request = self._attestation_request(payload)
+        listing = self._require_resolved_listing(connection, listing_id)
+        active = self._active_attestation(connection, listing_id)
+        current_version = int(active["version"]) if active is not None else None
+        return TradeRepublicAttestationPreviewOut(
+            listing_id=listing_id,
+            current_status=listing["trade_republic_status"],
+            current_version=current_version,
+            confirmation_token=self._attestation_token(listing_id, request, current_version),
+        )
+
+    def apply_trade_republic_attestation(
+        self,
+        connection: sqlite3.Connection,
+        listing_id: int,
+        payload: TradeRepublicAttestationApplyIn,
+    ) -> TradeRepublicAttestationOut:
+        request = self._attestation_request(payload)
+        self._begin(connection)
+        try:
+            self._require_resolved_listing(connection, listing_id)
+            active = self._active_attestation(connection, listing_id)
+            if active is not None and self._attestation_matches(active, request):
+                connection.commit()
+                return self._attestation_out(active)
+            current_version = int(active["version"]) if active is not None else None
+            expected_token = self._attestation_token(listing_id, request, current_version)
+            if not hmac.compare_digest(payload.confirmation_token, expected_token):
+                raise ListingConfirmationError("TRADE_REPUBLIC_ATTESTATION_CHANGED", "conflict")
+            latest = connection.execute(
+                "SELECT MAX(version) AS version FROM trade_republic_attestations WHERE listing_id = ?",
+                (listing_id,),
+            ).fetchone()
+            # Ordine transazionale: retire precedente -> insert nuova ACTIVE -> projection.
+            if active is not None:
+                connection.execute(
+                    """
+                    UPDATE trade_republic_attestations
+                    SET record_status = 'RETIRED'
+                    WHERE id = ? AND record_status = 'ACTIVE'
+                    """,
+                    (int(active["id"]),),
+                )
+            attestation_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO trade_republic_attestations (
+                        listing_id, status, record_status, source, observed_at,
+                        evidence_hash, version, supersedes_attestation_id
+                    )
+                    VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        listing_id,
+                        request.status,
+                        request.source,
+                        request.observed_at,
+                        request.evidence_hash,
+                        int(latest["version"] or 0) + 1,
+                        int(active["id"]) if active is not None else None,
+                    ),
+                ).lastrowid
+            )
+            connection.execute(
+                """
+                UPDATE instrument_listings
+                SET trade_republic_status = ?,
+                    trade_republic_verified_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    request.status,
+                    request.observed_at if request.status == "VERIFIED" else None,
+                    listing_id,
+                ),
+            )
+            created = connection.execute(
+                "SELECT * FROM trade_republic_attestations WHERE id = ?",
+                (attestation_id,),
+            ).fetchone()
+            connection.commit()
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            # Collisione concorrente sull'indice ACTIVE: rilettura come idempotenza o stale.
+            active = self._active_attestation(connection, listing_id)
+            if active is not None and self._attestation_matches(active, request):
+                return self._attestation_out(active)
+            raise ListingConfirmationError(
+                "TRADE_REPUBLIC_ATTESTATION_CHANGED",
+                "conflict",
+            ) from None
+        except Exception:
+            connection.rollback()
+            raise
+        return self._attestation_out(created)
+
+    @staticmethod
+    def _begin(connection: sqlite3.Connection) -> None:
+        if connection.in_transaction:
+            raise RuntimeError("Le conferme locali richiedono una connessione senza transazione aperta.")
+        connection.execute("BEGIN IMMEDIATE")
+
+    @staticmethod
+    def _require_resolved_listing(
+        connection: sqlite3.Connection,
+        listing_id: int,
+    ) -> sqlite3.Row:
+        listing = connection.execute(
+            "SELECT id FROM instrument_listings WHERE id = ?",
+            (listing_id,),
+        ).fetchone()
+        if listing is None:
+            raise ListingConfirmationError("LISTING_NOT_FOUND", "not_found")
+        resolved = InstrumentService.resolved_listing(connection, listing_id)
+        if resolved is None or resolved["listing_status"] != "ACTIVE":
+            raise ListingConfirmationError("LISTING_NOT_RESOLVED", "conflict")
+        return resolved
+
+    def _observed_at(self, value: datetime) -> str:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ListingConfirmationError("INVALID_OBSERVED_AT", "invalid")
+        if value.astimezone(UTC) > self._clock().astimezone(UTC):
+            raise ListingConfirmationError("FUTURE_OBSERVED_AT", "invalid")
+        return _utc_text(value)
+
+    @staticmethod
+    def _evidence_hash(value: str) -> str:
+        evidence_hash = value.strip().lower()
+        if not _SHA256_PATTERN.fullmatch(evidence_hash):
+            raise ListingConfirmationError("INVALID_EVIDENCE_HASH", "invalid")
+        return evidence_hash
+
+    def _provider_symbol_request(self, payload: ProviderSymbolPreviewIn) -> _ProviderSymbolRequest:
+        provider = payload.provider
+        capability = payload.capability
+        if capability not in _PROVIDER_CAPABILITIES[provider]:
+            raise ListingConfirmationError("INCOMPATIBLE_PROVIDER_CAPABILITY", "invalid")
+        raw_symbol = payload.provider_symbol.strip()
+        provider_symbol = raw_symbol.upper() if provider == "finnhub" else raw_symbol.lower()
+        if not _PROVIDER_SYMBOL_PATTERNS[provider].fullmatch(provider_symbol):
+            raise ListingConfirmationError("INVALID_PROVIDER_SYMBOL", "invalid")
+        source = payload.source.strip().upper()
+        if not _SOURCE_CODE_PATTERN.fullmatch(source):
+            raise ListingConfirmationError("INVALID_SOURCE", "invalid")
+        expected_currency = payload.expected_currency.strip().upper()
+        if not _CURRENCY_PATTERN.fullmatch(expected_currency):
+            raise ListingConfirmationError("INVALID_CURRENCY", "invalid")
+        return _ProviderSymbolRequest(
+            provider=provider,
+            capability=capability,
+            provider_symbol=provider_symbol,
+            normalized_symbol=provider_symbol.upper(),
+            source=source,
+            observed_at=self._observed_at(payload.observed_at),
+            expected_currency=expected_currency,
+            evidence_hash=self._evidence_hash(payload.evidence_hash),
+        )
+
+    @staticmethod
+    def _check_provider_listing(listing: sqlite3.Row, request: _ProviderSymbolRequest) -> None:
+        from backend.app.data_providers.coingecko import CoinGeckoProvider
+        from backend.app.data_providers.finnhub_quote import FinnhubQuoteProvider
+
+        instrument_type = str(listing["instrument_type"]).strip().upper()
+        if instrument_type not in _PROVIDER_INSTRUMENT_TYPES[request.provider]:
+            raise ListingConfirmationError("INCOMPATIBLE_INSTRUMENT_TYPE", "invalid")
+        mic = str(listing["mic"] or "").strip().upper()
+        if request.provider == "finnhub" and mic not in FinnhubQuoteProvider.supported_mics:
+            raise ListingConfirmationError("INCOMPATIBLE_VENUE", "invalid")
+        currency = str(listing["currency"]).strip().upper()
+        if request.expected_currency != currency or (
+            request.provider == "coingecko"
+            and currency not in CoinGeckoProvider.supported_quote_currencies
+        ):
+            raise ListingConfirmationError("CURRENCY_MISMATCH", "invalid")
+
+    @staticmethod
+    def _current_provider_symbol(
+        connection: sqlite3.Connection,
+        listing_id: int,
+        request: _ProviderSymbolRequest,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT *
+            FROM provider_symbols
+            WHERE UPPER(provider) = UPPER(?)
+              AND listing_id = ?
+              AND UPPER(capability) = ?
+              AND status = 'VERIFIED'
+            """,
+            (request.provider, listing_id, request.capability),
+        ).fetchone()
+
+    @staticmethod
+    def _ensure_provider_symbol_free(
+        connection: sqlite3.Connection,
+        listing_id: int,
+        request: _ProviderSymbolRequest,
+    ) -> None:
+        collision = connection.execute(
+            """
+            SELECT 1
+            FROM provider_symbols
+            WHERE UPPER(provider) = UPPER(?)
+              AND UPPER(capability) = ?
+              AND UPPER(normalized_symbol) = ?
+              AND status = 'VERIFIED'
+              AND listing_id != ?
+            LIMIT 1
+            """,
+            (request.provider, request.capability, request.normalized_symbol, listing_id),
+        ).fetchone()
+        if collision is not None:
+            raise ListingConfirmationError("PROVIDER_SYMBOL_IN_USE", "conflict")
+
+    @staticmethod
+    def _provider_symbol_matches(row: sqlite3.Row, request: _ProviderSymbolRequest) -> bool:
+        return (
+            row["provider_symbol"] == request.provider_symbol
+            and row["normalized_symbol"] == request.normalized_symbol
+            and row["source"] == request.source
+            and row["observed_at"] == request.observed_at
+            and row["evidence_hash"] == request.evidence_hash
+        )
+
+    @staticmethod
+    def _provider_symbol_token(
+        listing_id: int,
+        request: _ProviderSymbolRequest,
+        current_version: int | None,
+    ) -> str:
+        return _canonical_hash(
+            {
+                "scope": "provider_symbol",
+                "listing_id": listing_id,
+                "provider": request.provider,
+                "provider_symbol": request.provider_symbol,
+                "capability": request.capability,
+                "currency": request.expected_currency,
+                "source": request.source,
+                "observed_at": request.observed_at,
+                "evidence_hash": request.evidence_hash,
+                "current_version": current_version,
+            }
+        )
+
+    @staticmethod
+    def _provider_symbol_out(row: sqlite3.Row) -> ProviderSymbolApplyOut:
+        return ProviderSymbolApplyOut(
+            listing_id=int(row["listing_id"]),
+            provider=str(row["provider"]),
+            capability=row["capability"],
+            normalized_provider_symbol=str(row["provider_symbol"]),
+            version=int(row["version"]),
+            status="VERIFIED",
+        )
+
+    def _attestation_request(self, payload: TradeRepublicAttestationPreviewIn) -> _AttestationRequest:
+        return _AttestationRequest(
+            status=payload.status,
+            source=payload.source,
+            observed_at=self._observed_at(payload.observed_at),
+            evidence_hash=self._evidence_hash(payload.evidence_hash),
+        )
+
+    @staticmethod
+    def _active_attestation(
+        connection: sqlite3.Connection,
+        listing_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT *
+            FROM trade_republic_attestations
+            WHERE listing_id = ? AND record_status = 'ACTIVE'
+            """,
+            (listing_id,),
+        ).fetchone()
+
+    @staticmethod
+    def _attestation_matches(row: sqlite3.Row, request: _AttestationRequest) -> bool:
+        return (
+            row["status"] == request.status
+            and row["source"] == request.source
+            and row["observed_at"] == request.observed_at
+            and row["evidence_hash"] == request.evidence_hash
+        )
+
+    @staticmethod
+    def _attestation_token(
+        listing_id: int,
+        request: _AttestationRequest,
+        current_version: int | None,
+    ) -> str:
+        return _canonical_hash(
+            {
+                "scope": "trade_republic_attestation",
+                "listing_id": listing_id,
+                "status": request.status,
+                "source": request.source,
+                "observed_at": request.observed_at,
+                "evidence_hash": request.evidence_hash,
+                "current_version": current_version,
+            }
+        )
+
+    @staticmethod
+    def _attestation_out(row: sqlite3.Row) -> TradeRepublicAttestationOut:
+        return TradeRepublicAttestationOut(
+            listing_id=int(row["listing_id"]),
+            status=row["status"],
+            source=row["source"],
+            observed_at=parse_stored_utc(row["observed_at"]),
+            evidence_hash=str(row["evidence_hash"]),
+            version=int(row["version"]),
+        )

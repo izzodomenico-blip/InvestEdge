@@ -200,6 +200,18 @@ Una candidate univoca non basta: lo stato diventa `RESOLVED` solo quando esiste 
 
 Configurazione conservativa: `OPENFIGI_CACHE_TTL_HOURS`, `OPENFIGI_MINUTE_LIMIT`, `OPENFIGI_DAILY_LIMIT` e `OPENFIGI_MONTHLY_LIMIT`. OpenFIGI non è fonte canonica per MIC, valuta o timezone e i suoi simboli vengono salvati soltanto dopo la risoluzione completa.
 
+### API catalogo, attivazione e conferme locali
+
+Tutti questi endpoint leggono e scrivono soltanto il database locale: nessuna chiamata a provider, nessun login, nessuna automazione dell'app Trade Republic, nessun ordine.
+
+- `GET /instruments?q=&asset_class=&instrument_type=&currency=&mic=&quality_tier=&trade_republic_status=&limit=50&offset=0` cerca nel catalogo (più ampio degli asset attivi): una riga per listing, oppure una riga senza listing per gli strumenti non ancora risolti. `q` è case-insensitive su nome, ticker, ISIN e FIGI; i filtri sono un'allowlist parametrica, `limit` va da 1 a 100, `offset` da 0. Ordine stabile `canonical_name`, `instrument_id`, `listing_id`; `total` e pagina sono letti nella stessa transazione. `catalog_snapshot_id` è l'ultimo snapshot completo del catalogo ufficiale.
+- `GET /instruments/{instrument_id}` restituisce identificativi attestati (con fonti e prima/ultima osservazione) e tutti i listing con stato di risoluzione e stato Trade Republic, senza payload provider raw.
+- `POST /assets/from-listing/{listing_id}` attiva esplicitamente un listing `RESOLVED` copiandone i metadata verificati (ticker, nome, tipo, MIC, valuta, ISIN) e collegando `assets.instrument_listing_id`: 201 alla creazione, 200 se il listing è già attivo. Risponde 409 per listing non risolto, identità ambigua, tipo non supportato o simbolo già attivo su un altro listing (anche legacy): il simbolo legacy non diventa mai ambiguo. `/assets` resta la lista degli strumenti attivati.
+- `POST /instruments/listings/{listing_id}/provider-symbols/preview` e `/apply` confermano un simbolo provider (`stooq` EOD, `finnhub` QUOTE/NEWS su venue USA, `coingecko` per crypto) su un listing `RESOLVED`, con `source` codice descrittivo (mai URL), `evidence_hash` SHA-256, `observed_at` con fuso e `expected_currency` uguale alla valuta del listing. Il simbolo è normalizzato per provider (Stooq e CoinGecko minuscolo, Finnhub maiuscolo). Apply ricostruisce il token sullo stato locale (`hmac.compare_digest`), ritira la versione corrente e crea una nuova versione `VERIFIED` con `supersedes`; lo stesso payload è idempotente, un `observed_at` diverso rende il token stale (409) e lo stesso simbolo già verificato su un altro listing produce 409.
+- `POST /instruments/listings/{listing_id}/trade-republic/preview` e `/apply` registrano una conferma manuale `VERIFIED` o `UNAVAILABLE` (fonti `MANUAL_OFFICIAL_APP_CHECK`, `OFFICIAL_SUPPORT_NOTICE`). La storia in `trade_republic_attestations` è append-only con una sola versione `ACTIVE` per listing; apply (`BEGIN IMMEDIATE`) ritira la precedente, inserisce la nuova e aggiorna la projection `instrument_listings.trade_republic_status/verified_at` nella stessa transazione. `CATALOGED` non diventa mai `VERIFIED` da solo; `UNAVAILABLE` azzera `verified_at` e conserva `cataloged_at`.
+
+Gli errori hanno la forma `{"detail": {"reason_code": "..."}}`: 422 per payload non valido o incompatibile, 409 per stato cambiato o conflitto, 404 per listing o strumento inesistente.
+
 ### Tier di qualità degli strumenti
 
 La qualità è valutata separatamente dalla negoziabilità e viene versionata in `quality_assessments`; `instruments.quality_tier`, `quality_reason_code` e `quality_assessed_at` sono soltanto la projection corrente. I nomi API sono `QUALIFIED`, `OBSERVABLE` e `REFERENCE_ONLY`; la label UI dell'ultimo è “Reference only”. Una promozione non crea asset, strategie o ordini e non rende automaticamente tradabile lo strumento.
@@ -341,7 +353,14 @@ Endpoint iniziali:
 - `GET /assets`
 - `GET /assets/{symbol}`
 - `POST /assets`
+- `POST /assets/from-listing/{listing_id}`
 - `DELETE /assets/{symbol}`
+- `GET /instruments?q=&limit=50&offset=0`
+- `GET /instruments/{instrument_id}`
+- `POST /instruments/listings/{listing_id}/provider-symbols/preview`
+- `POST /instruments/listings/{listing_id}/provider-symbols/apply`
+- `POST /instruments/listings/{listing_id}/trade-republic/preview`
+- `POST /instruments/listings/{listing_id}/trade-republic/apply`
 - `GET /prices/{symbol}`
 - `GET /technical-analysis/{symbol}`
 - `GET /portfolio`

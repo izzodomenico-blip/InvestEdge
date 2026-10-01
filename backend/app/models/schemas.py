@@ -9,6 +9,7 @@ from backend.app.models.market_data import (
     EffectiveObservationQuality,
     SourceObservationQuality,
 )
+from backend.app.services.provider_budget_service import ProviderCapability
 
 AssetType = Literal["stock", "etf", "crypto", "bond", "bond_etf", "macro", "bond_proxy"]
 InstrumentType = Literal[
@@ -1172,3 +1173,120 @@ class ListingMetadataPreviewOut(BaseModel):
     normalized_timezone: str
     current_version: int | None = None
     confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+TradeRepublicListingStatus = Literal["NEVER_SEEN", "CATALOGED", "VERIFIED", "UNAVAILABLE"]
+TradeRepublicAttestationStatus = Literal["VERIFIED", "UNAVAILABLE"]
+TradeRepublicAttestationSource = Literal["MANUAL_OFFICIAL_APP_CHECK", "OFFICIAL_SUPPORT_NOTICE"]
+ProviderSymbolProvider = Literal["stooq", "finnhub", "coingecko"]
+
+
+class InstrumentListItem(BaseModel):
+    instrument_id: int
+    canonical_name: str
+    instrument_type: InstrumentType
+    asset_class: AssetClass
+    quality_tier: QualityTier
+    quality_reasons: list[str]
+    primary_identifier_scheme: IdentifierScheme | None
+    primary_identifier: str | None
+    listing_id: int | None
+    ticker: str | None
+    mic: str | None
+    venue_name: str | None
+    currency: str | None
+    timezone: str | None
+    trade_republic_status: TradeRepublicListingStatus
+    trade_republic_cataloged_at: datetime | None
+    trade_republic_verified_at: datetime | None
+    observation_quality: EffectiveObservationQuality | None
+    observed_at: datetime | None
+
+
+class InstrumentSearchOut(BaseModel):
+    items: list[InstrumentListItem]
+    total: int = Field(..., ge=0)
+    limit: int = Field(..., ge=1, le=100)
+    offset: int = Field(..., ge=0)
+    catalog_snapshot_id: int | None
+
+
+class InstrumentIdentifierOut(BaseModel):
+    scheme: IdentifierScheme
+    value: str
+    sources: list[str]
+    first_observed_at: datetime
+    last_observed_at: datetime
+
+
+class InstrumentListingOut(BaseModel):
+    listing_id: int
+    ticker: str
+    mic: str | None
+    venue_name: str | None
+    currency: str
+    timezone: str | None
+    resolution_status: ResolutionStatus
+    trade_republic_status: TradeRepublicListingStatus
+
+
+class InstrumentDetailOut(InstrumentListItem):
+    identifiers: list[InstrumentIdentifierOut]
+    listings: list[InstrumentListingOut]
+
+
+class ProviderSymbolPreviewIn(BaseModel):
+    provider: ProviderSymbolProvider
+    provider_symbol: str = Field(..., min_length=1, max_length=128)
+    capability: ProviderCapability
+    source: str = Field(..., min_length=1, max_length=64)
+    observed_at: datetime
+    expected_currency: str = Field(..., min_length=1, max_length=8)
+    evidence_hash: str = Field(..., min_length=1, max_length=256)
+
+
+class ProviderSymbolPreviewOut(BaseModel):
+    listing_id: int
+    normalized_provider_symbol: str
+    current_version: int | None
+    confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+class ProviderSymbolApplyIn(ProviderSymbolPreviewIn):
+    confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+class ProviderSymbolApplyOut(BaseModel):
+    listing_id: int
+    provider: str
+    capability: ProviderCapability
+    normalized_provider_symbol: str
+    version: int = Field(..., ge=1)
+    status: Literal["VERIFIED"]
+
+
+class TradeRepublicAttestationPreviewIn(BaseModel):
+    status: TradeRepublicAttestationStatus
+    source: TradeRepublicAttestationSource
+    observed_at: datetime
+    evidence_hash: str = Field(..., min_length=1, max_length=256)
+
+
+class TradeRepublicAttestationPreviewOut(BaseModel):
+    listing_id: int
+    current_status: TradeRepublicListingStatus
+    current_version: int | None
+    confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+class TradeRepublicAttestationApplyIn(TradeRepublicAttestationPreviewIn):
+    confirmation_token: str = Field(..., min_length=64, max_length=64)
+
+
+class TradeRepublicAttestationOut(BaseModel):
+    listing_id: int
+    status: TradeRepublicAttestationStatus
+    source: TradeRepublicAttestationSource
+    observed_at: datetime
+    evidence_hash: str = Field(..., min_length=64, max_length=64)
+    version: int = Field(..., ge=1)

@@ -4245,3 +4245,1188 @@ def test_catalog_eod_enqueue_endpoint_is_bounded(client: TestClient) -> None:
     assert client.post("/data/catalog/eod/enqueue", params={"limit": "26"}).status_code == 422
     assert client.post("/data/catalog/eod/enqueue", params={"limit": "0"}).status_code == 422
     assert client.post("/data/catalog/eod/enqueue", params={"after_listing_id": "-1"}).status_code == 422
+
+
+# Task 14: API catalogo, attivazione esplicita e conferme versionate (solo locali).
+
+_CATALOG_RETRIEVED_AT = "2026-09-20T08:00:00Z"
+_INSTRUMENT_ITEM_FIELDS = [
+    "instrument_id",
+    "canonical_name",
+    "instrument_type",
+    "asset_class",
+    "quality_tier",
+    "quality_reasons",
+    "primary_identifier_scheme",
+    "primary_identifier",
+    "listing_id",
+    "ticker",
+    "mic",
+    "venue_name",
+    "currency",
+    "timezone",
+    "trade_republic_status",
+    "trade_republic_cataloged_at",
+    "trade_republic_verified_at",
+    "observation_quality",
+    "observed_at",
+]
+
+
+def _sha(label: str) -> str:
+    return hashlib.sha256(label.encode()).hexdigest()
+
+
+def _forbid_network(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    def forbidden(_transport, request):  # noqa: ANN001, ANN202
+        calls.append(str(request.url))
+        raise AssertionError("catalog and attestation APIs must not use the network")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
+    return calls
+
+
+def _insert_catalog_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    label: str,
+    source: str = "TRADE_REPUBLIC_IT",
+    retrieved_at: str = _CATALOG_RETRIEVED_AT,
+    status: str = "COMPLETE",
+) -> int:
+    return int(
+        connection.execute(
+            """
+            INSERT INTO catalog_snapshots (
+                source, source_url, content_sha256, retrieved_at, source_date,
+                row_count, status, parser_version, failure_reason_code
+            )
+            VALUES (?, 'https://example.test/catalog.pdf', ?, ?, NULL, ?, ?, 'test-v1', ?)
+            """,
+            (
+                source,
+                _sha(f"snapshot|{label}") if status == "COMPLETE" else None,
+                retrieved_at,
+                3 if status == "COMPLETE" else 0,
+                status,
+                None if status == "COMPLETE" else "DOWNLOAD_FAILED",
+            ),
+        ).lastrowid
+    )
+
+
+def _insert_catalog_instrument(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_id: int,
+    row_number: int,
+    name: str,
+    isin: str,
+    instrument_type: str,
+    asset_class: str,
+    figi: str | None = None,
+) -> tuple[int, int]:
+    instrument_id = int(
+        connection.execute(
+            """
+            INSERT INTO instruments (
+                canonical_name, instrument_type, asset_class, quality_tier, source
+            )
+            VALUES (?, ?, ?, 'REFERENCE_ONLY', 'TRADE_REPUBLIC_IT')
+            """,
+            (name, instrument_type, asset_class),
+        ).lastrowid
+    )
+    identifiers = [("ISIN", isin, "TRADE_REPUBLIC_IT", _CATALOG_RETRIEVED_AT)]
+    if figi is not None:
+        identifiers.append(("FIGI", figi, "openfigi", "2026-09-21T09:00:00Z"))
+    for scheme, value, source, observed_at in identifiers:
+        identifier_id = int(
+            connection.execute(
+                """
+                INSERT INTO instrument_identifiers (
+                    scheme, normalized_value, scope, instrument_id, listing_id
+                )
+                VALUES (?, ?, 'INSTRUMENT', ?, NULL)
+                """,
+                (scheme, value, instrument_id),
+            ).lastrowid
+        )
+        connection.execute(
+            """
+            INSERT INTO instrument_identifier_attestations (
+                identifier_id, source, observed_at, evidence_hash
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (identifier_id, source, observed_at, _sha(f"{scheme}|{value}")),
+        )
+    entry_id = int(
+        connection.execute(
+            """
+            INSERT INTO catalog_entries (
+                snapshot_id, row_number, isin, name, parse_status, reason_code,
+                raw_row_sha256, instrument_id, listing_id
+            )
+            VALUES (?, ?, ?, ?, 'ACCEPTED', 'VALID_ISIN', ?, ?, NULL)
+            """,
+            (snapshot_id, row_number, isin, name, _sha(f"row|{isin}"), instrument_id),
+        ).lastrowid
+    )
+    return instrument_id, entry_id
+
+
+def _insert_listing_for_catalog(
+    connection: sqlite3.Connection,
+    *,
+    instrument_id: int,
+    ticker: str,
+    mic: str,
+    currency: str,
+    timezone: str,
+    trade_republic_status: str,
+) -> int:
+    return int(
+        connection.execute(
+            """
+            INSERT INTO instrument_listings (
+                instrument_id, ticker, mic, venue_name, currency, timezone,
+                listing_status, trade_republic_status, trade_republic_cataloged_at,
+                source, source_date
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, 'OFFICIAL_VENUE', '2026-09-20')
+            """,
+            (
+                instrument_id,
+                ticker,
+                mic,
+                f"Venue {mic}",
+                currency,
+                timezone,
+                trade_republic_status,
+                _CATALOG_RETRIEVED_AT if trade_republic_status == "CATALOGED" else None,
+            ),
+        ).lastrowid
+    )
+
+
+def _insert_resolved_listing(
+    connection: sqlite3.Connection,
+    *,
+    instrument_id: int,
+    catalog_entry_id: int,
+    ticker: str,
+    mic: str,
+    currency: str,
+    timezone: str,
+    trade_republic_status: str = "CATALOGED",
+) -> int:
+    listing_id = _insert_listing_for_catalog(
+        connection,
+        instrument_id=instrument_id,
+        ticker=ticker,
+        mic=mic,
+        currency=currency,
+        timezone=timezone,
+        trade_republic_status=trade_republic_status,
+    )
+    instrument_type = connection.execute(
+        "SELECT instrument_type FROM instruments WHERE id = ?",
+        (instrument_id,),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        INSERT INTO listing_metadata_versions (
+            instrument_listing_id, venue_name, timezone, instrument_type, source_code,
+            observed_at, evidence_hash, status, version, supersedes_listing_metadata_version_id
+        )
+        VALUES (?, ?, ?, ?, 'OFFICIAL_VENUE', '2026-09-20T09:00:00Z', ?, 'VERIFIED', 1, NULL)
+        """,
+        (listing_id, f"Venue {mic}", timezone, instrument_type, _sha(f"metadata|{listing_id}")),
+    )
+    connection.execute(
+        """
+        INSERT INTO instrument_resolution_cases (
+            catalog_entry_id, provider, request_fingerprint, status, reason_code,
+            candidate_count, candidate_hash, evidence_hash, selected_instrument_id,
+            selected_listing_id, candidate_figi, candidate_ticker, candidate_exchange_code,
+            candidate_market_sector, candidate_security_type, candidate_name,
+            candidate_currency_hint, created_at
+        )
+        VALUES (?, 'openfigi', ?, 'RESOLVED', 'EXACT_ISIN_TYPE_CURRENCY_MIC_TIMEZONE', 1, ?, ?,
+                ?, ?, ?, ?, ?, 'Equity', 'Common Stock', NULL, ?, '2026-09-20T09:00:00Z')
+        """,
+        (
+            catalog_entry_id,
+            _sha(f"request|{listing_id}"),
+            _sha(f"candidates|{listing_id}"),
+            _sha(f"evidence|{listing_id}"),
+            instrument_id,
+            listing_id,
+            f"BBG{listing_id:09d}",
+            ticker,
+            mic,
+            currency,
+        ),
+    )
+    connection.execute(
+        "UPDATE catalog_entries SET listing_id = ? WHERE id = ?",
+        (listing_id, catalog_entry_id),
+    )
+    return listing_id
+
+
+def _catalog_fixture() -> dict[str, int]:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        _insert_catalog_snapshot(connection, label="older", retrieved_at="2026-09-01T08:00:00Z")
+        snapshot_id = _insert_catalog_snapshot(connection, label="main")
+        _insert_catalog_snapshot(
+            connection,
+            label="failed",
+            retrieved_at="2026-09-25T08:00:00Z",
+            status="FAILED",
+        )
+        other_source_id = _insert_catalog_snapshot(connection, label="other", source="TEST_SOURCE")
+        alpha, alpha_entry = _insert_catalog_instrument(
+            connection,
+            snapshot_id=snapshot_id,
+            row_number=1,
+            name="Zeta Catalog Alpha",
+            isin="US9ZETAAAA01",
+            instrument_type="STOCK",
+            asset_class="EQUITY",
+            figi="BBG0ZETA0001",
+        )
+        beta, _beta_entry = _insert_catalog_instrument(
+            connection,
+            snapshot_id=snapshot_id,
+            row_number=2,
+            name="Zeta Catalog Beta",
+            isin="IE9ZETABBB02",
+            instrument_type="UNKNOWN",
+            asset_class="UNKNOWN",
+        )
+        gamma, gamma_entry = _insert_catalog_instrument(
+            connection,
+            snapshot_id=other_source_id,
+            row_number=1,
+            name="zeta catalog gamma",
+            isin="NL9ZETACCC03",
+            instrument_type="ETF",
+            asset_class="FUND",
+        )
+        alpha_us = _insert_resolved_listing(
+            connection,
+            instrument_id=alpha,
+            catalog_entry_id=alpha_entry,
+            ticker="ZTAA",
+            mic="XNAS",
+            currency="USD",
+            timezone="America/New_York",
+        )
+        alpha_de = _insert_resolved_listing(
+            connection,
+            instrument_id=alpha,
+            catalog_entry_id=alpha_entry,
+            ticker="ZTAA",
+            mic="XETR",
+            currency="EUR",
+            timezone="Europe/Berlin",
+        )
+        gamma_listing = _insert_resolved_listing(
+            connection,
+            instrument_id=gamma,
+            catalog_entry_id=gamma_entry,
+            ticker="ZTCG",
+            mic="XAMS",
+            currency="EUR",
+            timezone="Europe/Amsterdam",
+            trade_republic_status="NEVER_SEEN",
+        )
+        connection.execute(
+            """
+            INSERT INTO quality_assessments (
+                instrument_id, tier, reason_codes_json, assessed_at, evidence_hash,
+                evidence_scopes_json
+            )
+            VALUES (?, 'REFERENCE_ONLY', '["NO_VALID_OBSERVATION"]', '2026-09-21T10:00:00Z', ?, '[]')
+            """,
+            (gamma, _sha("quality|gamma")),
+        )
+        connection.execute(
+            "UPDATE instruments SET quality_reason_code = 'NO_VALID_OBSERVATION' WHERE id = ?",
+            (gamma,),
+        )
+        connection.execute(
+            """
+            INSERT INTO market_observations (
+                listing_id, provider, capability, operation, provider_observed_at, ingested_at,
+                timezone, session, currency, delay_seconds, source_quality, effective_quality,
+                kind, close, observation_hash, revision
+            )
+            VALUES (?, 'stooq', 'EOD', 'EOD_DAILY', '2026-01-02T21:00:00Z', '2026-01-03T00:00:00Z',
+                    'America/New_York', 'REGULAR', 'USD', 0, 'eod', 'eod', 'BAR', '10', ?, 1)
+            """,
+            (alpha_us, _sha("observation|alpha")),
+        )
+    return {
+        "snapshot": snapshot_id,
+        "alpha": alpha,
+        "beta": beta,
+        "gamma": gamma,
+        "alpha_us": alpha_us,
+        "alpha_de": alpha_de,
+        "gamma_listing": gamma_listing,
+    }
+
+
+def _instrument_keys(client: TestClient, params: dict[str, object]) -> list[tuple[int, int | None]]:
+    response = client.get("/instruments", params=params)
+    assert response.status_code == 200, response.text
+    return [(item["instrument_id"], item["listing_id"]) for item in response.json()["items"]]
+
+
+def test_instrument_search_is_paginated_case_insensitive_and_stable(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    network_calls = _forbid_network(monkeypatch)
+    ids = _catalog_fixture()
+    alpha_rows = [(ids["alpha"], ids["alpha_us"]), (ids["alpha"], ids["alpha_de"])]
+
+    response = client.get("/instruments", params={"q": "ZETA catalog"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert list(body) == ["items", "total", "limit", "offset", "catalog_snapshot_id"]
+    assert (body["total"], body["limit"], body["offset"]) == (4, 50, 0)
+    assert body["catalog_snapshot_id"] == ids["snapshot"]
+    assert [(item["instrument_id"], item["listing_id"]) for item in body["items"]] == [
+        *alpha_rows,
+        (ids["beta"], None),
+        (ids["gamma"], ids["gamma_listing"]),
+    ]
+    assert all(list(item) == _INSTRUMENT_ITEM_FIELDS for item in body["items"])
+    alpha_us, _alpha_de, beta, gamma = body["items"]
+    assert alpha_us == {
+        "instrument_id": ids["alpha"],
+        "canonical_name": "Zeta Catalog Alpha",
+        "instrument_type": "STOCK",
+        "asset_class": "EQUITY",
+        "quality_tier": "REFERENCE_ONLY",
+        "quality_reasons": [],
+        "primary_identifier_scheme": "ISIN",
+        "primary_identifier": "US9ZETAAAA01",
+        "listing_id": ids["alpha_us"],
+        "ticker": "ZTAA",
+        "mic": "XNAS",
+        "venue_name": "Venue XNAS",
+        "currency": "USD",
+        "timezone": "America/New_York",
+        "trade_republic_status": "CATALOGED",
+        "trade_republic_cataloged_at": "2026-09-20T08:00:00Z",
+        "trade_republic_verified_at": None,
+        "observation_quality": "stale",
+        "observed_at": "2026-01-02T21:00:00Z",
+    }
+    assert beta == {
+        "instrument_id": ids["beta"],
+        "canonical_name": "Zeta Catalog Beta",
+        "instrument_type": "UNKNOWN",
+        "asset_class": "UNKNOWN",
+        "quality_tier": "REFERENCE_ONLY",
+        "quality_reasons": [],
+        "primary_identifier_scheme": "ISIN",
+        "primary_identifier": "IE9ZETABBB02",
+        "listing_id": None,
+        "ticker": None,
+        "mic": None,
+        "venue_name": None,
+        "currency": None,
+        "timezone": None,
+        "trade_republic_status": "CATALOGED",
+        "trade_republic_cataloged_at": "2026-09-20T08:00:00Z",
+        "trade_republic_verified_at": None,
+        "observation_quality": None,
+        "observed_at": None,
+    }
+    assert gamma["quality_reasons"] == ["NO_VALID_OBSERVATION"]
+    assert (gamma["trade_republic_status"], gamma["trade_republic_cataloged_at"]) == ("NEVER_SEEN", None)
+
+    assert _instrument_keys(client, {"q": "ztcg"}) == [(ids["gamma"], ids["gamma_listing"])]
+    assert _instrument_keys(client, {"q": "us9zetaaaa01"}) == alpha_rows
+    assert _instrument_keys(client, {"q": " bbg0zeta0001 "}) == alpha_rows
+    assert _instrument_keys(client, {"q": "zeta", "currency": "eur", "mic": "xetr"}) == [
+        (ids["alpha"], ids["alpha_de"])
+    ]
+    assert _instrument_keys(client, {"q": "zeta", "asset_class": "FUND"}) == [
+        (ids["gamma"], ids["gamma_listing"])
+    ]
+    assert _instrument_keys(client, {"q": "zeta", "instrument_type": "UNKNOWN"}) == [(ids["beta"], None)]
+    assert _instrument_keys(client, {"q": "zeta", "trade_republic_status": "CATALOGED"}) == [
+        *alpha_rows,
+        (ids["beta"], None),
+    ]
+    assert _instrument_keys(client, {"q": "zeta", "quality_tier": "QUALIFIED"}) == []
+
+    page = client.get("/instruments", params={"q": "zeta catalog", "limit": 2, "offset": 1}).json()
+    assert (page["total"], page["limit"], page["offset"]) == (4, 2, 1)
+    assert [(item["instrument_id"], item["listing_id"]) for item in page["items"]] == [
+        (ids["alpha"], ids["alpha_de"]),
+        (ids["beta"], None),
+    ]
+    beyond = client.get("/instruments", params={"q": "zeta catalog", "offset": 4}).json()
+    assert (beyond["items"], beyond["total"]) == ([], 4)
+    everything = client.get("/instruments", params={"limit": 100}).json()
+    assert everything["total"] >= 29
+    assert len(everything["items"]) == min(100, everything["total"])
+
+    for params in (
+        {"limit": 0},
+        {"limit": 101},
+        {"offset": -1},
+        {"quality_tier": "BOGUS"},
+        {"trade_republic_status": "BOGUS"},
+        {"asset_class": "BOGUS"},
+        {"instrument_type": "BOGUS"},
+    ):
+        assert client.get("/instruments", params=params).status_code == 422, params
+    for hostile in ("%' OR 1=1 --", "zeta%catalog", "zeta_catalog", "\\"):
+        hostile_response = client.get("/instruments", params={"q": hostile})
+        assert hostile_response.status_code == 200
+        assert hostile_response.json()["total"] == 0
+    assert client.get("/instruments", params={"q": "zeta catalog"}).json()["total"] == 4
+    assert network_calls == []
+
+
+def test_assets_catalog_separation_keeps_assets_to_activated_instruments(
+    client: TestClient,
+) -> None:
+    from backend.app.database import db_session
+
+    ids = _catalog_fixture()
+
+    assets = client.get("/assets").json()
+
+    assert len(assets) == 25
+    assert not {"ZTAA", "ZTCG"} & {asset["symbol"] for asset in assets}
+    assert client.get("/instruments", params={"q": "zeta catalog"}).json()["total"] == 4
+    with db_session() as connection:
+        linked = connection.execute(
+            "SELECT COUNT(*) FROM assets WHERE instrument_listing_id IN (?, ?, ?)",
+            (ids["alpha_us"], ids["alpha_de"], ids["gamma_listing"]),
+        ).fetchone()[0]
+    assert linked == 0
+
+
+def test_instrument_detail_lists_identifiers_and_listings_without_raw_payloads(
+    client: TestClient,
+) -> None:
+    from backend.app.database import db_session
+
+    ids = _catalog_fixture()
+    with db_session() as connection:
+        identifier_id = connection.execute(
+            "SELECT id FROM instrument_identifiers WHERE scheme = 'ISIN' AND normalized_value = 'US9ZETAAAA01'"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO instrument_identifier_attestations (
+                identifier_id, source, observed_at, evidence_hash
+            )
+            VALUES (?, 'openfigi', '2026-09-22T10:00:00+00:00', ?)
+            """,
+            (identifier_id, _sha("isin|openfigi")),
+        )
+
+    response = client.get(f"/instruments/{ids['alpha']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert list(body) == [*_INSTRUMENT_ITEM_FIELDS, "identifiers", "listings"]
+    assert (body["listing_id"], body["ticker"], body["mic"]) == (ids["alpha_us"], "ZTAA", "XNAS")
+    assert body["identifiers"] == [
+        {
+            "scheme": "ISIN",
+            "value": "US9ZETAAAA01",
+            "sources": ["TRADE_REPUBLIC_IT", "openfigi"],
+            "first_observed_at": "2026-09-20T08:00:00Z",
+            "last_observed_at": "2026-09-22T10:00:00Z",
+        },
+        {
+            "scheme": "FIGI",
+            "value": "BBG0ZETA0001",
+            "sources": ["openfigi"],
+            "first_observed_at": "2026-09-21T09:00:00Z",
+            "last_observed_at": "2026-09-21T09:00:00Z",
+        },
+    ]
+    assert body["listings"] == [
+        {
+            "listing_id": ids["alpha_us"],
+            "ticker": "ZTAA",
+            "mic": "XNAS",
+            "venue_name": "Venue XNAS",
+            "currency": "USD",
+            "timezone": "America/New_York",
+            "resolution_status": "RESOLVED",
+            "trade_republic_status": "CATALOGED",
+        },
+        {
+            "listing_id": ids["alpha_de"],
+            "ticker": "ZTAA",
+            "mic": "XETR",
+            "venue_name": "Venue XETR",
+            "currency": "EUR",
+            "timezone": "Europe/Berlin",
+            "resolution_status": "RESOLVED",
+            "trade_republic_status": "CATALOGED",
+        },
+    ]
+    assert "raw" not in response.text.lower()
+
+    beta = client.get(f"/instruments/{ids['beta']}").json()
+    assert beta["listings"] == []
+    assert (beta["listing_id"], beta["trade_republic_status"]) == (None, "CATALOGED")
+    assert [identifier["scheme"] for identifier in beta["identifiers"]] == ["ISIN"]
+    missing = client.get("/instruments/999999")
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": {"reason_code": "INSTRUMENT_NOT_FOUND"}}
+
+
+def test_activate_listing_creates_linked_asset_idempotently_and_blocks_conflicts(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+    from backend.app.models import AssetOut
+
+    network_calls = _forbid_network(monkeypatch)
+    ids = _catalog_fixture()
+
+    created = client.post(f"/assets/from-listing/{ids['alpha_us']}")
+
+    assert created.status_code == 201, created.text
+    asset = created.json()
+    assert list(asset) == list(AssetOut.model_fields)
+    assert {
+        field: asset[field]
+        for field in ("symbol", "name", "asset_type", "tax_category", "exchange", "currency", "isin")
+    } == {
+        "symbol": "ZTAA",
+        "name": "Zeta Catalog Alpha",
+        "asset_type": "stock",
+        "tax_category": "standard",
+        "exchange": "XNAS",
+        "currency": "USD",
+        "isin": "US9ZETAAAA01",
+    }
+    repeated = client.post(f"/assets/from-listing/{ids['alpha_us']}")
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == asset["id"]
+
+    venue_conflict = client.post(f"/assets/from-listing/{ids['alpha_de']}")
+    assert venue_conflict.status_code == 409
+    assert venue_conflict.json() == {"detail": {"reason_code": "LEGACY_SYMBOL_CONFLICT"}}
+
+    legacy = client.post(
+        "/assets",
+        json={"symbol": "ZTCG", "name": "Legacy gamma", "asset_type": "etf", "currency": "EUR"},
+    )
+    assert legacy.status_code == 201
+    legacy_conflict = client.post(f"/assets/from-listing/{ids['gamma_listing']}")
+    assert legacy_conflict.status_code == 409
+    assert legacy_conflict.json() == {"detail": {"reason_code": "LEGACY_SYMBOL_CONFLICT"}}
+
+    with db_session() as connection:
+        unresolved = _insert_listing_for_catalog(
+            connection,
+            instrument_id=ids["beta"],
+            ticker="ZTBB",
+            mic="XPAR",
+            currency="EUR",
+            timezone="Europe/Paris",
+            trade_republic_status="NEVER_SEEN",
+        )
+    not_resolved = client.post(f"/assets/from-listing/{unresolved}")
+    assert not_resolved.status_code == 409
+    assert not_resolved.json() == {"detail": {"reason_code": "LISTING_NOT_RESOLVED"}}
+    missing = client.post("/assets/from-listing/999999")
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": {"reason_code": "LISTING_NOT_FOUND"}}
+
+    with db_session() as connection:
+        rows = connection.execute(
+            "SELECT id, instrument_listing_id FROM assets WHERE symbol IN ('ZTAA', 'ZTBB') ORDER BY id"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [(asset["id"], ids["alpha_us"])]
+    assert len(client.get("/assets").json()) == 27
+    assert network_calls == []
+
+
+def _provider_symbol_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "provider": "finnhub",
+        "provider_symbol": " ztaa ",
+        "capability": "QUOTE",
+        "source": "official_venue_check",
+        "observed_at": "2026-09-25T10:00:00+02:00",
+        "expected_currency": "usd",
+        "evidence_hash": "A" * 64,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _post_provider_symbol(
+    client: TestClient,
+    listing_id: int,
+    action: str,
+    payload: dict[str, object],
+    token: str | None = None,
+) -> httpx.Response:
+    body = payload if token is None else {**payload, "confirmation_token": token}
+    return client.post(f"/instruments/listings/{listing_id}/provider-symbols/{action}", json=body)
+
+
+def _provider_symbol_rows(listing_id: int) -> list[sqlite3.Row]:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        return connection.execute(
+            """
+            SELECT id, provider, capability, provider_symbol, normalized_symbol, status, source,
+                   observed_at, verified_at, evidence_hash, version, supersedes_provider_symbol_id
+            FROM provider_symbols
+            WHERE listing_id = ?
+            ORDER BY version
+            """,
+            (listing_id,),
+        ).fetchall()
+
+
+def test_provider_symbol_preview_apply_versions_and_is_idempotent(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.config import get_settings
+    from backend.app.data_providers.provider_registry import ProviderRegistry
+    from backend.app.database import db_session
+
+    network_calls = _forbid_network(monkeypatch)
+    ids = _catalog_fixture()
+    listing_id = ids["alpha_us"]
+    payload = _provider_symbol_payload()
+
+    preview = _post_provider_symbol(client, listing_id, "preview", payload)
+
+    assert preview.status_code == 200, preview.text
+    token = preview.json()["confirmation_token"]
+    assert preview.json() == {
+        "listing_id": listing_id,
+        "normalized_provider_symbol": "ZTAA",
+        "current_version": None,
+        "confirmation_token": token,
+    }
+    assert len(token) == 64
+    assert _provider_symbol_rows(listing_id) == []
+
+    applied = _post_provider_symbol(client, listing_id, "apply", payload, token)
+    assert applied.status_code == 200, applied.text
+    assert applied.json() == {
+        "listing_id": listing_id,
+        "provider": "finnhub",
+        "capability": "QUOTE",
+        "normalized_provider_symbol": "ZTAA",
+        "version": 1,
+        "status": "VERIFIED",
+    }
+    repeated = _post_provider_symbol(client, listing_id, "apply", payload, token)
+    assert repeated.status_code == 200
+    assert repeated.json() == applied.json()
+    rows = _provider_symbol_rows(listing_id)
+    assert [tuple(row)[1:] for row in rows] == [
+        (
+            "finnhub",
+            "QUOTE",
+            "ZTAA",
+            "ZTAA",
+            "VERIFIED",
+            "OFFICIAL_VENUE_CHECK",
+            "2026-09-25T08:00:00Z",
+            "2026-09-25T08:00:00Z",
+            "a" * 64,
+            1,
+            None,
+        )
+    ]
+
+    second_payload = _provider_symbol_payload(
+        provider_symbol="ztab",
+        observed_at="2026-09-26T09:00:00Z",
+        evidence_hash="b" * 64,
+    )
+    second_preview = _post_provider_symbol(client, listing_id, "preview", second_payload)
+    assert second_preview.status_code == 200
+    assert second_preview.json()["current_version"] == 1
+    second_token = second_preview.json()["confirmation_token"]
+    stale_observed_at = _post_provider_symbol(
+        client,
+        listing_id,
+        "apply",
+        {**second_payload, "observed_at": "2026-09-26T09:00:01Z"},
+        second_token,
+    )
+    assert stale_observed_at.status_code == 409
+    assert stale_observed_at.json() == {"detail": {"reason_code": "PROVIDER_SYMBOL_CHANGED"}}
+    stale_version = _post_provider_symbol(client, listing_id, "apply", second_payload, token)
+    assert stale_version.status_code == 409
+    assert len(_provider_symbol_rows(listing_id)) == 1
+
+    second = _post_provider_symbol(client, listing_id, "apply", second_payload, second_token)
+    assert second.status_code == 200, second.text
+    assert (second.json()["version"], second.json()["normalized_provider_symbol"]) == (2, "ZTAB")
+    rows = _provider_symbol_rows(listing_id)
+    assert [(row["normalized_symbol"], row["status"], row["version"]) for row in rows] == [
+        ("ZTAA", "RETIRED", 1),
+        ("ZTAB", "VERIFIED", 2),
+    ]
+    assert rows[1]["supersedes_provider_symbol_id"] == rows[0]["id"]
+    with db_session() as connection:
+        matches = ProviderRegistry(get_settings(), connection).providers_for(
+            connection,
+            listing_id,
+            "QUOTE",
+        )
+    assert [(match.provider, match.provider_symbol) for match in matches] == [("finnhub", "ZTAB")]
+    assert network_calls == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason_code"),
+    [
+        ({"provider": "stooq", "capability": "QUOTE"}, "INCOMPATIBLE_PROVIDER_CAPABILITY"),
+        ({"capability": "EOD"}, "INCOMPATIBLE_PROVIDER_CAPABILITY"),
+        (
+            {"provider": "coingecko", "capability": "EOD", "provider_symbol": "zeta-alpha"},
+            "INCOMPATIBLE_INSTRUMENT_TYPE",
+        ),
+        ({"expected_currency": "EUR"}, "CURRENCY_MISMATCH"),
+        ({"provider_symbol": "   "}, "INVALID_PROVIDER_SYMBOL"),
+        ({"provider_symbol": "ZT AA"}, "INVALID_PROVIDER_SYMBOL"),
+        ({"source": "https://example.test/evidence"}, "INVALID_SOURCE"),
+        ({"evidence_hash": "not-a-hash"}, "INVALID_EVIDENCE_HASH"),
+        ({"observed_at": "2026-09-25T10:00:00"}, "INVALID_OBSERVED_AT"),
+    ],
+)
+def test_provider_symbol_rejects_incompatible_or_invalid_payloads(
+    client: TestClient,
+    overrides: dict[str, object],
+    reason_code: str,
+) -> None:
+    ids = _catalog_fixture()
+    payload = _provider_symbol_payload(**overrides)
+
+    preview = _post_provider_symbol(client, ids["alpha_us"], "preview", payload)
+    apply = _post_provider_symbol(client, ids["alpha_us"], "apply", payload, "0" * 64)
+
+    assert preview.status_code == apply.status_code == 422
+    assert preview.json() == apply.json() == {"detail": {"reason_code": reason_code}}
+    assert _provider_symbol_rows(ids["alpha_us"]) == []
+
+
+def test_provider_symbol_normalizes_per_provider_and_blocks_cross_listing_collision(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    network_calls = _forbid_network(monkeypatch)
+    ids = _catalog_fixture()
+    stooq = _provider_symbol_payload(provider="stooq", capability="EOD", provider_symbol=" ZTAA.US ")
+
+    preview = _post_provider_symbol(client, ids["alpha_us"], "preview", stooq)
+    assert preview.status_code == 200
+    assert preview.json()["normalized_provider_symbol"] == "ztaa.us"
+    applied = _post_provider_symbol(
+        client,
+        ids["alpha_us"],
+        "apply",
+        stooq,
+        preview.json()["confirmation_token"],
+    )
+    assert applied.status_code == 200
+    stored = _provider_symbol_rows(ids["alpha_us"])
+    assert [(row["provider"], row["capability"], row["provider_symbol"], row["normalized_symbol"]) for row in stored] == [
+        ("stooq", "EOD", "ztaa.us", "ZTAA.US")
+    ]
+
+    collision_payload = {**stooq, "provider_symbol": "ztaa.US", "expected_currency": "EUR"}
+    collision = _post_provider_symbol(client, ids["alpha_de"], "preview", collision_payload)
+    assert collision.status_code == 409
+    assert collision.json() == {"detail": {"reason_code": "PROVIDER_SYMBOL_IN_USE"}}
+    collision_apply = _post_provider_symbol(client, ids["alpha_de"], "apply", collision_payload, "0" * 64)
+    assert collision_apply.status_code == 409
+    assert _provider_symbol_rows(ids["alpha_de"]) == []
+
+    foreign_venue = _post_provider_symbol(
+        client,
+        ids["alpha_de"],
+        "preview",
+        _provider_symbol_payload(expected_currency="EUR"),
+    )
+    assert foreign_venue.status_code == 422
+    assert foreign_venue.json() == {"detail": {"reason_code": "INCOMPATIBLE_VENUE"}}
+    unknown_provider = _post_provider_symbol(
+        client,
+        ids["alpha_us"],
+        "preview",
+        _provider_symbol_payload(provider="alpha_vantage"),
+    )
+    assert unknown_provider.status_code == 422
+
+    with db_session() as connection:
+        unresolved = _insert_listing_for_catalog(
+            connection,
+            instrument_id=ids["beta"],
+            ticker="ZTBB",
+            mic="XNYS",
+            currency="USD",
+            timezone="America/New_York",
+            trade_republic_status="NEVER_SEEN",
+        )
+    not_resolved = _post_provider_symbol(client, unresolved, "preview", _provider_symbol_payload())
+    assert not_resolved.status_code == 409
+    assert not_resolved.json() == {"detail": {"reason_code": "LISTING_NOT_RESOLVED"}}
+    missing = _post_provider_symbol(client, 999999, "preview", _provider_symbol_payload())
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": {"reason_code": "LISTING_NOT_FOUND"}}
+    assert network_calls == []
+
+
+def _trade_republic_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "VERIFIED",
+        "source": "MANUAL_OFFICIAL_APP_CHECK",
+        "observed_at": "2026-09-27T18:30:00+02:00",
+        "evidence_hash": "C" * 64,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _post_trade_republic(
+    client: TestClient,
+    listing_id: int,
+    action: str,
+    payload: dict[str, object],
+    token: str | None = None,
+) -> httpx.Response:
+    body = payload if token is None else {**payload, "confirmation_token": token}
+    return client.post(f"/instruments/listings/{listing_id}/trade-republic/{action}", json=body)
+
+
+def _trade_republic_state(listing_id: int) -> tuple[tuple[object, ...], list[tuple[object, ...]]]:
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        listing = connection.execute(
+            """
+            SELECT trade_republic_status, trade_republic_verified_at, trade_republic_cataloged_at
+            FROM instrument_listings
+            WHERE id = ?
+            """,
+            (listing_id,),
+        ).fetchone()
+        attestations = connection.execute(
+            """
+            SELECT id, version, status, record_status, source, observed_at, evidence_hash,
+                   supersedes_attestation_id
+            FROM trade_republic_attestations
+            WHERE listing_id = ?
+            ORDER BY version
+            """,
+            (listing_id,),
+        ).fetchall()
+    return tuple(listing), [tuple(row) for row in attestations]
+
+
+def test_trade_republic_attestation_preview_apply_chain_and_projection(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.database import db_session
+
+    network_calls = _forbid_network(monkeypatch)
+    ids = _catalog_fixture()
+    listing_id = ids["alpha_us"]
+    cataloged = ("CATALOGED", None, _CATALOG_RETRIEVED_AT)
+    assert _trade_republic_state(listing_id) == (cataloged, [])
+    payload = _trade_republic_payload()
+
+    preview = _post_trade_republic(client, listing_id, "preview", payload)
+
+    assert preview.status_code == 200, preview.text
+    token = preview.json()["confirmation_token"]
+    assert preview.json() == {
+        "listing_id": listing_id,
+        "current_status": "CATALOGED",
+        "current_version": None,
+        "confirmation_token": token,
+    }
+    assert _trade_republic_state(listing_id) == (cataloged, [])
+    wrong_token = _post_trade_republic(client, listing_id, "apply", payload, "0" * 64)
+    assert wrong_token.status_code == 409
+    assert wrong_token.json() == {"detail": {"reason_code": "TRADE_REPUBLIC_ATTESTATION_CHANGED"}}
+    stale = _post_trade_republic(
+        client,
+        listing_id,
+        "apply",
+        {**payload, "observed_at": "2026-09-27T18:30:01+02:00"},
+        token,
+    )
+    assert stale.status_code == 409
+    assert _trade_republic_state(listing_id) == (cataloged, [])
+
+    applied = _post_trade_republic(client, listing_id, "apply", payload, token)
+    assert applied.status_code == 200, applied.text
+    assert applied.json() == {
+        "listing_id": listing_id,
+        "status": "VERIFIED",
+        "source": "MANUAL_OFFICIAL_APP_CHECK",
+        "observed_at": "2026-09-27T16:30:00Z",
+        "evidence_hash": "c" * 64,
+        "version": 1,
+    }
+    repeated = _post_trade_republic(client, listing_id, "apply", payload, token)
+    assert repeated.status_code == 200
+    assert repeated.json() == applied.json()
+    listing_state, attestations = _trade_republic_state(listing_id)
+    assert listing_state == ("VERIFIED", "2026-09-27T16:30:00Z", _CATALOG_RETRIEVED_AT)
+    first_id = attestations[0][0]
+    assert [row[1:] for row in attestations] == [
+        (1, "VERIFIED", "ACTIVE", "MANUAL_OFFICIAL_APP_CHECK", "2026-09-27T16:30:00Z", "c" * 64, None)
+    ]
+
+    unavailable = _trade_republic_payload(
+        status="UNAVAILABLE",
+        source="OFFICIAL_SUPPORT_NOTICE",
+        observed_at="2026-09-29T09:00:00Z",
+        evidence_hash="d" * 64,
+    )
+    second_preview = _post_trade_republic(client, listing_id, "preview", unavailable)
+    assert second_preview.status_code == 200
+    assert (second_preview.json()["current_status"], second_preview.json()["current_version"]) == (
+        "VERIFIED",
+        1,
+    )
+    second = _post_trade_republic(
+        client,
+        listing_id,
+        "apply",
+        unavailable,
+        second_preview.json()["confirmation_token"],
+    )
+    assert second.status_code == 200, second.text
+    assert (second.json()["status"], second.json()["version"]) == ("UNAVAILABLE", 2)
+    listing_state, attestations = _trade_republic_state(listing_id)
+    assert listing_state == ("UNAVAILABLE", None, _CATALOG_RETRIEVED_AT)
+    assert [(row[1], row[2], row[3], row[7]) for row in attestations] == [
+        (1, "VERIFIED", "RETIRED", None),
+        (2, "UNAVAILABLE", "ACTIVE", first_id),
+    ]
+
+    item = next(
+        item
+        for item in client.get("/instruments", params={"q": "zeta catalog alpha"}).json()["items"]
+        if item["listing_id"] == listing_id
+    )
+    assert (item["trade_republic_status"], item["trade_republic_verified_at"]) == ("UNAVAILABLE", None)
+    detail = client.get(f"/instruments/{ids['alpha']}").json()
+    assert detail["listings"][0]["trade_republic_status"] == "UNAVAILABLE"
+
+    with db_session() as connection:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE trade_republic_attestations SET status = 'VERIFIED' WHERE id = ?",
+                (first_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute("DELETE FROM trade_republic_attestations WHERE id = ?", (first_id,))
+    assert network_calls == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason_code"),
+    [
+        ({"status": "MAYBE"}, None),
+        ({"source": "SCRAPER"}, None),
+        ({"evidence_hash": "abc"}, "INVALID_EVIDENCE_HASH"),
+        ({"observed_at": "2026-09-27T18:30:00"}, "INVALID_OBSERVED_AT"),
+    ],
+)
+def test_trade_republic_attestation_rejects_invalid_payloads(
+    client: TestClient,
+    overrides: dict[str, object],
+    reason_code: str | None,
+) -> None:
+    ids = _catalog_fixture()
+    payload = _trade_republic_payload(**overrides)
+
+    preview = _post_trade_republic(client, ids["alpha_us"], "preview", payload)
+    apply = _post_trade_republic(client, ids["alpha_us"], "apply", payload, "0" * 64)
+
+    assert preview.status_code == apply.status_code == 422
+    if reason_code is not None:
+        assert preview.json() == apply.json() == {"detail": {"reason_code": reason_code}}
+    assert _trade_republic_state(ids["alpha_us"]) == (("CATALOGED", None, _CATALOG_RETRIEVED_AT), [])
+
+
+def test_provider_symbol_and_trade_republic_attestation_reject_future_observed_at(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from backend.app.api import routes
+    from backend.app.services.instrument_service import ListingConfirmationService
+
+    monkeypatch.setattr(
+        routes,
+        "listing_confirmation_service",
+        ListingConfirmationService(clock=lambda: datetime(2026, 9, 30, 12, 0, tzinfo=UTC)),
+    )
+    ids = _catalog_fixture()
+    future = "2026-09-30T12:00:01Z"
+
+    provider_preview = _post_provider_symbol(
+        client,
+        ids["alpha_us"],
+        "preview",
+        _provider_symbol_payload(observed_at=future),
+    )
+    attestation_apply = _post_trade_republic(
+        client,
+        ids["alpha_us"],
+        "apply",
+        _trade_republic_payload(observed_at=future),
+        "0" * 64,
+    )
+    accepted = _post_trade_republic(
+        client,
+        ids["alpha_us"],
+        "preview",
+        _trade_republic_payload(observed_at="2026-09-30T12:00:00Z"),
+    )
+
+    assert provider_preview.status_code == attestation_apply.status_code == 422
+    assert provider_preview.json() == attestation_apply.json() == {
+        "detail": {"reason_code": "FUTURE_OBSERVED_AT"}
+    }
+    assert accepted.status_code == 200
+    assert _provider_symbol_rows(ids["alpha_us"]) == []
+    assert _trade_republic_state(ids["alpha_us"]) == (("CATALOGED", None, _CATALOG_RETRIEVED_AT), [])
+
+
+def test_trade_republic_attestation_requires_resolved_existing_listing(client: TestClient) -> None:
+    from backend.app.database import db_session
+
+    ids = _catalog_fixture()
+    with db_session() as connection:
+        unresolved = _insert_listing_for_catalog(
+            connection,
+            instrument_id=ids["beta"],
+            ticker="ZTBB",
+            mic="XPAR",
+            currency="EUR",
+            timezone="Europe/Paris",
+            trade_republic_status="CATALOGED",
+        )
+
+    not_resolved = _post_trade_republic(client, unresolved, "preview", _trade_republic_payload())
+    missing = _post_trade_republic(client, 999999, "apply", _trade_republic_payload(), "0" * 64)
+
+    assert not_resolved.status_code == 409
+    assert not_resolved.json() == {"detail": {"reason_code": "LISTING_NOT_RESOLVED"}}
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": {"reason_code": "LISTING_NOT_FOUND"}}
+    assert _trade_republic_state(unresolved) == (("CATALOGED", None, _CATALOG_RETRIEVED_AT), [])
+
+
+def test_trade_republic_attestation_concurrent_applies_keep_one_active_version(
+    client: TestClient,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from backend.app.config import get_settings
+    from backend.app.database import db_session
+    from backend.app.models import (
+        TradeRepublicAttestationApplyIn,
+        TradeRepublicAttestationPreviewIn,
+    )
+    from backend.app.services.instrument_service import (
+        ListingConfirmationError,
+        ListingConfirmationService,
+    )
+
+    ids = _catalog_fixture()
+    listing_id = ids["alpha_us"]
+    database_path = str(get_settings().database_path)
+    service = ListingConfirmationService()
+
+    def prepared(**overrides: object) -> TradeRepublicAttestationApplyIn:
+        preview_in = TradeRepublicAttestationPreviewIn(**_trade_republic_payload(**overrides))
+        with db_session() as connection:
+            preview = service.preview_trade_republic_attestation(connection, listing_id, preview_in)
+        return TradeRepublicAttestationApplyIn(
+            **preview_in.model_dump(),
+            confirmation_token=preview.confirmation_token,
+        )
+
+    def run_concurrently(payloads: list[TradeRepublicAttestationApplyIn]) -> list[str]:
+        barrier = Barrier(len(payloads))
+
+        def apply(payload: TradeRepublicAttestationApplyIn) -> str:
+            connection = sqlite3.connect(database_path, timeout=10, check_same_thread=False)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            try:
+                barrier.wait()
+                result = service.apply_trade_republic_attestation(connection, listing_id, payload)
+                return f"{result.status}:{result.version}"
+            except ListingConfirmationError as exc:
+                return exc.reason_code
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=len(payloads)) as executor:
+            return list(executor.map(apply, payloads))
+
+    competing = run_concurrently(
+        [
+            prepared(evidence_hash="e" * 64),
+            prepared(status="UNAVAILABLE", evidence_hash="f" * 64),
+        ]
+    )
+
+    assert sorted(competing, key=lambda value: value.startswith("TRADE")) in (
+        ["VERIFIED:1", "TRADE_REPUBLIC_ATTESTATION_CHANGED"],
+        ["UNAVAILABLE:1", "TRADE_REPUBLIC_ATTESTATION_CHANGED"],
+    )
+    winner_status = next(value for value in competing if ":" in value).split(":")[0]
+    listing_state, attestations = _trade_republic_state(listing_id)
+    assert [(row[1], row[2], row[3]) for row in attestations] == [(1, winner_status, "ACTIVE")]
+    assert listing_state[0] == winner_status
+
+    same_payload = prepared(status="VERIFIED", evidence_hash="9" * 64, observed_at="2026-09-28T08:00:00Z")
+    repeated = run_concurrently([same_payload, same_payload])
+
+    assert repeated == ["VERIFIED:2", "VERIFIED:2"]
+    listing_state, attestations = _trade_republic_state(listing_id)
+    assert [(row[1], row[3]) for row in attestations] == [(1, "RETIRED"), (2, "ACTIVE")]
+    assert listing_state[:2] == ("VERIFIED", "2026-09-28T08:00:00Z")

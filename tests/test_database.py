@@ -695,6 +695,109 @@ def test_instrument_listing_provider_symbol_lifecycle_requires_retirement_before
         assert replacement_id is not None
 
 
+def test_provider_symbol_supersedes_trigger_migrates_to_allow_same_listing_versions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    # Task 14: una nuova versione VERIFIED dello stesso listing puo cambiare simbolo e
+    # puntare alla versione ritirata; il vincolo resta su provider/capability.
+    database_path = tmp_path / "provider-symbol-supersedes.db"
+    _initialize_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        for trigger_name, event in (
+            ("trg_provider_symbols_supersedes_insert", "INSERT"),
+            ("trg_provider_symbols_supersedes_update", "UPDATE"),
+        ):
+            connection.execute(f"DROP TRIGGER {trigger_name}")
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {event} ON provider_symbols
+                WHEN NEW.supersedes_provider_symbol_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM provider_symbols previous
+                    WHERE previous.id = NEW.supersedes_provider_symbol_id
+                      AND previous.status = 'RETIRED'
+                      AND UPPER(previous.provider) = UPPER(NEW.provider)
+                      AND UPPER(previous.capability) = UPPER(NEW.capability)
+                      AND UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
+                END
+                """
+            )
+    _initialize_database(database_path, monkeypatch)
+
+    with sqlite3.connect(database_path) as connection:
+        listing_id = _insert_listing(
+            connection,
+            _insert_instrument(connection, "Versioned provider listing"),
+            "VER",
+            "XNAS",
+        )
+        other_listing_id = _insert_listing(
+            connection,
+            _insert_instrument(connection, "Unrelated provider listing"),
+            "OTH",
+            "XNYS",
+        )
+        first_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, verified_at, evidence_hash, version
+            )
+            VALUES ('stooq', ?, 'EOD', 'ver.us', 'VER.US', 'VERIFIED', 'TEST',
+                    '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', ?, 1)
+            """,
+            (listing_id, "a" * 64),
+        ).lastrowid
+        connection.execute(
+            "UPDATE provider_symbols SET status = 'RETIRED' WHERE id = ?",
+            (first_id,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO provider_symbols (
+                    provider, listing_id, capability, provider_symbol, normalized_symbol,
+                    status, source, observed_at, verified_at, evidence_hash, version,
+                    supersedes_provider_symbol_id
+                )
+                VALUES ('stooq', ?, 'EOD', 'oth.us', 'OTH.US', 'VERIFIED', 'TEST',
+                        '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', ?, 1, ?)
+                """,
+                (other_listing_id, "b" * 64, first_id),
+            )
+        second_id = connection.execute(
+            """
+            INSERT INTO provider_symbols (
+                provider, listing_id, capability, provider_symbol, normalized_symbol,
+                status, source, observed_at, verified_at, evidence_hash, version,
+                supersedes_provider_symbol_id
+            )
+            VALUES ('stooq', ?, 'EOD', 'ver2.us', 'VER2.US', 'VERIFIED', 'TEST',
+                    '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z', ?, 2, ?)
+            """,
+            (listing_id, "c" * 64, first_id),
+        ).lastrowid
+        assert second_id is not None
+        trigger_sql = [
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT sql FROM sqlite_master
+                WHERE type = 'trigger' AND name LIKE 'trg_provider_symbols_supersedes_%'
+                ORDER BY name
+                """
+            )
+        ]
+        assert len(trigger_sql) == 2
+        assert all("previous.listing_id = NEW.listing_id" in sql for sql in trigger_sql)
+
+
 def test_instrument_listing_provider_history_blocks_replace_semantics(
     tmp_path,
     monkeypatch,

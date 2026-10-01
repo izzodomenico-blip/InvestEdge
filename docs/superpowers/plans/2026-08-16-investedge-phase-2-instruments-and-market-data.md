@@ -1694,11 +1694,11 @@ POST /instruments/listings/{listing_id}/trade-republic/apply -> TradeRepublicAtt
 
 Il POST di attivazione restituisce 201/`AssetOut`, è idempotente sullo stesso listing e restituisce 409 per mapping non risolto, conflitto legacy `(symbol, asset_type)` o listing cambiato. Provider symbol apply richiede lo stesso payload più `confirmation_token`, ricostruisce il token su stato locale e crea una nuova versione VERIFIED ritirando la precedente; stessa versione/evidence è idempotente. La nuova tabella history-preserving `trade_republic_attestations` contiene listing FK non nullable, business status `VERIFIED|UNAVAILABLE`, `record_status ACTIVE|RETIRED`, source allowlistata, observed_at UTC, evidence hash, version, supersedes FK nullable e created_at. `UNIQUE(listing_id, version)` mantiene la catena; l'indice parziale `UNIQUE(listing_id) WHERE record_status='ACTIVE'` ammette una sola versione corrente e rende implementabile il conflict gate concorrente. `instrument_listings.trade_republic_status/verified_at` è soltanto la projection atomica dell'attestation ACTIVE; `CATALOGED` non si auto-promuove.
 
-- [ ] **Step 1: Scrivere test API RED**
+- [x] **Step 1: Scrivere test API RED**
 
 Testare ricerca case-insensitive su nome/ticker/ISIN/FIGI, filtri combinati, total, ordering stabile `canonical_name/instrument_id/listing_id`, limit 1..100, offset >=0, dettaglio 404, campi null espliciti, catalog snapshot, attivazione idempotente e conflitto venue. Per provider symbol testare provider/capability/valuta incompatibili, simbolo vuoto, source/evidence hash, normalizzazione provider-specifica, preview/apply stale 409 quando cambia anche solo `observed_at`, version/supersedes, idempotenza, vincolo VERIFIED per listing e collisione cross-listing del normalized symbol. Per Trade Republic provare: `CATALOGED` non diventa VERIFIED da solo; source/status allowlist; evidence hash; preview/apply stale e compare_digest; VERIFIED con verified_at; successivo UNAVAILABLE; catena `version/supersedes` e passaggio ACTIVE→RETIRED; repeat idempotente; due apply concorrenti producono una sola ACTIVE, una sola projection coerente e nessuna versione orfana; nessuna rete/credenziale/trading; output ricerca/dettaglio aggiornato. Verificare che `/assets` non includa instrument non attivati.
 
-- [ ] **Step 2: Eseguire RED backend**
+- [x] **Step 2: Eseguire RED backend**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_api.py -k "instrument_search or instrument_detail or activate_listing or assets_catalog_separation or provider_symbol or trade_republic_attestation" -q
@@ -1706,19 +1706,19 @@ Testare ricerca case-insensitive su nome/ticker/ISIN/FIGI, filtri combinati, tot
 
 Expected: 404 o failure schema perché endpoint, query e preview/apply provider symbol/TR non esistono.
 
-- [ ] **Step 3: Implementare API paginata e attivazione esplicita**
+- [x] **Step 3: Implementare API paginata e attivazione esplicita**
 
 Costruire SQL parametrico con allowlist di filtri e due query coerenti count/items nella stessa connessione. Non interpolare sort/filter. Il dettaglio restituisce tutti i listing/candidate state, senza payload provider raw. Attivazione usa il listing selezionato, copia metadata verificati, collega `assets.instrument_listing_id` e non rilassa la unique legacy.
 
-- [ ] **Step 4: Implementare conferma provider symbol versionata**
+- [x] **Step 4: Implementare conferma provider symbol versionata**
 
 Accettare soltanto provider/capability compatibili e listing `RESOLVED`; confrontare `expected_currency` con il listing. `source` è un codice descrittivo, non URL; `evidence_hash` è SHA-256 esadecimale. Il token canonico include listing/provider/symbol/capability/currency/source/`observed_at` UTC normalizzato/evidence/current version ed è confrontato con `hmac.compare_digest`. Apply non chiama provider, crea versione VERIFIED e ritira atomicamente l'eventuale versione corrente; ogni mutazione di `observed_at` tra preview/apply rende il token stale.
 
-- [ ] **Step 5: Implementare attestation Trade Republic locale**
+- [x] **Step 5: Implementare attestation Trade Republic locale**
 
 Preview accetta soltanto listing RESOLVED e payload completo; token canonico include listing/status/source/observed_at/evidence/version dell'attestation ACTIVE. Apply usa `BEGIN IMMEDIATE`, ricostruisce/confronta con `hmac.compare_digest`, riusa idempotentemente lo stesso payload/evidence oppure aggiorna la precedente da ACTIVE a RETIRED, inserisce la nuova ACTIVE con `supersedes` e aggiorna la projection nella stessa transazione. L'ordine transazionale è retire precedente → insert nuova ACTIVE → update projection; qualsiasi errore, inclusa collisione concorrente dell'indice parziale, esegue rollback completo e viene riletto come idempotenza o 409 stale. `VERIFIED` imposta `trade_republic_verified_at=observed_at`; `UNAVAILABLE` imposta status UNAVAILABLE e verified_at NULL, conservando storia/cataloged_at. Nessun codice chiama provider o Trade Republic.
 
-- [ ] **Step 6: Eseguire GREEN backend**
+- [x] **Step 6: Eseguire GREEN backend**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_api.py -k "instrument or provider_symbol or trade_republic or assets" -q
@@ -1727,7 +1727,7 @@ Preview accetta soltanto listing RESOLVED e payload completo; token canonico inc
 
 Expected: API catalogo/identity/mapping verdi e Ruff verde.
 
-- [ ] **Step 7: Review, commit e gate remoto**
+- [x] **Step 7: Review, commit e gate remoto**
 
 Review indipendente su paginazione/count, SQL injection, separazione catalogo/attivi, venue conflict, provider compatibility, evidence/token, version/supersedes, attestazioni TR e transazioni apply. Correggere Critical/Important e ripetere Step 6.
 

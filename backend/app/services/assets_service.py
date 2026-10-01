@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
 from backend.app.models import AssetCreate, AssetOut
 from backend.app.services.fx_service import FXRateUnavailable, FXService
@@ -323,3 +324,102 @@ def create_asset(connection: sqlite3.Connection, payload: AssetCreate) -> AssetO
         (cursor.lastrowid,),
     ).fetchone()
     return _asset_from_base_row(connection, row)
+
+
+_ASSET_TYPE_BY_INSTRUMENT_TYPE = {
+    "STOCK": "stock",
+    "ETF": "etf",
+    "BOND": "bond",
+    "CRYPTO": "crypto",
+    "MACRO": "macro",
+    "RATE": "bond_proxy",
+}
+_ACTIVE_ASSET_COLUMNS = """
+    SELECT id, symbol, name, asset_type, tax_category, exchange, currency, sector, country,
+        risk_level, isin, updated_at
+    FROM assets
+"""
+
+
+class ListingActivationError(ValueError):
+    def __init__(self, reason_code: str, kind: Literal["not_found", "conflict"]) -> None:
+        self.reason_code = reason_code
+        self.kind = kind
+        super().__init__(reason_code)
+
+
+def activate_listing(connection: sqlite3.Connection, listing_id: int) -> tuple[AssetOut, bool]:
+    """Attiva esplicitamente un listing RESOLVED nell'universo `assets` (nessuna rete).
+
+    Restituisce `(asset, created)`: lo stesso listing gia attivo e idempotente. Il
+    simbolo legacy non diventa mai ambiguo: un asset con lo stesso simbolo su un altro
+    listing (o senza listing) blocca l'attivazione.
+    """
+    if connection.in_transaction:
+        raise RuntimeError("L'attivazione richiede una connessione senza transazione aperta.")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        listing = connection.execute(
+            "SELECT id FROM instrument_listings WHERE id = ?",
+            (listing_id,),
+        ).fetchone()
+        if listing is None:
+            raise ListingActivationError("LISTING_NOT_FOUND", "not_found")
+        row = connection.execute(
+            f"{_ACTIVE_ASSET_COLUMNS} WHERE instrument_listing_id = ? ORDER BY id LIMIT 1",
+            (listing_id,),
+        ).fetchone()
+        created = row is None
+        if row is None:
+            row = _insert_listing_asset(connection, listing_id)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return _asset_from_base_row(connection, row), created
+
+
+def _insert_listing_asset(connection: sqlite3.Connection, listing_id: int) -> sqlite3.Row:
+    resolved = InstrumentService.resolved_listing(connection, listing_id)
+    if resolved is None or resolved["listing_status"] != "ACTIVE":
+        raise ListingActivationError("LISTING_NOT_RESOLVED", "conflict")
+    instrument_id = int(resolved["instrument_id"])
+    if InstrumentService.has_ambiguous_identity(connection, instrument_id):
+        raise ListingActivationError("AMBIGUOUS_IDENTITY", "conflict")
+    verified_type = str(resolved["verified_instrument_type"])
+    asset_type = _ASSET_TYPE_BY_INSTRUMENT_TYPE.get(verified_type)
+    if asset_type is None:
+        raise ListingActivationError("UNSUPPORTED_INSTRUMENT_TYPE", "conflict")
+    symbol = str(resolved["ticker"]).strip().upper()
+    if len(symbol) > 24:
+        raise ListingActivationError("UNSUPPORTED_TICKER", "conflict")
+    if connection.execute(
+        "SELECT 1 FROM assets WHERE UPPER(symbol) = ? LIMIT 1",
+        (symbol,),
+    ).fetchone() is not None:
+        raise ListingActivationError("LEGACY_SYMBOL_CONFLICT", "conflict")
+    primary = InstrumentService.verified_primary_identifier(connection, instrument_id, verified_type)
+    isin = primary["normalized_value"] if primary is not None and primary["scheme"] == "ISIN" else None
+    cursor = connection.execute(
+        """
+        INSERT INTO assets (
+            symbol, name, asset_type, tax_category, exchange, currency, risk_level, isin,
+            instrument_listing_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?)
+        """,
+        (
+            symbol,
+            " ".join(str(resolved["canonical_name"]).split())[:160],
+            asset_type,
+            "crypto" if asset_type == "crypto" else "standard",
+            resolved["mic"],
+            str(resolved["currency"]).strip().upper(),
+            isin,
+            listing_id,
+        ),
+    )
+    return connection.execute(
+        f"{_ACTIVE_ASSET_COLUMNS} WHERE id = ?",
+        (cursor.lastrowid,),
+    ).fetchone()

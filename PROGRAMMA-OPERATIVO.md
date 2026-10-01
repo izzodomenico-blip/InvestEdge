@@ -2,17 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-09-30.
+Ultimo aggiornamento: 2026-10-01.
 
 ## Prossimo passo
 
-**SP2a · Fase 2 · Task 14 — API catalogo e conferme versionate di simboli e stato Trade Republic.**
+**SP2a · Fase 2 · Task 15 — Catalogo paginato nella pagina Universe.**
 
-- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 14*.
-- Branch: `codex/investedge-phase-2-task-14`.
-- Base remota: `origin/codex/investedge-phase-2-task-13`.
+- Piano: `docs/superpowers/plans/2026-08-16-investedge-phase-2-instruments-and-market-data.md`, blocco *Task 15*.
+- Branch: `codex/investedge-phase-2-task-15`.
+- Base remota: `origin/codex/investedge-phase-2-task-14`.
 - Esecuzione: nuova chat con contesto pulito (decisione utente 2026-10-01).
-- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 14.
+- Vincolo: nessun altro task della Fase 2 prima della chiusura del Task 15.
 
 ## Legenda
 
@@ -84,8 +84,8 @@ Piano: commit `5649982`. Branch per task: `codex/investedge-phase-2-task-N`, cia
 | 10 | Prezzi crypto con identità CoinGecko | FATTO | `54b3faf` checkpoint + `49cdb82` | 2026-09-30 | Codex → Claude |
 | 11 | FX BCE verso EUR e fallback FRED | FATTO | `88fc20d` | 2026-09-30 | Claude |
 | 12 | Provider e fallback news reali (+ isolamento news demo) | FATTO | `dbbcc65` checkpoint + `edbc07e` | 2026-10-01 | Claude |
-| 13 | Refresh lazy, prioritari, deduplicati | FATTO | branch `codex/investedge-phase-2-task-13` | 2026-10-01 | Claude |
-| 14 | API catalogo e conferme versionate | NON INIZIATO | — | — | — |
+| 13 | Refresh lazy, prioritari, deduplicati | FATTO | `b1a39e2` | 2026-10-01 | Claude |
+| 14 | API catalogo e conferme versionate | FATTO | branch `codex/investedge-phase-2-task-14` | 2026-10-01 | Claude |
 | 15 | Catalogo paginato nella pagina Universe | NON INIZIATO | — | — | — |
 | 16 | API e metriche di copertura dati | NON INIZIATO | — | — | — |
 | 17 | Copertura, qualità e budget nel Data Center | NON INIZIATO | — | — | — |
@@ -122,6 +122,16 @@ Evidenza Task 13 (2026-10-01, Claude):
 - minore aperto: con budget giornaliero/mensile esaurito il rinvio e di 1 minuto (nessun consumo, ma l'unita viene riproposta a ogni batch); da affinare rinviando all'apertura della finestra successiva;
 - gate: suite completa `pytest` = 641 passati; `ruff check backend scripts tests` verde; `git diff --check` verde.
 
+Evidenza Task 14 (2026-10-01, Claude):
+
+- `GET /instruments` (ricerca case-insensitive su nome/ticker/ISIN/FIGI, filtri in allowlist parametrica, LIKE con escape, limit 1..100, offset >= 0, ordine `canonical_name/instrument_id/listing_id`, count e pagina nella stessa transazione di lettura, `catalog_snapshot_id` = ultimo snapshot COMPLETE) e `GET /instruments/{id}` (identificativi attestati con fonti e prima/ultima osservazione, tutti i listing con stato di risoluzione, nessun payload raw);
+- `POST /assets/from-listing/{listing_id}`: attivazione esplicita di un listing RESOLVED con metadata verificati e `assets.instrument_listing_id`, idempotente, 409 per listing non risolto, identita ambigua, tipo non supportato o simbolo gia attivo;
+- conferme provider symbol (`stooq` EOD, `finnhub` QUOTE/NEWS su venue USA, `coingecko` crypto) e Trade Republic (`VERIFIED`/`UNAVAILABLE`) con preview/apply: token SHA-256 canonico confrontato con `hmac.compare_digest`, `BEGIN IMMEDIATE`, retire -> insert -> projection, versioni con `supersedes`, idempotenza, rollback completo; nuova tabella append-only `trade_republic_attestations` con indice parziale ACTIVE e trigger di sola retirement/no delete/no replace; nessuna chiamata di rete (test con trasporto HTTP bloccato);
+- deviazioni: trigger `trg_provider_symbols_supersedes_insert/update` estesi alla versione ritirata dello stesso listing (prima ammettevano solo lo stesso simbolo) con migrazione drop/ricrea in `migrate_db`; nuovo test di migrazione in `tests/test_database.py` (fuori elenco file, solo test); attivazione ripetuta risponde 200 (201 solo alla creazione); l'attivazione blocca qualsiasi asset con lo stesso simbolo, non solo `(symbol, asset_type)`, per non creare ambiguita legacy; righe catalogo senza listing con stato TR `CATALOGED` derivato dagli snapshot COMPLETE; listing non risolto con `resolution_status` dell'ultimo case dello strumento oppure `UNMATCHED`; `observed_at` futuro rifiutato (`FUTURE_OBSERVED_AT`); `verified_at` del provider symbol = `observed_at`;
+- review: corretto un Important di prestazioni (filtro ISIN/FIGI da `EXISTS` correlato a sottoquery non correlata, piano `LIST SUBQUERY`); su 20.000 strumenti sintetici la SQL impiega ~35 ms, la pagina da 100 ~250 ms per l'arricchimento per riga (minore aperto);
+- minore aperto: un listing legacy `NEVER_SEEN` di uno strumento presente nel catalogo resta `NEVER_SEEN` (lo stato TR e per listing): da rendere chiaro nella UI del Task 15;
+- gate: suite completa `pytest` = 665 passati; `ruff check backend scripts tests` verde; `git diff --check` verde; frontend non toccato.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -148,6 +158,7 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-09-30 | Documenti di handoff Codex del Task 10 archiviati in `docs/handoff/2026-08-17-phase-2-task-10/` | Claude |
 | 2026-09-30 | Push e merge fast-forward su `main` a ogni task: l'app non è in uso fino al completamento del programma | utente |
 | 2026-10-01 | Le route che chiamano provider rilasciano il lock di univocita prima dell'I/O di rete (il budget non accetta transazioni del chiamante; un lock durante retry di rete bloccherebbe tutte le scritture) | Claude, motivata nel Task 12 |
+| 2026-10-01 | Una nuova versione del provider symbol puo sostituire (`supersedes`) la versione ritirata dello stesso listing anche con simbolo diverso; trigger estesi con migrazione | Claude, motivata nel Task 14 |
 
 ## Note di ripresa
 

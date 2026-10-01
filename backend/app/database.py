@@ -282,6 +282,27 @@ CREATE TABLE IF NOT EXISTS provider_symbols (
     UNIQUE(provider, listing_id, capability, version)
 );
 
+-- Conferme manuali e locali dello stato Trade Republic: storia append-only con una
+-- sola versione ACTIVE per listing; instrument_listings ne conserva la projection.
+CREATE TABLE IF NOT EXISTS trade_republic_attestations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('VERIFIED', 'UNAVAILABLE')),
+    record_status TEXT NOT NULL CHECK(record_status IN ('ACTIVE', 'RETIRED')),
+    source TEXT NOT NULL CHECK(source IN (
+        'MANUAL_OFFICIAL_APP_CHECK', 'OFFICIAL_SUPPORT_NOTICE'
+    )),
+    observed_at TEXT NOT NULL CHECK(length(trim(observed_at)) > 0),
+    evidence_hash TEXT NOT NULL CHECK(length(evidence_hash) = 64),
+    version INTEGER NOT NULL CHECK(version > 0),
+    supersedes_attestation_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(listing_id) REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+    FOREIGN KEY(supersedes_attestation_id)
+        REFERENCES trade_republic_attestations(id) ON DELETE RESTRICT,
+    UNIQUE(listing_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS market_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     listing_id INTEGER NOT NULL,
@@ -957,7 +978,10 @@ AND NOT EXISTS (
       AND previous.status = 'RETIRED'
       AND UPPER(previous.provider) = UPPER(NEW.provider)
       AND UPPER(previous.capability) = UPPER(NEW.capability)
-      AND UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+      AND (
+          UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+          OR previous.listing_id = NEW.listing_id
+      )
 )
 BEGIN
     SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
@@ -972,10 +996,60 @@ AND NOT EXISTS (
       AND previous.status = 'RETIRED'
       AND UPPER(previous.provider) = UPPER(NEW.provider)
       AND UPPER(previous.capability) = UPPER(NEW.capability)
-      AND UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+      AND (
+          UPPER(previous.normalized_symbol) = UPPER(NEW.normalized_symbol)
+          OR previous.listing_id = NEW.listing_id
+      )
 )
 BEGIN
     SELECT RAISE(ABORT, 'superseded provider symbol must be related and retired');
+END;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_republic_attestations_active
+ON trade_republic_attestations(listing_id)
+WHERE record_status = 'ACTIVE';
+CREATE TRIGGER IF NOT EXISTS trg_trade_republic_attestations_retirement_only
+BEFORE UPDATE ON trade_republic_attestations
+WHEN OLD.record_status != 'ACTIVE'
+OR NEW.record_status != 'RETIRED'
+OR NEW.id IS NOT OLD.id
+OR NEW.listing_id IS NOT OLD.listing_id
+OR NEW.status IS NOT OLD.status
+OR NEW.source IS NOT OLD.source
+OR NEW.observed_at IS NOT OLD.observed_at
+OR NEW.evidence_hash IS NOT OLD.evidence_hash
+OR NEW.version IS NOT OLD.version
+OR NEW.supersedes_attestation_id IS NOT OLD.supersedes_attestation_id
+OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+    SELECT RAISE(ABORT, 'trade republic attestations may only be retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_trade_republic_attestations_no_delete
+BEFORE DELETE ON trade_republic_attestations
+BEGIN
+    SELECT RAISE(ABORT, 'trade republic attestations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_trade_republic_attestations_insert_guard
+BEFORE INSERT ON trade_republic_attestations
+WHEN NEW.record_status != 'ACTIVE'
+OR EXISTS (
+    SELECT 1
+    FROM trade_republic_attestations historical
+    WHERE historical.id = NEW.id
+       OR (historical.listing_id = NEW.listing_id AND historical.version = NEW.version)
+)
+OR (
+    NEW.supersedes_attestation_id IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1
+        FROM trade_republic_attestations previous
+        WHERE previous.id = NEW.supersedes_attestation_id
+          AND previous.listing_id = NEW.listing_id
+          AND previous.record_status = 'RETIRED'
+          AND previous.version < NEW.version
+    )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'trade republic attestation history cannot be replaced');
 END;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_market_observations_logical_revision
 ON market_observations(
@@ -1302,6 +1376,20 @@ def migrate_db(connection: sqlite3.Connection) -> None:
         and "instrument_id" not in str(listing_identity_index["sql"])
     ):
         connection.execute("DROP INDEX uq_instrument_listings_market_identity")
+
+    # Task 14: una versione del provider symbol puo sostituire la versione ritirata
+    # dello stesso listing anche con simbolo diverso. I trigger legacy vengono
+    # rimossi qui e ricreati da INDEX_SCHEMA con la nuova condizione.
+    for trigger_name in (
+        "trg_provider_symbols_supersedes_insert",
+        "trg_provider_symbols_supersedes_update",
+    ):
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+            (trigger_name,),
+        ).fetchone()
+        if trigger is not None and "previous.listing_id = NEW.listing_id" not in str(trigger["sql"]):
+            connection.execute(f"DROP TRIGGER {trigger_name}")
 
     for table_name, migrations in MIGRATIONS.items():
         columns = _table_columns(connection, table_name)

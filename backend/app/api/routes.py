@@ -20,6 +20,7 @@ from backend.app.models import (
     AllocationPlanIn,
     AllocationPlanOut,
     ApiUsageOut,
+    AssetClass,
     AssetCreate,
     AssetDataStatusOut,
     AssetOut,
@@ -38,6 +39,9 @@ from backend.app.models import (
     ImportInputIn,
     ImportPreviewOut,
     ImportStatusOut,
+    InstrumentDetailOut,
+    InstrumentSearchOut,
+    InstrumentType,
     ListingMetadataApplyIn,
     ListingMetadataPreviewIn,
     ListingMetadataPreviewOut,
@@ -59,6 +63,11 @@ from backend.app.models import (
     PortfolioSnapshotOut,
     PortfolioSummaryOut,
     PriceHistoryOut,
+    ProviderSymbolApplyIn,
+    ProviderSymbolApplyOut,
+    ProviderSymbolPreviewIn,
+    ProviderSymbolPreviewOut,
+    QualityTier,
     RebalanceOut,
     RebalanceTradeOut,
     ReportSummaryOut,
@@ -70,6 +79,11 @@ from backend.app.models import (
     SimulatedOrderOut,
     TaxReportOut,
     TechnicalAnalysisOut,
+    TradeRepublicAttestationApplyIn,
+    TradeRepublicAttestationOut,
+    TradeRepublicAttestationPreviewIn,
+    TradeRepublicAttestationPreviewOut,
+    TradeRepublicListingStatus,
     WalkForwardIn,
     WalkForwardOut,
 )
@@ -89,6 +103,8 @@ from backend.app.services.alert_service import (
 )
 from backend.app.services.allocation_engine import AllocationEngine
 from backend.app.services.assets_service import (
+    ListingActivationError,
+    activate_listing,
     asset_dependency_counts,
     asset_symbol_match_count,
     create_asset,
@@ -98,7 +114,13 @@ from backend.app.services.assets_service import (
 )
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.backup_service import create_backup, list_backups
-from backend.app.services.catalog_service import CatalogRefreshError, CatalogService, enqueue_catalog_eod
+from backend.app.services.catalog_service import (
+    CatalogRefreshError,
+    CatalogService,
+    enqueue_catalog_eod,
+    get_instrument_detail,
+    search_instruments,
+)
 from backend.app.services.dashboard_service import get_dashboard
 from backend.app.services.fx_service import FXService
 from backend.app.services.instrument_resolution_service import (
@@ -106,7 +128,11 @@ from backend.app.services.instrument_resolution_service import (
     InstrumentResolutionService,
     ResolutionConflictError,
 )
-from backend.app.services.instrument_service import AmbiguousInstrumentError
+from backend.app.services.instrument_service import (
+    AmbiguousInstrumentError,
+    ListingConfirmationError,
+    ListingConfirmationService,
+)
 from backend.app.services.market_data_service import MarketDataService
 from backend.app.services.ml_engine import MLEngine
 from backend.app.services.news_engine import DEFAULT_REFRESH_ALL_LIMIT, MAX_REFRESH_ALL_LIMIT, NewsEngine
@@ -130,6 +156,7 @@ news_engine = NewsEngine()
 ml_engine = MLEngine()
 catalog_service = CatalogService()
 instrument_resolution_service = InstrumentResolutionService()
+listing_confirmation_service = ListingConfirmationService()
 fx_service = FXService()
 
 
@@ -171,6 +198,20 @@ def _ensure_unambiguous_before_provider_calls(
     _ensure_unambiguous_symbols(connection, symbols)
     if connection.in_transaction:
         connection.commit()
+
+
+_CONFIRMATION_STATUS = {
+    "invalid": 422,
+    "conflict": status.HTTP_409_CONFLICT,
+    "not_found": status.HTTP_404_NOT_FOUND,
+}
+
+
+def _confirmation_failure(exc: ListingConfirmationError) -> HTTPException:
+    return HTTPException(
+        status_code=_CONFIRMATION_STATUS[exc.kind],
+        detail={"reason_code": exc.reason_code},
+    )
 
 
 def _selected_asset_symbols(
@@ -217,6 +258,33 @@ def post_asset(payload: AssetCreate) -> AssetOut:
             status_code=status.HTTP_409_CONFLICT,
             detail="Asset already exists or violates database constraints.",
         ) from exc
+
+
+@router.post(
+    "/assets/from-listing/{listing_id}",
+    response_model=AssetOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def post_asset_from_listing(listing_id: int, response: Response) -> AssetOut:
+    """Attivazione esplicita di un listing RESOLVED: 201 alla creazione, 200 se gia attivo."""
+    try:
+        with db_session() as connection:
+            asset, created = activate_listing(connection, listing_id)
+    except ListingActivationError as exc:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND if exc.kind == "not_found" else status.HTTP_409_CONFLICT
+            ),
+            detail={"reason_code": exc.reason_code},
+        ) from None
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": "LEGACY_SYMBOL_CONFLICT"},
+        ) from None
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return asset
 
 
 @router.delete("/assets/{symbol}", response_model=AssetDeleteOut)
@@ -1071,6 +1139,118 @@ def apply_catalog_listing_metadata(
             detail={"reason_code": "INVALID_LISTING_METADATA"},
         ) from None
     return ResolutionResultOut(**result.__dict__)
+
+
+@router.get("/instruments", response_model=InstrumentSearchOut)
+def get_instruments(
+    q: str | None = Query(default=None, max_length=100),
+    asset_class: AssetClass | None = Query(default=None),
+    instrument_type: InstrumentType | None = Query(default=None),
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+    mic: str | None = Query(default=None, min_length=4, max_length=4),
+    quality_tier: QualityTier | None = Query(default=None),
+    trade_republic_status: TradeRepublicListingStatus | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> InstrumentSearchOut:
+    """Catalogo paginato (piu ampio degli asset attivi); nessuna chiamata provider."""
+    with db_session() as connection:
+        return search_instruments(
+            connection,
+            q=q,
+            filters={
+                "asset_class": asset_class,
+                "instrument_type": instrument_type,
+                "currency": currency,
+                "mic": mic,
+                "quality_tier": quality_tier,
+                "trade_republic_status": trade_republic_status,
+            },
+            limit=limit,
+            offset=offset,
+            now=datetime.now(UTC),
+        )
+
+
+@router.get("/instruments/{instrument_id}", response_model=InstrumentDetailOut)
+def get_instrument(instrument_id: int) -> InstrumentDetailOut:
+    with db_session() as connection:
+        detail = get_instrument_detail(connection, instrument_id, now=datetime.now(UTC))
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"reason_code": "INSTRUMENT_NOT_FOUND"},
+        )
+    return detail
+
+
+@router.post(
+    "/instruments/listings/{listing_id}/provider-symbols/preview",
+    response_model=ProviderSymbolPreviewOut,
+)
+def preview_provider_symbol(
+    listing_id: int,
+    payload: ProviderSymbolPreviewIn,
+) -> ProviderSymbolPreviewOut:
+    try:
+        with db_session() as connection:
+            return listing_confirmation_service.preview_provider_symbol(connection, listing_id, payload)
+    except ListingConfirmationError as exc:
+        raise _confirmation_failure(exc) from None
+
+
+@router.post(
+    "/instruments/listings/{listing_id}/provider-symbols/apply",
+    response_model=ProviderSymbolApplyOut,
+)
+def apply_provider_symbol(
+    listing_id: int,
+    payload: ProviderSymbolApplyIn,
+) -> ProviderSymbolApplyOut:
+    try:
+        with db_session() as connection:
+            return listing_confirmation_service.apply_provider_symbol(connection, listing_id, payload)
+    except ListingConfirmationError as exc:
+        raise _confirmation_failure(exc) from None
+
+
+@router.post(
+    "/instruments/listings/{listing_id}/trade-republic/preview",
+    response_model=TradeRepublicAttestationPreviewOut,
+)
+def preview_trade_republic_attestation(
+    listing_id: int,
+    payload: TradeRepublicAttestationPreviewIn,
+) -> TradeRepublicAttestationPreviewOut:
+    """Conferma manuale e locale: nessun login, scraping o automazione di Trade Republic."""
+    try:
+        with db_session() as connection:
+            return listing_confirmation_service.preview_trade_republic_attestation(
+                connection,
+                listing_id,
+                payload,
+            )
+    except ListingConfirmationError as exc:
+        raise _confirmation_failure(exc) from None
+
+
+@router.post(
+    "/instruments/listings/{listing_id}/trade-republic/apply",
+    response_model=TradeRepublicAttestationOut,
+)
+def apply_trade_republic_attestation(
+    listing_id: int,
+    payload: TradeRepublicAttestationApplyIn,
+) -> TradeRepublicAttestationOut:
+    try:
+        with db_session() as connection:
+            return listing_confirmation_service.apply_trade_republic_attestation(
+                connection,
+                listing_id,
+                payload,
+            )
+    except ListingConfirmationError as exc:
+        raise _confirmation_failure(exc) from None
 
 
 @router.get("/data/status/{symbol}", response_model=AssetDataStatusOut)
