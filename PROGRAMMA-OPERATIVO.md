@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | no |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | solo spec e piano: fast-forward al Task 0 (2026-10-02; SHA nel commit successivo) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -262,10 +262,11 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-01 | Architettura SP1: pacchetto `backend/app/lab/` con `features_daily` unica fonte; branch documenti `investedge/sp1-task-0` | utente |
 | 2026-10-02 | Spec SP1 approvata; dettagli fissati in stesura: badge una volta per sezione, `SEGMENT_EXIT`, *N* del DSR = configurazioni distinte, feature ML adimensionali, guardia di rete globale nei test, `warmup_complete` | utente (spec), Claude (dettagli, segnalati) |
 | 2026-10-02 | Merge fast-forward su `main` dei documenti SP1 e del codice SP1 solo con conferma esplicita dell'utente | utente |
+| 2026-10-02 | Piano SP1 approvato; merge fast-forward su `main` di spec e piano (Task 0) | utente |
 
 ## Note di ripresa
 
-- Spec e piano SP1 vivono sul branch `investedge/sp1-task-0`; finché l'utente non conferma il merge fast-forward, `main` resta a `6acd3c4` e i task SP1 partono dal branch, non da `main`.
+- Spec e piano SP1 sono in `main` (fast-forward al Task 0, confermato dall'utente il 2026-10-02): `origin/main` e `origin/investedge/sp1-task-0` coincidono. Il Task 1 parte comunque da `origin/investedge/sp1-task-0`, come da protocollo del piano.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
 - Test legati al calendario: un test non deve dipendere dalla data reale. Se un servizio legge `datetime.now`, il test blocca l'orologio (vedi `_freeze_service_clock` in `tests/test_market_data_observations.py`).
