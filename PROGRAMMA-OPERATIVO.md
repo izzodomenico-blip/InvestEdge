@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-02.
 
 ## Prossimo passo
 
-**SP1 Task 1 — Fixture seed condivisa e guardia di rete globale.**
+**SP1 Task 2 — Pipeline di feature causale a finestra limitata (D).**
 
-- Esecuzione: nuova chat con contesto pulito.
-- Branch `investedge/sp1-task-1` da `origin/investedge/sp1-task-0` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 1), registro SP1 qui sotto.
-- Il Task 1 registra nel registro SP1 lo SHA del Task 0.
+- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
+- Branch `investedge/sp1-task-2` da `origin/investedge/sp1-task-1` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 2), registro SP1 qui sotto.
+- Il Task 2 registra nel registro SP1 lo SHA del Task 1.
 
 ## Legenda
 
@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | solo spec e piano: fast-forward al Task 0 (2026-10-02; SHA nel commit successivo) |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | solo spec e piano: `53fe614` (2026-10-02) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -195,8 +195,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 
 | Task | Titolo | Stato | Commit | Data | Owner |
 |---|---|---|---|---|---|
-| 0 | Brainstorming, spec e piano | FATTO | branch `investedge/sp1-task-0` | 2026-10-02 | Claude |
-| 1 | Fixture seed condivisa e guardia di rete globale | NON INIZIATO | — | — | — |
+| 0 | Brainstorming, spec e piano | FATTO | `e579667`, `fcb6392`, `aa13c44`, `53fe614` | 2026-10-02 | Claude |
+| 1 | Fixture seed condivisa e guardia di rete globale | FATTO | branch `investedge/sp1-task-1` | 2026-10-02 | Claude |
 | 2 | Pipeline di feature causale a finestra limitata (D) | NON INIZIATO | — | — | — |
 | 3 | Barre W/M e score v1 | NON INIZIATO | — | — | — |
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | NON INIZIATO | — | — | — |
@@ -219,6 +219,15 @@ Evidenza Task 0 (2026-10-01/02, Claude):
 - brainstorming con l'utente: 10 decisioni e approccio di architettura (registro decisioni); design approvato in 6 sezioni;
 - spec `fcb6392` e autorevisione; nella stesura del piano aggiunto il flag `warmup_complete` (spec §5.5–5.6, §6.1, §7.1, §8.2), segnalato all'utente;
 - piano a 16 task con copertura della spec verificata (tabella finale del piano); solo documenti, nessun codice né test eseguiti; `git diff --check` verde.
+
+Evidenza Task 1 (2026-10-02, Claude, nella stessa chat del Task 0 su richiesta dell'utente):
+
+- `tests/conftest.py`: guardia di rete autouse su `socket.create_connection`, `socket.socket.connect`, `socket.socket.connect_ex` e `socket.getaddrinfo` (`RuntimeError("NETWORK_BLOCKED_IN_TESTS")`, risolve il Minor 15 della Fase 2); template seed di sessione (`seeded_db_template`) con la riga FX USD→EUR della vecchia fixture; fixture `client` che copia il template per test con lo stesso ambiente (`CLIENT_ENV`);
+- RED verificato: senza guardia la richiesta reale a `example.com` partiva (test `httpx` senza eccezione) e la fixture del template non esisteva;
+- deviazioni: la fixture `client` è spostata da `tests/test_api.py` a `tests/conftest.py` (necessario per condividerla con `tests/test_test_infrastructure.py`); il loopback (`127.0.0.1`, `::1`, `localhost`) resta ammesso, perché su Windows l'event loop asyncio di `TestClient` crea una `socketpair` su `127.0.0.1` (il piano assumeva nessun socket); test aggiuntivo `test_loopback_socketpair_is_allowed`; `gc.collect()` dopo il seed del template per chiudere connessioni già committate ma non chiuse;
+- tempi: `pytest tests\test_api.py` da 711,99 s a 45,23 s (193 passati in entrambi, JUnit XML); `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
+- minore preesistente, fuori perimetro: `init_db` (`with get_connection()`) e il seed lasciano connessioni SQLite non chiuse (`ResourceWarning`);
+- gate: `pytest tests\test_test_infrastructure.py` = 4 passati; suite completa `pytest -p no:cacheprovider` = 691 passati, 0 falliti, 0 errori (JUnit XML, 83 s, guardia di rete attiva su tutti i test); `ruff check backend scripts tests` verde; `git diff --check` verde; review del diff senza rilievi Critical o Important.
 
 ## Backlog per i sottoprogetti futuri
 
@@ -263,10 +272,13 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-02 | Spec SP1 approvata; dettagli fissati in stesura: badge una volta per sezione, `SEGMENT_EXIT`, *N* del DSR = configurazioni distinte, feature ML adimensionali, guardia di rete globale nei test, `warmup_complete` | utente (spec), Claude (dettagli, segnalati) |
 | 2026-10-02 | Merge fast-forward su `main` dei documenti SP1 e del codice SP1 solo con conferma esplicita dell'utente | utente |
 | 2026-10-02 | Piano SP1 approvato; merge fast-forward su `main` di spec e piano (Task 0) | utente |
+| 2026-10-02 | SP1 Task 1 eseguito nella stessa chat del Task 0 (deroga alla regola "nuova chat per task") | utente |
+| 2026-10-02 | Guardia di rete dei test: ammesso solo il loopback, necessario all'event loop asyncio di `TestClient` su Windows | Claude, motivata nel Task 1 |
 
 ## Note di ripresa
 
-- Spec e piano SP1 sono in `main` (fast-forward al Task 0, confermato dall'utente il 2026-10-02): `origin/main` e `origin/investedge/sp1-task-0` coincidono. Il Task 1 parte comunque da `origin/investedge/sp1-task-0`, come da protocollo del piano.
+- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02). I task SP1 partono dal branch remoto del task precedente, non da `main`; il codice SP1 entra in `main` al gate finale, previa conferma dell'utente.
+- Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
 - Test legati al calendario: un test non deve dipendere dalla data reale. Se un servizio legge `datetime.now`, il test blocca l'orologio (vedi `_freeze_service_clock` in `tests/test_market_data_observations.py`).

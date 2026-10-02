@@ -15,52 +15,6 @@ from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.technical_analysis import TechnicalAnalysisService
 
 
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    from backend.app.config import get_settings
-
-    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "investedge.db"))
-    monkeypatch.setenv("ENABLE_REAL_DATA", "false")
-    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "")
-    monkeypatch.setenv("COINGECKO_API_KEY", "")
-    monkeypatch.setenv("FRED_API_KEY", "")
-    monkeypatch.setenv("FINNHUB_API_KEY", "")
-    monkeypatch.setenv("OPENFIGI_API_KEY", "")
-    monkeypatch.setenv("ENABLE_REAL_NEWS", "false")
-    monkeypatch.setenv("NEWS_DAILY_LIMIT", "20")
-    monkeypatch.setenv("NEWS_CACHE_TTL_HOURS", "6")
-    monkeypatch.setenv("NEWS_SENTIMENT_WEIGHT", "5")
-    monkeypatch.setenv("ENABLE_ALERTS", "false")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
-    monkeypatch.setenv("ENABLE_GOOGLE_SHEETS_IMPORT", "false")
-    monkeypatch.setenv("GOOGLE_SHEETS_CSV_URL", "")
-    get_settings.cache_clear()
-
-    from backend.scripts.seed_database import seed_database
-
-    seed_database(reset=True)
-
-    from backend.app.database import db_session
-
-    with db_session() as connection:
-        connection.execute(
-            """
-            INSERT INTO fx_rates (
-                from_currency, to_currency, rate, observed_at, provider, quality
-            )
-            VALUES ('USD', 'EUR', 0.92, date('now'), 'test', 'reference')
-            """
-        )
-
-    from backend.app.main import create_app
-
-    with TestClient(create_app()) as test_client:
-        yield test_client
-
-    get_settings.cache_clear()
-
-
 def _asset_dependency_state(symbol: str) -> tuple[int | None, dict[str, int], dict[str, int]]:
     from backend.app.database import db_session
 

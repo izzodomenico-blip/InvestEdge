@@ -106,7 +106,7 @@ fixture (autouse) block_network                    # socket.create_connection, s
 CLIENT_ENV: dict[str, str]                         # variabili d'ambiente oggi impostate nella fixture client
 ```
 
-- [ ] **Step 1: Misurare la baseline**
+- [x] **Step 1: Misurare la baseline**
 
 ```powershell
 Measure-Command { & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_api.py -p no:cacheprovider } | Select-Object TotalSeconds
@@ -114,7 +114,7 @@ Measure-Command { & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_ap
 
 Annotare i secondi per l'evidenza del task.
 
-- [ ] **Step 2: Scrivere i test RED**
+- [x] **Step 2: Scrivere i test RED**
 
 Creare `tests/test_test_infrastructure.py` (guardia e template; `tests/conftest.py` arriva allo Step 4):
 
@@ -145,7 +145,7 @@ def test_seeded_template_is_copied_per_test(client, seeded_db_template) -> None:
 
 Aggiungere `tests/test_test_infrastructure.py` all'elenco Files.
 
-- [ ] **Step 3: Eseguire RED**
+- [x] **Step 3: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_test_infrastructure.py -p no:cacheprovider
@@ -153,13 +153,13 @@ Aggiungere `tests/test_test_infrastructure.py` all'elenco Files.
 
 Expected: FAIL (nessuna guardia, fixture `seeded_db_template` inesistente).
 
-- [ ] **Step 4: Implementare** in `tests/conftest.py`
+- [x] **Step 4: Implementare** in `tests/conftest.py`
 
 - `block_network` (autouse, function scope) con `monkeypatch.setattr` su `socket.create_connection`, `socket.socket.connect` e `socket.getaddrinfo`. Nessuna eccezione per localhost: `TestClient` non usa socket.
 - `seeded_db_template` (session scope, `tmp_path_factory`): dentro `pytest.MonkeyPatch.context()` imposta `INVESTEDGE_DB_PATH` sul file template e le stesse variabili della fixture `client` (`CLIENT_ENV`), `get_settings.cache_clear()`, `seed_database(reset=True)`, inserisce la riga `fx_rates` USD→EUR 0.92 `date('now')` della fixture attuale, chiude le connessioni, `get_settings.cache_clear()`.
 - Fixture `client` in `tests/test_api.py`: copia il template in `tmp_path / "investedge.db"` con `shutil.copyfile`, imposta `CLIENT_ENV` e `INVESTEDGE_DB_PATH` sul file copiato, `get_settings.cache_clear()`, `TestClient(create_app())` come oggi. Rimuovere solo il seed e l'insert ora duplicati.
 
-- [ ] **Step 5: GREEN e regressione**
+- [x] **Step 5: GREEN e regressione**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_test_infrastructure.py tests\test_api.py -p no:cacheprovider
@@ -170,7 +170,7 @@ Measure-Command { & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_ap
 
 Expected: tutti verdi; tempo di `test_api.py` inferiore alla baseline; nessun test con tentativo di rete.
 
-- [ ] **Step 6: Chiusura** (protocollo punti 5–7)
+- [x] **Step 6: Chiusura** (protocollo punti 5–7)
 
 Commit: `test: share seeded database and block network in tests`
 
