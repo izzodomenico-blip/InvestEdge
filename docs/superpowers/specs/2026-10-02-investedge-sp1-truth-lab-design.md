@@ -158,6 +158,7 @@ Il test sull'RSI verifica che la versione troncata differisca dal Wilder classic
 - Stessa logica di `ScoringEngine.score_prices` oggi: sottopunteggi trend (30%), momentum (25%), volatilità (15%), volume (10%), supporti/resistenze (10%), penalità di rischio (−10%), clamp 0–100, segnale da `signal_from_score`, livello di rischio, confidenza, motivazioni, condizioni e sintesi.
 - Sostituzioni di input: `max_drawdown` → `max_drawdown_252`; `obv ≥ 0` → `obv_ratio_20 ≥ 0`; RSI di Wilder; supporti e resistenze dalle feature confermate.
 - Calcolato per D, W e M. L'interfaccia mostra lo score D.
+- **Warm-up dello score:** la formula gestisce input mancanti come oggi, ma una riga ha `warmup_complete = 1` solo quando tutti gli input dello score sono disponibili (252 barre del timeframe; supporti e resistenze possono restare vuoti). Harness, backtest, ML e interfaccia usano solo righe complete: l'interfaccia mostra "storico insufficiente" invece di uno score parziale. Per W e M servono 252 barre settimanali o mensili: l'evidenza M sarà spesso `INSUFFICIENTE`, ed è dichiarato.
 - `SCORE_VERSION = "score-v1"`, `PIPELINE_VERSION = "features-v1"`.
 
 ### 5.6 `features_daily`
@@ -172,6 +173,7 @@ Il test sull'RSI verifica che la versione troncata differisca dal Wilder classic
 | `pipeline_version`, `score_version` | versioni |
 | `data_mode` | `REAL`, `DEMO` |
 | `window_hash` | SHA-256 delle barre di input nella finestra di dipendenza massima della riga |
+| `warmup_complete` | 1 se tutti gli input dello score sono disponibili (§5.5) |
 | `score`, `trend_score`, `momentum_score`, `volatility_score`, `volume_score`, `support_resistance_score`, `risk_penalty` | REAL |
 | `features_json` | tutte le feature della riga |
 | `computed_at` | timestamp |
@@ -197,7 +199,7 @@ Vincolo univoco: `(asset_id, timeframe, date, pipeline_version, data_mode)`.
 - Un run usa una sola modalità. Default: `REAL`.
 - In modalità REAL gli asset senza serie reale vengono esclusi ed elencati; se non ne resta nessuno → 409 `LAB_NO_REAL_SERIES`.
 - I run DEMO sono possibili ed etichettati, non producono verdetto e non vengono registrati come tentativi.
-- **Score in interfaccia:** serie REAL se l'asset ne ha una, altrimenti DEMO. La scelta viene salvata nel segnale (`signals.data_mode`). Una serie REAL troppo corta per il warm-up produce "storico reale insufficiente (N barre, servono M)", senza ripiegare sul seed.
+- **Score in interfaccia:** serie REAL se l'asset ne ha una, altrimenti DEMO. La scelta viene salvata nel segnale (`signals.data_mode`). Una serie REAL troppo corta per il warm-up dello score (§5.5) produce "Storico reale insufficiente (N barre, servono 252).", senza ripiegare sul seed.
 
 ### 6.2 Segmenti
 
@@ -247,7 +249,7 @@ In modalità REAL il benchmark è una serie reale convertita in EUR; altrimenti 
 
 ### 7.1 Tempi
 
-- Decisione alla chiusura di *t* con la riga as-of *t* del segnale scelto (`signal_name`, default `score`; `signal_timeframe`, default `D`).
+- Decisione alla chiusura di *t* con la riga as-of *t* (con warm-up completo) del segnale scelto (`signal_name`, default `score`; `signal_timeframe`, default `D`).
 - Ordini all'apertura della **barra successiva dello stesso listing**. Se manca, l'ordine attende fino a `LAB_ORDER_MAX_PENDING_SESSIONS` (5) sedute, poi viene annullato e registrato.
 - Calendario del portafoglio: unione dei calendari dei listing. Ogni asset agisce solo sulle proprie barre; alla data *t* sono idonei solo gli asset con una barra a *t*.
 
@@ -309,7 +311,7 @@ Ingresso e uscita all'apertura (stesso fill del simulatore), prezzi rettificati 
 
 ### 8.2 Metriche dell'harness
 
-- **IC di rango** (Spearman) per data, solo dove ci sono almeno `LAB_MIN_NAMES` (10) asset con segnale ed etichetta. Media, deviazione standard, IR, quota di date con IC > 0.
+- **IC di rango** (Spearman) per data, solo dove ci sono almeno `LAB_MIN_NAMES` (10) asset con segnale (riga con warm-up completo) ed etichetta. Media, deviazione standard, IR, quota di date con IC > 0.
 - **t di Newey-West** sulla serie degli IC: varianza di lungo periodo con pesi di Bartlett e lag *h* − 1 (corregge la sovrapposizione delle etichette).
 - **Bucket:** decili con almeno 50 asset per data, altrimenti quintili (dichiarati). Rendimento medio per bucket (monotonia).
 - **Spread alto − basso** su ribilanciamenti non sovrapposti ogni *h* sedute: lordo e netto. Costo per gamba = `2 × turnover × (TR_COMMISSION_EUR / nozionale_per_posizione + bps_per_lato)`, con `nozionale_per_posizione = LAB_REFERENCE_CAPITAL_EUR / asset_nel_bucket` (default 10.000 €).

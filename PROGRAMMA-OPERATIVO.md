@@ -2,15 +2,16 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-01.
+Ultimo aggiornamento: 2026-10-02.
 
 ## Prossimo passo
 
-**SP1 — Laboratorio di verità: brainstorming → spec → piano, da approvare con l'utente prima di qualsiasi codice.**
+**SP1 Task 1 — Fixture seed condivisa e guardia di rete globale.**
 
 - Esecuzione: nuova chat con contesto pulito.
-- Ingressi: spec del programma §4–§7, backlog SP1 qui sotto, report Fase 2 `docs/reports/2026-08-16-phase-2-verification.md` (sezione *Residual risks*).
-- Vincolo: nessun codice SP1 prima dell'approvazione di spec e piano da parte dell'utente.
+- Branch `investedge/sp1-task-1` da `origin/investedge/sp1-task-0` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 1), registro SP1 qui sotto.
+- Il Task 1 registra nel registro SP1 lo SHA del Task 0.
 
 ## Legenda
 
@@ -32,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | NON INIZIATO | da scrivere | da scrivere | — | no |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | no |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -188,20 +189,51 @@ Evidenza Task 18 (2026-10-01, Claude):
   - smoke A 275 e smoke B 12 passati;
   - scan finale: 98 file con il report, 0 valori letterali inattesi, 3 sintetici, 0 placeholder; `git diff --check` verde.
 
+## Registro SP1 — Laboratorio di verità
+
+Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Piano: `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md`. Branch per task: `investedge/sp1-task-N`, ciascuno dal precedente; il Task 1 parte da `origin/investedge/sp1-task-0`.
+
+| Task | Titolo | Stato | Commit | Data | Owner |
+|---|---|---|---|---|---|
+| 0 | Brainstorming, spec e piano | FATTO | branch `investedge/sp1-task-0` | 2026-10-02 | Claude |
+| 1 | Fixture seed condivisa e guardia di rete globale | NON INIZIATO | — | — | — |
+| 2 | Pipeline di feature causale a finestra limitata (D) | NON INIZIATO | — | — | — |
+| 3 | Barre W/M e score v1 | NON INIZIATO | — | — | — |
+| 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | NON INIZIATO | — | — | — |
+| 5 | Backfill storico dei cambi BCE | NON INIZIATO | — | — | — |
+| 6 | Feature store `features_daily` incrementale | NON INIZIATO | — | — | — |
+| 7 | Score unico in segnali e analisi tecnica | NON INIZIATO | — | — | — |
+| 8 | Job asincroni del laboratorio | NON INIZIATO | — | — | — |
+| 9 | Costi Trade Republic, strategie e simulatore | NON INIZIATO | — | — | — |
+| 10 | Backtest onesto in EUR come job, con registro dei tentativi | NON INIZIATO | — | — | — |
+| 11 | Statistiche, walk-forward vero e DSR | NON INIZIATO | — | — | — |
+| 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
+| 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
+| 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
+| 15 | Evidenza, badge del verdetto e pagina ML | NON INIZIATO | — | — | — |
+| 16 | Prestazioni, documentazione e verifica finale SP1 | NON INIZIATO | — | — | — |
+
+Evidenza Task 0 (2026-10-01/02, Claude):
+
+- verifica Git iniziale: `origin/main` = `origin/codex/investedge-phase-2-task-18` = `6acd3c4`; primo commit `e579667` registra lo SHA del Task 18 Fase 2;
+- brainstorming con l'utente: 10 decisioni e approccio di architettura (registro decisioni); design approvato in 6 sezioni;
+- spec `fcb6392` e autorevisione; nella stesura del piano aggiunto il flag `warmup_complete` (spec §5.5–5.6, §6.1, §7.1, §8.2), segnalato all'utente;
+- piano a 16 task con copertura della spec verificata (tabella finale del piano); solo documenti, nessun codice né test eseguiti; `git diff --check` verde.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 
 - **SP2a Task 12:** news demo mai incluse in sentiment, `news_score` o feature ML; nessun rinnovo della data di pubblicazione delle news demo.
-- **SP1 (efficienza test):** la fixture `client` di `tests/test_api.py` ricrea il seed a ogni test; usare un database di esempio creato una volta e copiato per test.
-- **SP1:** pipeline di feature unica e causale (test: il valore alla riga *i* non cambia aggiungendo dati futuri); rimozione di `chikou_span` dai dati di calcolo; score unico per interfaccia, backtest e ML; fill all'apertura della barra successiva; prezzi rettificati per i rendimenti; costi reali (Trade Republic 1 €) e cambio EUR; harness IC, spread per decili e turnover; walk-forward con ottimizzazione in-sample e Sharpe corretto per i tentativi; tabella `features_daily` e job asincroni per backtest e training.
-- **SP2b:** fondamentali point-in-time (SEC EDGAR), eventi (utili, revisioni, insider Form 4, 8-K), macro/regime, barre intraday dalla fonte scelta dall'utente, universo IPO (S-1/F-1/424B), snapshot giornalieri dell'universo.
+- **SP1 (efficienza test):** assorbita nella spec SP1 (Task 1, insieme alla guardia di rete globale, Minor 15 Fase 2).
+- **SP1:** assorbita nella spec SP1 2026-10-02 (pipeline causale, score unico, backtester onesto, harness, walk-forward con DSR, `features_daily`, job asincroni).
+- **SP2b:** fondamentali point-in-time (SEC EDGAR), eventi (utili, revisioni, insider Form 4, 8-K), macro/regime, barre intraday dalla fonte scelta dall'utente, universo IPO (S-1/F-1/424B), snapshot giornalieri dell'universo; fonte di eventi societari (split, dividendi) per rettificare le serie con base `UNKNOWN` (spec SP1 §6.3); ricollegamento esplicito di un asset legacy della Fase 1 a un listing `RESOLVED` dello stesso instrument (preview/apply con token SHA-256 e `compare_digest`, 409 senza mutazioni), rilievo I3 del Task 18 Fase 2, assegnato dall'utente il 2026-10-01.
 - **SP3:** famiglie tecniche "trend di qualità" e "breakout" per orizzonte; forza relativa; volatilità che si comprime; news classificate per tipo di evento, deduplicate, pesate per fonte e tempo; pesi stimati dai dati.
 - **SP4:** feature di training identiche a quelle di previsione; obiettivo di ranking cross-sezionale; purge ed embargo; calibrazione; champion/challenger; verifica ex-post delle previsioni live.
 - **SP5:** radar con tasso storico dei profili simili, rischio, condizione di invalidazione; schede IPO con prospetto, management, soci, finanziatori, lock-up.
 - **SP6:** portafogli paper multipli, paper broker, profili di rischio a scelta dell'utente, adapter broker ufficiali disattivati, kill switch, runtime sempre acceso, riconciliazione, aggiornamento automatico schedulato.
 - **SP7:** Telegram bidirezionale con whitelist chat, codici di conferma e limiti.
-- **Da assegnare (primo SP che tocca i dati degli asset attivi, SP1 o SP2b):** ricollegamento esplicito di un asset legacy della Fase 1 a un listing `RESOLVED` dello stesso instrument (preview/apply con token SHA-256 e `compare_digest`, 409 senza mutazioni), rilievo I3 del Task 18; minori aperti nel report Fase 2, sezione *Residual risks*.
+- **Da assegnare:** minori aperti nel report Fase 2, sezione *Residual risks* (il Minor 15 è coperto dal Task 1 SP1).
 
 ## Registro decisioni
 
@@ -221,9 +253,19 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-01 | Gate audit del Task 17: aggiornamento del solo lockfile (`npm update browserslist`, nessun `--force`, `package.json` invariato) per eliminare advisory high su una dipendenza transitiva di build; moderate/low residui lasciati visibili | Claude, motivata nel Task 17 |
 | 2026-10-01 | Rilievo I3 (asset legacy senza percorso verso listing risolti) rinviato e documentato, nessun codice nuovo nel Task 18 | utente |
 | 2026-10-01 | Refresh EOD dovuto oltre 24 h, distinto dalla soglia stale di 96 h; una seduta che può essere ancora aperta non diventa mai barra EOD (`ProviderResponse.fetched_at` additivo) | Claude, motivata nel Task 18 |
+| 2026-10-01 | SP1 misura e dichiara un verdetto (`VALIDATO` / `NON VALIDATO` / `INSUFFICIENTE`) senza blocchi operativi: il gate su decisioni e ordini arriva con SP6 | utente |
+| 2026-10-01 | Score unico v1 solo tecnico (formula attuale dell'interfaccia su indicatori corretti); correzione news fuori dal `final_score` fino a SP3 | utente |
+| 2026-10-01 | Indicatori causali e a finestra limitata (via `chikou_span` dai dati di calcolo, RSI di Wilder, ricorsivi troncati, drawdown 252, OBV relativo); timeframe D/W/M dalle daily, orizzonti 1/5/21 | utente |
+| 2026-10-01 | Rettifiche: base dichiarata per provider (Stooq `UNKNOWN`) e guardia split fail-closed; fonte eventi societari in SP2b; backfill storico BCE in SP1 | utente |
+| 2026-10-01 | Entrano in SP1 fixture di test veloce, `features_daily` e job asincroni; rilievo I3 assegnato a SP2b | utente |
+| 2026-10-01 | Interfaccia SP1: adattamento minimo della pagina Backtest, modalità Evidenza e badge del verdetto; soglie Standard (t NW ≥ 2, spread netto > 0, DSR ≥ 0,95); feature ML = pipeline v1 senza news e portafoglio | utente |
+| 2026-10-01 | Architettura SP1: pacchetto `backend/app/lab/` con `features_daily` unica fonte; branch documenti `investedge/sp1-task-0` | utente |
+| 2026-10-02 | Spec SP1 approvata; dettagli fissati in stesura: badge una volta per sezione, `SEGMENT_EXIT`, *N* del DSR = configurazioni distinte, feature ML adimensionali, guardia di rete globale nei test, `warmup_complete` | utente (spec), Claude (dettagli, segnalati) |
+| 2026-10-02 | Merge fast-forward su `main` dei documenti SP1 e del codice SP1 solo con conferma esplicita dell'utente | utente |
 
 ## Note di ripresa
 
+- Spec e piano SP1 vivono sul branch `investedge/sp1-task-0`; finché l'utente non conferma il merge fast-forward, `main` resta a `6acd3c4` e i task SP1 partono dal branch, non da `main`.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
 - Test legati al calendario: un test non deve dipendere dalla data reale. Se un servizio legge `datetime.now`, il test blocca l'orologio (vedi `_freeze_service_clock` in `tests/test_market_data_observations.py`).
