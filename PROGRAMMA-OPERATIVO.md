@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 3 — Barre W/M e score v1.**
+**SP1 Task 4 — Serie reale/demo, segmenti, guardia split e conversione EUR.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-3` da `origin/investedge/sp1-task-2` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5.4–§5.5, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 3), registro SP1 qui sotto.
-- Il Task 3 registra nel registro SP1 lo SHA del Task 2.
+- Branch `investedge/sp1-task-4` da `origin/investedge/sp1-task-3` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.1–§6.3 e la conversione di §6.4, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 4), registro SP1 qui sotto.
+- Il Task 4 registra nel registro SP1 lo SHA del Task 3.
 
 ## Legenda
 
@@ -197,8 +197,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 |---|---|---|---|---|---|
 | 0 | Brainstorming, spec e piano | FATTO | `e579667`, `fcb6392`, `aa13c44`, `53fe614` | 2026-10-02 | Claude |
 | 1 | Fixture seed condivisa e guardia di rete globale | FATTO | `a115dab` | 2026-10-02 | Claude |
-| 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | branch `investedge/sp1-task-2` | 2026-10-03 | Claude |
-| 3 | Barre W/M e score v1 | NON INIZIATO | — | — | — |
+| 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | `90b49ab` | 2026-10-03 | Claude |
+| 3 | Barre W/M e score v1 | FATTO | branch `investedge/sp1-task-3` | 2026-10-03 | Claude |
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | NON INIZIATO | — | — | — |
 | 5 | Backfill storico dei cambi BCE | NON INIZIATO | — | — | — |
 | 6 | Feature store `features_daily` incrementale | NON INIZIATO | — | — | — |
@@ -239,6 +239,26 @@ Evidenza Task 2 (2026-10-03, Claude):
 - minori aperti: `compute_features` non valida ordinamento e unicità delle date (precondizione del chiamante: serie e segmenti del Task 4, feature store del Task 6); una serie piatta dà NaN su RSI, stocastico, Bollinger e DI/ADX, quindi nel Task 3 il warm-up dello score non risulterà mai completo per quella serie;
 - ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
 - gate: `pytest tests\test_lab_features.py` = 10 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 701 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 138 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
+
+Evidenza Task 3 (2026-10-03, Claude):
+
+- `backend/app/lab/resample.py`: `resample_bars(daily, "W" | "M", as_of)` con `available_at` = domenica o ultimo giorno del mese e solo periodi chiusi entro `as_of`; open primo, high massimo, low minimo, close ultimo, volume somma, fattore di rettifica dell'ultima daily; vettoriale (`reduceat`);
+- `backend/app/lab/score_v1.py`: `SUBSCORE_COLUMNS`, `SCORE_INPUT_COLUMNS` (20 colonne, compreso `close_adj`), `explain(row, risk_level)` e `score_frame(features, risk_level)` sulla stessa funzione interna per riga; sottopunteggi, pesi, soglie, motivazioni, rischio, confidenza, condizioni, sintesi e bias portati da `ScoringEngine`/`TechnicalAnalysisService` con le sostituzioni del piano; `warmup_complete` = tutti gli input finiti tranne supporti e resistenze; clamp e soglie del segnale riusati da `services.common` (nessuna copia); nessun import da `technical_analysis` o `scoring_engine`, nessuna nuova dipendenza;
+- Step 1: 6 `GOLDEN_CASES` catturati dalla formula attuale con uno script nello scratchpad (patch di `calculate_full_technical_analysis`; condizioni e sintesi del caso calcolate con il codice attuale): coprono STRONG_BUY/HOLD/REDUCE/SELL, rischio LOW/MEDIUM/HIGH, confidenza HIGH/MEDIUM e tutti i rami RSI; letterali nel test, che non importa moduli legacy;
+- RED verificato: `ModuleNotFoundError: No module named 'backend.app.lab.resample'`;
+- verifiche aggiuntive in scratch (non committate): `explain` identico alla formula attuale su 20.000 casi casuali con valori di soglia (score, segnale, rischio, confidenza, motivazioni con tipo, sottopunteggi, condizioni, supporti/resistenze, sintesi, `technical_summary`); `resample_bars` identico a un `groupby` pandas su 40 combinazioni, stabile come prefisso e indipendente dalle daily successive su 868 `as_of`; `score_frame` = `explain` su 1500 righe, prima riga completa alla 252ª barra, circa 31 ms; W da 1500 daily: 299 barre, 48 complete;
+- scelte interpretative:
+  - O/H/L delle barre W/M aggregati sui prezzi rettificati e riportati nella scala del fattore dell'ultima daily: uguali all'aggregazione dei grezzi con fattore costante (identici con fattore 1), coerenti con uno split nel periodo (la lettura letterale darebbe high 198,5 invece di 99,5 nel caso di prova);
+  - una serie che inizia a metà periodo produce una prima barra W/M parziale (causale);
+  - `explain`: `indicators` con i nomi `features-v1` (valori finiti arrotondati a 6 cifre come oggi), `support_resistance` con le chiavi attuali (`support_distance_percent`, ...), `conditions` senza golden/death cross, `latest_close` = `close_adj`; lo score usa i valori non arrotondati (oggi a 6 cifre: differenza solo sul filo delle soglie); ATR come `atr_14 / close_adj`, come oggi;
+- deviazioni: nel test del piano `{name: value for ...}` → `dict(indicators)` (Ruff C416); chiave `name` nei `GOLDEN_CASES`; nessun file fuori elenco;
+- note per i task successivi:
+  - Task 6: `features_json` deve contenere anche `close_adj` (in `SCORE_INPUT_COLUMNS`, non in `FEATURE_COLUMNS_V1`), altrimenti `explain` sulla riga salvata non riproduce lo score;
+  - Task 7: `AnalysisPage` legge `indicators.volatility_annualized_30d` e `indicators.max_drawdown`, che con `explain` diventano `volatility_30d` e `max_drawdown_252`;
+  - l'allineamento W/M sulle date daily (`merge_asof`, spec §5.4) è nel Task 6 (`signal_panel`);
+- minori aperti: `resample_bars` non valida ordinamento e unicità delle date (precondizione, come `compute_features`); serie piatta: `warmup_complete` resta 0 (dichiarato nel Task 2, non corretto);
+- ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
+- gate: `pytest tests\test_lab_score.py tests\test_lab_features.py -p no:cacheprovider` = 19 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 710 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 78 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
 ## Backlog per i sottoprogetti futuri
 

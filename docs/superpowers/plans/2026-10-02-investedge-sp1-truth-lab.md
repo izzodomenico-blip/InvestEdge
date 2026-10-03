@@ -397,7 +397,7 @@ def score_frame(features: pd.DataFrame, risk_level: str) -> pd.DataFrame
 
 `explain` porta la logica di `ScoringEngine.score_prices` e di `TechnicalAnalysisService` (condizioni, sintesi trend/momentum/volatilità/volume, bias, `_risk_level`, `_confidence`) con le sostituzioni di input: `max_drawdown` → `max_drawdown_252`, `obv ≥ 0` → `obv_ratio_20 ≥ 0`, `volatility_annualized_30d` → `volatility_30d`, `close` → `close_adj`, supporti e resistenze da `nearest_*`/`*_distance_pct`. Le condizioni che usano la riga precedente (golden/death cross) non entrano nello score e restano fuori da `explain`.
 
-- [ ] **Step 1: Catturare i valori di riferimento dalla formula attuale**
+- [x] **Step 1: Catturare i valori di riferimento dalla formula attuale**
 
 Prima di scrivere `score_v1`, in uno script temporaneo nello scratchpad costruire 6 casi `analysis` (trend rialzista pieno, ribassista, laterale con RSI 70, volatilità alta con drawdown −0,40, dati parziali senza SMA200, vicino a resistenza) e calcolare l'output attuale con:
 
@@ -415,7 +415,7 @@ def legacy_score(analysis: dict, risk_level: str) -> dict:
 
 Copiare in `tests/test_lab_score.py` come letterali `GOLDEN_CASES` gli input (`indicators`, `support_resistance`, `latest_close`, `risk_level`) e gli output attesi (`score`, `signal`, `subscores`, `risk_level`, `confidence`, testi di `reasons`).
 
-- [ ] **Step 2: Scrivere i test RED**
+- [x] **Step 2: Scrivere i test RED**
 
 ```python
 from __future__ import annotations
@@ -487,7 +487,7 @@ def test_monthly_bar_uses_calendar_month_end_and_crypto_weekends() -> None:
     assert weekly.iloc[0]["close"] == daily.loc[daily["date"] == "2024-01-07", "close"].iloc[0]
 ```
 
-- [ ] **Step 3: RED**
+- [x] **Step 3: RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_lab_score.py -p no:cacheprovider
@@ -495,9 +495,9 @@ def test_monthly_bar_uses_calendar_month_end_and_crypto_weekends() -> None:
 
 Expected: FAIL in import.
 
-- [ ] **Step 4: Implementare `resample.py` e `score_v1.py`**, poi GREEN con lo stesso comando, più `tests\test_lab_features.py` e Ruff.
+- [x] **Step 4: Implementare `resample.py` e `score_v1.py`**, poi GREEN con lo stesso comando, più `tests\test_lab_features.py` e Ruff.
 
-- [ ] **Step 5: Chiusura**
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: add timeframe resampling and score v1`
 
