@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 8 — Job asincroni del laboratorio.**
+**SP1 Task 9 — Costi Trade Republic, strategie e simulatore.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-8` da `origin/investedge/sp1-task-7` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.4, §9, §10 e §13, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 8), registro SP1 qui sotto (note del Task 5 su `FX_BACKFILL`, del Task 6 su `FeatureStore` e del Task 7 sul ricalcolo dei segnali).
-- Il Task 8 registra nel registro SP1 lo SHA del Task 7.
+- Branch `investedge/sp1-task-9` da `origin/investedge/sp1-task-8` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.2, §6.4 e §7, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 9), registro SP1 qui sotto (note dei Task 4 e 6 su serie, segmenti, `EurConverter` e `FeatureStore`).
+- Il Task 9 registra nel registro SP1 lo SHA del Task 8.
 
 ## Legenda
 
@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–6: `96f7299` (2026-10-03) |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–7: `bcd7179` (2026-10-03) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -202,8 +202,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | `86d6f73` | 2026-10-03 | Claude |
 | 5 | Backfill storico dei cambi BCE | FATTO | `0bd6c0e` | 2026-10-03 | Claude |
 | 6 | Feature store `features_daily` incrementale | FATTO | `96f7299` | 2026-10-03 | Claude |
-| 7 | Score unico in segnali e analisi tecnica | FATTO | branch `investedge/sp1-task-7` | 2026-10-03 | Claude |
-| 8 | Job asincroni del laboratorio | NON INIZIATO | — | — | — |
+| 7 | Score unico in segnali e analisi tecnica | FATTO | `bcd7179` | 2026-10-03 | Claude |
+| 8 | Job asincroni del laboratorio | FATTO | branch `investedge/sp1-task-8` | 2026-10-03 | Claude |
 | 9 | Costi Trade Republic, strategie e simulatore | NON INIZIATO | — | — | — |
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | NON INIZIATO | — | — | — |
 | 11 | Statistiche, walk-forward vero e DSR | NON INIZIATO | — | — | — |
@@ -370,6 +370,35 @@ Evidenza Task 7 (2026-10-03, Claude):
 - ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
 - gate: `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_lab_feature_store.py tests\test_lab_score.py tests\test_lab_features.py tests\test_lab_series.py tests\test_database.py tests\test_news_providers.py -p no:cacheprovider -W error::RuntimeWarning` = 113 passati, 2 xfail; `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_api.py -k "signal or technical or boundar or news or assets or action_board"` = 58 passati, 2 xfail; suite completa `pytest -p no:cacheprovider` = 767 test, 765 passati, 2 xfail (strict), 0 falliti, 0 errori (JUnit XML, 94 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff: nessun rilievo Critical o Important aperto (la regressione score 0 → 50 trovata in review è stata corretta con TDD).
 
+Evidenza Task 8 (2026-10-03, Claude, nella stessa chat del Task 7 su richiesta dell'utente):
+
+- verifica Git iniziale: su richiesta dell'utente `main` portato con fast-forward da `96f7299` a `bcd7179` (Task 7, push del solo SHA verificato come discendente, nessun force); `origin/investedge/sp1-task-7` = `bcd7179`, base del task verificata con il protocollo del piano;
+- tabella `lab_jobs` in `BASE_SCHEMA` (colonne e CHECK del piano) con `idx_lab_jobs_status_created` e l'indice univoco parziale `uq_lab_jobs_open` (`QUEUED`/`RUNNING`) in `INDEX_SCHEMA`: migrazione additiva;
+- `backend/app/lab/jobs.py`: `JobKind`, `JobStatus`, `JobCancelled`, `JobNotCancellable` (`JOB_NOT_CANCELLABLE`), `JobNotFound` (`JOB_NOT_FOUND`), `JobRecord`, `JobOutcome`, `JobContext` (`set_progress`, `raise_if_cancelled`), `register_job_handler`, `JobService` (`enqueue` con deduplica su `kind` + SHA-256 dei parametri canonici sotto `BEGIN IMMEDIATE`, `get`, `list`, `cancel`, `recover_interrupted`, `start`, `stop`) e `get_job_service()`; un worker FIFO in un thread daemon, una connessione per operazione e transazioni brevi; `LabError` → `FAILED` con codice e messaggio, altre eccezioni → `FAILED` `INTERNAL_ERROR` "Errore interno del job." (testo mai salvato), `JobCancelled` → `CANCELLED`; in modalità `inline` `enqueue` esegue subito il job;
+- `backend/app/lab/handlers.py`: `FEATURE_REFRESH` (`FeatureStore.refresh_asset` per asset, `data_mode` richiesto o preferito, `raise_if_cancelled` e avanzamento fra un asset e l'altro, risultato `assets`/`inserted`/`updated`/`deleted`/`unchanged`) e `FX_BACKFILL` (`FXService.backfill_history` per valuta su connessione senza transazione aperta, commit dopo ogni valuta, risultato per valuta);
+- `backend/app/api/lab_routes.py`: `GET /lab/jobs?limit=1..100&status=`, `GET /lab/jobs/{job_id}` (404), `POST /lab/jobs/{job_id}/cancel` (409 `JOB_NOT_CANCELLABLE`), `POST /lab/features/refresh` (202), `POST /data/fx/backfill` (202; 409 `REAL_DATA_DISABLED` prima di accodare; 422 per valuta non BCE, data non valida o futura, elenco vuoto o oltre 10); modelli `JobOut`, `FeatureRefreshIn`, `FxBackfillIn` in `backend/app/models/lab.py`, esportati da `backend/app/models/__init__.py`;
+- `LAB_JOBS_EXECUTOR` (`thread` di default, `inline` nei test) in `config.py`, `.env.example`, `backend/.env.example` e `CLIENT_ENV` di `tests/conftest.py`; lifespan: dopo `prepare_database` `recover_interrupted()` e `start()`, allo shutdown `stop()`;
+- test: gli 8 del piano e 4 test API in `tests/test_lab_jobs.py`; fixture `handlers` che isola il registro degli handler;
+- RED verificato: `ImportError` (modulo `backend.app.lab.jobs` assente);
+- scelte interpretative:
+  - 404 con `{"reason_code": "JOB_NOT_FOUND"}`; 409 con `reason_code` e `message` (come il 409 del Task 7); 422 di valuta e data con messaggio testuale, come la route FX esistente;
+  - `enqueue` di un tipo senza handler registrato → `LabError("JOB_KIND_UNAVAILABLE")` senza creare il job;
+  - parametri canonici (JSON con chiavi ordinate) per l'hash; `asset_ids` deduplicati e ordinati; valute normalizzate e deduplicate nell'ordine ricevuto;
+  - `FEATURE_REFRESH`: asset senza prezzi o inesistenti saltati e non contati (`assets` = asset aggiornati);
+  - `FX_BACKFILL`: `ENABLE_REAL_DATA` ricontrollato all'esecuzione (`REAL_DATA_DISABLED`); errore del provider → `FAILED` `FX_BACKFILL_FAILED` con la valuta, le valute già completate restano salvate (rerun idempotente);
+  - `recover_interrupted` tocca solo i `RUNNING`: i `QUEUED` restano in coda e il worker li esegue dopo l'avvio; elenco dal più recente; `progress` = 1 e risultato solo per `SUCCEEDED`; un annullamento chiesto a un job che termina senza un altro `raise_if_cancelled` lascia `SUCCEEDED` con `cancel_requested` vero;
+  - `get_job_service()` ricrea il servizio se cambia `LAB_JOBS_EXECUTOR` (valore non valido → errore all'avvio); `stop()` attende il worker al più 10 s, un job ancora in corso diventa `INTERRUPTED` al riavvio;
+- deviazioni:
+  - `tests/test_api.py` (fuori elenco, solo test): i 2 test del lifespan sostituiscono `prepare_database` senza database; con il nuovo lifespan avrebbero aperto un DB non temporaneo, quindi usano un servizio job finto e verificano l'ordine `prepare` → `recover` → `start` → `yield` → `stop` (nessun job avviato se il backup fallisce);
+  - 4 test oltre il piano in `tests/test_lab_jobs.py`: ordine FIFO del worker, `JobCancelled` nell'handler, tipo non registrato, schema (indice parziale e CHECK);
+  - fix automatico Ruff SIM117 (with annidati) su `jobs.py`;
+- note per i task successivi:
+  - Task 10–13: registrare gli handler `BACKTEST`, `COMPARE`, `WALK_FORWARD`, `EVIDENCE`, `ML_TRAIN` con `register_job_handler` in un modulo importato da `lab_routes.py` (oggi `handlers.py`); ogni handler apre la propria `get_connection()`, chiama `raise_if_cancelled()` fra un passo e l'altro e usa `LabError` per gli errori attesi; nei test API vale `LAB_JOBS_EXECUTOR=inline`, nei test unitari la fixture `handlers`;
+  - Task 14 e 15: polling di `GET /lab/jobs/{id}` e annullamento con `POST /lab/jobs/{id}/cancel`;
+- minori aperti: un errore SQLite nella scrittura finale lascia il job `RUNNING` fino al riavvio; in modalità `inline` il job gira nel thread della richiesta (solo test); nessuna pulizia delle righe di `lab_jobs`;
+- ambiente: stesso `backend/.venv` del Task 7;
+- gate: `pytest tests\test_lab_jobs.py tests\test_lab_boundaries.py tests\test_config.py tests\test_database.py -p no:cacheprovider -W error::RuntimeWarning` = 63 passati, 2 xfail; suite completa `pytest -p no:cacheprovider` = 785 test, 783 passati, 2 xfail (strict, Task 7), 0 falliti, 0 errori (JUnit XML, 110 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -420,10 +449,13 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-03 | `features_daily`: con due barre W/M della stessa `available_at` in segmenti diversi (split a metà periodo) resta quella del segmento successivo; `signal_panel` W/M usa la riga as-of solo se è dello stesso segmento della data | Claude, motivata nel Task 6 |
 | 2026-10-03 | Merge fast-forward su `main` dei Task 4–6 su richiesta esplicita dell'utente (`main` = `96f7299`) | utente |
 | 2026-10-03 | Score unico nei segnali: l'ultima riga D deve avere `warmup_complete`, senza ripiego su righe o segmenti precedenti; anche il refresh news lascia `final_score = score` (correzione news solo informativa, `news_engine.py` fuori elenco) | Claude, motivata nel Task 7 |
+| 2026-10-03 | Adeguamento di `AnalysisPage` ai nomi `features-v1` e al 409 `INSUFFICIENT_REAL_HISTORY` rinviato al Task 15 | utente |
+| 2026-10-03 | Merge fast-forward su `main` del Task 7 su richiesta esplicita dell'utente (`main` = `bcd7179`) | utente |
+| 2026-10-03 | SP1 Task 8 eseguito nella stessa chat del Task 7 (deroga alla regola "nuova chat per task", solo per il Task 8) | utente |
 
 ## Note di ripresa
 
-- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3) e poi a `96f7299` (Task 4–6). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
+- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6) e a `bcd7179` (Task 7). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.

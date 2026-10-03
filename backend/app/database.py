@@ -815,6 +815,24 @@ CREATE TABLE IF NOT EXISTS features_daily (
     UNIQUE(asset_id, timeframe, date, pipeline_version, data_mode)
 );
 
+CREATE TABLE IF NOT EXISTS lab_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK(kind IN ('BACKTEST', 'COMPARE', 'WALK_FORWARD', 'EVIDENCE',
+                                      'FEATURE_REFRESH', 'FX_BACKFILL', 'ML_TRAIN')),
+    status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED')),
+    params_json TEXT NOT NULL,
+    params_hash TEXT NOT NULL CHECK(length(params_hash) = 64),
+    progress REAL NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 1),
+    result_ref TEXT,
+    result_json TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+
 """
 
 
@@ -1177,6 +1195,10 @@ CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions
 CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol ON ml_predictions(symbol, created_at);
 CREATE INDEX IF NOT EXISTS idx_features_daily_lookup
 ON features_daily(asset_id, data_mode, timeframe, pipeline_version, date);
+CREATE INDEX IF NOT EXISTS idx_lab_jobs_status_created ON lab_jobs(status, created_at, id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_jobs_open
+ON lab_jobs(kind, params_hash)
+WHERE status IN ('QUEUED', 'RUNNING');
 """
 
 

@@ -1,3 +1,4 @@
+from backend.app.models.lab import FeatureRefreshIn, FxBackfillIn, JobOut
 from backend.app.models.market_data import (
     ADAPTER_VALIDATION_REASONS,
     EffectiveObservationQuality,
@@ -260,4 +261,7 @@ __all__ = [
     "TradeRepublicAttestationSource",
     "TradeRepublicAttestationStatus",
     "TradeRepublicListingStatus",
+    "FeatureRefreshIn",
+    "FxBackfillIn",
+    "JobOut",
 ]

@@ -808,7 +808,7 @@ Handler registrati in `handlers.py` in questo task:
 
 Route in `lab_routes.py`: `GET /lab/jobs?limit=1..100&status=`, `GET /lab/jobs/{job_id}` (404), `POST /lab/jobs/{job_id}/cancel` (409 `JOB_NOT_CANCELLABLE`), `POST /lab/features/refresh` (202), `POST /data/fx/backfill` (202; 409 `REAL_DATA_DISABLED` se `ENABLE_REAL_DATA` è falso, controllato prima di accodare; 422 per valuta non BCE).
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_jobs.py`:
+- [x] **Step 1: Test RED** in `tests/test_lab_jobs.py`:
   - `test_inline_job_runs_and_stores_result`;
   - `test_identical_open_job_is_deduplicated` (executor `thread` non avviato: due `enqueue` uguali → stesso id `QUEUED`);
   - `test_cancel_queued_job` e `test_cancel_finished_job_raises_not_cancellable`;
@@ -816,8 +816,8 @@ Route in `lab_routes.py`: `GET /lab/jobs?limit=1..100&status=`, `GET /lab/jobs/{
   - `test_recover_interrupted_marks_running_jobs`;
   - `test_lab_error_is_reported_with_code` e `test_unexpected_error_hides_exception_text` (eccezione con testo `"secret-token-123"` assente dal record);
   - API: 404, 409 cancel, `POST /lab/features/refresh` → 202 e job `SUCCEEDED` con conteggi, `POST /data/fx/backfill` → 409 `REAL_DATA_DISABLED` di default e 202 con `ENABLE_REAL_DATA=true` e `FXService.backfill_history` sostituito da un fake.
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_jobs.py`, suite completa, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_jobs.py`, suite completa, Ruff).
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: add asynchronous lab jobs`
 

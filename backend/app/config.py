@@ -97,6 +97,7 @@ class Settings:
     google_sheets_import_max_bytes: int = 5 * 1024 * 1024
     lab_segment_max_gap_sessions: int = 5
     lab_split_tolerance: float = 0.03
+    lab_jobs_executor: str = "thread"
 
     @property
     def database_url(self) -> str:
@@ -232,6 +233,7 @@ class Settings:
             google_sheets_import_max_bytes=int(os.getenv("GOOGLE_SHEETS_IMPORT_MAX_BYTES", "5242880")),
             lab_segment_max_gap_sessions=int(os.getenv("LAB_SEGMENT_MAX_GAP_SESSIONS", "5")),
             lab_split_tolerance=float(os.getenv("LAB_SPLIT_TOLERANCE", "0.03")),
+            lab_jobs_executor=os.getenv("LAB_JOBS_EXECUTOR", "thread").strip().lower() or "thread",
         )
 
 

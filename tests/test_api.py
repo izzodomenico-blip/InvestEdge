@@ -243,6 +243,23 @@ def test_health_endpoint(client: TestClient) -> None:
     assert response.json()["status"] == "ok"
 
 
+class _RecordingJobService:
+    """Servizio job finto per i test del lifespan: registra le chiamate senza aprire database."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def recover_interrupted(self) -> int:
+        self.events.append("jobs-recover")
+        return 0
+
+    def start(self) -> None:
+        self.events.append("jobs-start")
+
+    def stop(self) -> None:
+        self.events.append("jobs-stop")
+
+
 def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> None:
     from backend.app import main
 
@@ -256,6 +273,7 @@ def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> Non
     monkeypatch.setattr(main, "prepare_database", prepare_database, raising=False)
     monkeypatch.setattr(main, "backup_before_migration", lambda: events.append("legacy-backup"), raising=False)
     monkeypatch.setattr(main, "init_db", lambda: events.append("legacy-init"), raising=False)
+    monkeypatch.setattr(main, "get_job_service", lambda: _RecordingJobService(events))
 
     async def run_lifespan() -> None:
         async with main.lifespan(None):
@@ -263,7 +281,7 @@ def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> Non
 
     asyncio.run(run_lifespan())
 
-    assert events == ["prepare", "yield"]
+    assert events == ["prepare", "jobs-recover", "jobs-start", "yield", "jobs-stop"]
 
 
 def test_lifespan_does_not_initialize_or_write_catalog_snapshot_when_backup_fails(
@@ -292,6 +310,7 @@ def test_lifespan_does_not_initialize_or_write_catalog_snapshot_when_backup_fail
     monkeypatch.setattr(main, "prepare_database", fail_prepare, raising=False)
     monkeypatch.setattr(main, "backup_before_migration", fail_legacy_backup, raising=False)
     monkeypatch.setattr(main, "init_db", lambda: events.append("legacy-init"), raising=False)
+    monkeypatch.setattr(main, "get_job_service", lambda: _RecordingJobService(events))
 
     async def run_lifespan() -> None:
         async with main.lifespan(None):

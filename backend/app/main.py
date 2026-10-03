@@ -10,8 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.api.lab_routes import router as lab_router
 from backend.app.api.routes import router
 from backend.app.config import ROOT_DIR, get_settings
+from backend.app.lab.jobs import get_job_service
 from backend.app.services.backup_service import prepare_database
 
 
@@ -22,7 +24,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         reason="pre-migration",
         backup_existing="PYTEST_CURRENT_TEST" not in os.environ,
     )
-    yield
+    # Job del laboratorio: i RUNNING di un avvio precedente diventano INTERRUPTED, poi parte il worker.
+    jobs = get_job_service()
+    jobs.recover_interrupted()
+    jobs.start()
+    try:
+        yield
+    finally:
+        jobs.stop()
 
 
 def create_app() -> FastAPI:
@@ -51,6 +60,7 @@ def create_app() -> FastAPI:
         )
 
     application.include_router(router)
+    application.include_router(lab_router)
 
     if os.getenv("INVESTEDGE_SERVE_FRONTEND", "0") == "1":
         _mount_frontend(application)
