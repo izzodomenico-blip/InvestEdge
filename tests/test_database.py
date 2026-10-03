@@ -1292,6 +1292,53 @@ def test_purged_curated_crypto_can_be_added_again_and_restarted(tmp_path, monkey
     assert listing_timezone == "UTC"
 
 
+def test_features_daily_schema_unique_key_and_cascade_from_protected_delete(tmp_path, monkeypatch) -> None:
+    from backend.app.services.assets_service import delete_asset
+
+    database_path = tmp_path / "features.db"
+    _initialize_database(database_path, monkeypatch)
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        assert table_columns(connection, "features_daily") == {
+            "id", "asset_id", "timeframe", "date", "segment_id", "pipeline_version", "score_version",
+            "data_mode", "window_hash", "warmup_complete", "score", "trend_score", "momentum_score",
+            "volatility_score", "volume_score", "support_resistance_score", "risk_penalty", "features_json",
+            "computed_at",
+        }
+        index_columns = [row[2] for row in connection.execute("PRAGMA index_info(idx_features_daily_lookup)")]
+        assert index_columns == ["asset_id", "data_mode", "timeframe", "pipeline_version", "date"]
+        asset_id = connection.execute(
+            "INSERT INTO assets (symbol, name, asset_type, currency) VALUES ('FS', 'FS', 'stock', 'USD')"
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO price_history (asset_id, date, close, is_real_data) VALUES (?, '2024-01-02', 10, 1)",
+            (asset_id,),
+        )
+        insert = """
+            INSERT INTO features_daily (
+                asset_id, timeframe, date, segment_id, pipeline_version, score_version, data_mode,
+                window_hash, warmup_complete, features_json, computed_at
+            )
+            VALUES (?, ?, '2024-01-02', 0, 'features-v1', 'score-v1', ?, ?, 0, '{}', '2024-01-03T00:00:00+00:00')
+        """
+        connection.execute(insert, (asset_id, "D", "REAL", "a" * 64))
+        connection.execute(insert, (asset_id, "D", "DEMO", "a" * 64))
+        for values in (
+            (asset_id, "D", "REAL", "b" * 64),
+            (asset_id, "X", "REAL", "a" * 64),
+            (asset_id, "W", "MIXED", "a" * 64),
+            (asset_id, "W", "REAL", "short"),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(insert, values)
+
+        assert delete_asset(connection, asset_id, symbol="FS", purge=True) is True
+        assert connection.execute("SELECT COUNT(*) FROM features_daily").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
 def test_init_db_creates_traceable_fx_rates_and_lookup_index(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "fx.db"
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))

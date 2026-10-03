@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 6 — Feature store `features_daily` incrementale.**
+**SP1 Task 7 — Score unico in segnali e analisi tecnica.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-6` da `origin/investedge/sp1-task-5` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5.4–§5.6, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 6), registro SP1 qui sotto (note del Task 3 su `close_adj` in `features_json` e su `merge_asof`, note del Task 4 sulle colonne dei segmenti).
-- Il Task 6 registra nel registro SP1 lo SHA del Task 5.
+- Branch `investedge/sp1-task-7` da `origin/investedge/sp1-task-6` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §4.2–§4.3, §5.5–§5.6 e §6.1, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 7), registro SP1 qui sotto (nota del Task 3 sui nomi degli indicatori in `AnalysisPage`, note del Task 6 su `FeatureStore`).
+- Il Task 7 registra nel registro SP1 lo SHA del Task 6.
 
 ## Legenda
 
@@ -200,8 +200,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | `90b49ab` | 2026-10-03 | Claude |
 | 3 | Barre W/M e score v1 | FATTO | `b76fff5` | 2026-10-03 | Claude |
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | `86d6f73` | 2026-10-03 | Claude |
-| 5 | Backfill storico dei cambi BCE | FATTO | branch `investedge/sp1-task-5` | 2026-10-03 | Claude |
-| 6 | Feature store `features_daily` incrementale | NON INIZIATO | — | — | — |
+| 5 | Backfill storico dei cambi BCE | FATTO | `0bd6c0e` | 2026-10-03 | Claude |
+| 6 | Feature store `features_daily` incrementale | FATTO | branch `investedge/sp1-task-6` | 2026-10-03 | Claude |
 | 7 | Score unico in segnali e analisi tecnica | NON INIZIATO | — | — | — |
 | 8 | Job asincroni del laboratorio | NON INIZIATO | — | — | — |
 | 9 | Costi Trade Republic, strategie e simulatore | NON INIZIATO | — | — | — |
@@ -312,6 +312,32 @@ Evidenza Task 5 (2026-10-03, Claude):
 - ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito); la suite mostra 2 `StarletteDeprecationWarning` delle versioni installate, senza effetti sui test;
 - gate: `pytest tests\test_reference_providers.py tests\test_fx_service.py tests\test_lab_series.py -p no:cacheprovider` = 49 passati (i 5 nuovi anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 725 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 115 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
+Evidenza Task 6 (2026-10-03, Claude, nella stessa chat del Task 5 su richiesta dell'utente):
+
+- `features_daily` in `BASE_SCHEMA` (colonne, CHECK e vincolo univoco del piano, FK `ON DELETE CASCADE`) e `idx_features_daily_lookup` in `INDEX_SCHEMA`: migrazione additiva (la tabella nasce con `init_db` anche sui DB esistenti), nessuna tabella esistente toccata;
+- `backend/app/lab/feature_store.py`: `FeatureRefreshResult` e `FeatureStore` con `compute_rows` (puro), `refresh_asset`, `read_frame`, `signal_panel`, `latest_row`:
+  - righe D (barre fino ad `as_of`), W e M (`resample_bars(..., as_of)` per segmento), feature `features-v1` e score `score-v1` sul livello di rischio dell'asset; `features_json` con `close_adj` e le 34 feature (NaN → `null`, JSON senza NaN);
+  - `window_hash` come da piano: digest a 64 bit per barra sul `repr` dei float, somma modulo 2⁶⁴ con somme cumulative `uint64`, finestra `[max(inizio segmento, i − 251), i]`, versioni, timeframe, segmento, rischio, prima e ultima data, numero di barre;
+  - refresh: confronto degli hash con le righe salvate della stessa `pipeline_version`; ricalcolo delle sole righe nuove o cambiate su una slice che parte 251 barre prima della prima da ricalcolare; upsert sul vincolo univoco e cancellazione delle righe non più candidate in un savepoint (commit se la connessione non ha transazioni aperte, altrimenti dentro quella del chiamante); `None` se l'asset non esiste;
+  - `signal_panel`: nome del segnale in allowlist (score, sottopunteggi, feature) prima di qualsiasi SQL; D solo con la riga a quella data; W/M ultima riga con data ≤ data (`merge_asof`), solo se completa e dello stesso segmento della data;
+  - nessun import da `technical_analysis`, nessuna nuova dipendenza;
+- RED verificato: `ModuleNotFoundError: No module named 'backend.app.lab.feature_store'` e tabella assente nel test di schema;
+- test: gli 8 del piano con i nomi del piano, 2 aggiuntivi e il test di schema in `tests/test_database.py` (colonne, ordine dell'indice, vincolo univoco, CHECK, `ON DELETE CASCADE` da `delete_asset(..., purge=True)`); `test_incremental_equals_full_recompute` confronta anche `window_hash` e `features_json` come stringhe (valori identici bit a bit) dopo una revisione e la cancellazione dell'ultima barra; `compute_rows` coincide con le righe salvate (hash e score);
+- scelte interpretative:
+  - due barre W/M con la stessa `available_at` in segmenti diversi (split a metà settimana o mese) violerebbero il vincolo univoco: resta quella del segmento successivo (registro decisioni);
+  - `signal_panel` W/M: oltre a `warmup_complete`, la riga as-of deve avere lo stesso `segment_id` della riga D as-of della data (spec §6.2: nessun valore di un segmento precedente dopo un buco o uno split); una riga as-of incompleta dà NaN, senza ripiegare su righe complete più vecchie;
+  - le righe D si fermano ad `as_of` (giorno UTC di `now`), come le barre W/M;
+  - `latest_row` restituisce l'ultima riga D anche con warm-up incompleto (`warmup_complete` booleano) e le feature del JSON (`None` se mancanti), per il messaggio "storico insufficiente" del Task 7;
+  - `signal_panel` legge i valori dalle colonne REAL o dal JSON con il parser Python (stessi float di `read_frame`, nessun `json_extract` di SQLite);
+- deviazioni: 2 test oltre il piano (`test_split_mid_week_keeps_later_segment_and_panel_stops_at_boundary`, `test_rows_without_bars_are_deleted`); nel test settimanale `datetime.timedelta` al posto di `pd.Timedelta` (con le versioni installate `pd.Timedelta(days=...)` emette un `DeprecationWarning` di NumPy); nessun file fuori elenco;
+- prestazioni (scratch, DB temporaneo, 50 asset × 1500 barre, 93.453 righe): calcolo completo 26,2 s (obiettivo della spec ≤ 60 s); incrementale di una barra 0,26 s (≤ 5 s); refresh senza modifiche 3,5 s per 50 asset; `signal_panel` D 0,9 s e W 1,9 s su 1500 date; `read_frame` D 3,8 s per 62.451 righe (parsing JSON);
+- note per i task successivi:
+  - Task 7: `latest_row` contiene tutte le chiavi lette da `explain` (`close_adj` compreso); il refresh incrementale del solo asset rinfrescato è `refresh_asset(connection, asset_id, data_mode, now)`, utilizzabile anche dentro una transazione del chiamante (savepoint);
+  - Task 8, 10, 12 e 13: `read_frame` e `signal_panel` leggono solo la `pipeline_version` corrente; aggiornare gli asset dell'universo con `refresh_asset` prima di leggere;
+- minori aperti: `read_frame` analizza il JSON riga per riga (circa 60 µs per riga); un refresh senza modifiche ricalcola comunque gli hash (circa 70 ms per asset da 1500 barre); `features_daily` non entra nei conteggi di dipendenza della cancellazione protetta (deriva da `price_history`, che già la blocca);
+- ambiente: stesso `backend/.venv` del Task 5;
+- gate: `pytest tests\test_lab_feature_store.py tests\test_database.py tests\test_lab_features.py tests\test_lab_score.py tests\test_lab_series.py -p no:cacheprovider` = 67 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 736 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 93 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -358,6 +384,8 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-02 | SP1 Task 1 eseguito nella stessa chat del Task 0 (deroga alla regola "nuova chat per task") | utente |
 | 2026-10-02 | Guardia di rete dei test: ammesso solo il loopback, necessario all'event loop asyncio di `TestClient` su Windows | Claude, motivata nel Task 1 |
 | 2026-10-03 | Merge fast-forward su `main` dei task SP1 su richiesta esplicita dell'utente (`main` = `b76fff5`, Task 0–3, verificato nel Task 5) | utente |
+| 2026-10-03 | SP1 Task 6 eseguito nella stessa chat del Task 5 (deroga alla regola "nuova chat per task", solo per il Task 6) | utente |
+| 2026-10-03 | `features_daily`: con due barre W/M della stessa `available_at` in segmenti diversi (split a metà periodo) resta quella del segmento successivo; `signal_panel` W/M usa la riga as-of solo se è dello stesso segmento della data | Claude, motivata nel Task 6 |
 
 ## Note di ripresa
 

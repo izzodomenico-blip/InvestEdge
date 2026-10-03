@@ -790,6 +790,30 @@ CREATE TABLE IF NOT EXISTS ml_training_runs (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS features_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL,
+    timeframe TEXT NOT NULL CHECK(timeframe IN ('D', 'W', 'M')),
+    date TEXT NOT NULL,
+    segment_id INTEGER NOT NULL,
+    pipeline_version TEXT NOT NULL,
+    score_version TEXT NOT NULL,
+    data_mode TEXT NOT NULL CHECK(data_mode IN ('REAL', 'DEMO')),
+    window_hash TEXT NOT NULL CHECK(length(window_hash) = 64),
+    warmup_complete INTEGER NOT NULL CHECK(warmup_complete IN (0, 1)),
+    score REAL,
+    trend_score REAL,
+    momentum_score REAL,
+    volatility_score REAL,
+    volume_score REAL,
+    support_resistance_score REAL,
+    risk_penalty REAL,
+    features_json TEXT NOT NULL,
+    computed_at TEXT NOT NULL,
+    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+    UNIQUE(asset_id, timeframe, date, pipeline_version, data_mode)
+);
+
 """
 
 
@@ -1150,6 +1174,8 @@ CREATE INDEX IF NOT EXISTS idx_backtest_equity_backtest_date ON backtest_equity_
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_date ON backtest_trades(backtest_id, date);
 CREATE INDEX IF NOT EXISTS idx_backtest_positions_backtest ON backtest_positions(backtest_id);
 CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol ON ml_predictions(symbol, created_at);
+CREATE INDEX IF NOT EXISTS idx_features_daily_lookup
+ON features_daily(asset_id, data_mode, timeframe, pipeline_version, date);
 """
 
 

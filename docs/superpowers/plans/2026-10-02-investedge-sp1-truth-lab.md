@@ -667,7 +667,7 @@ class FeatureStore:
 
 `window_hash` di una riga: digest per barra `d = int.from_bytes(sha256(f"{date}|{open!r}|{high!r}|{low!r}|{close!r}|{adjusted_close!r}|{volume!r}").digest()[:8], "big")`; aggregato `(somma dei d nella finestra) mod 2**64` sulle barre del timeframe in `[max(inizio segmento, i - MAX_FEATURE_WINDOW + 1), i]`; `window_hash = sha256(f"{PIPELINE_VERSION}|{SCORE_VERSION}|{timeframe}|{segment_id}|{risk_level}|{prima_data}|{ultima_data}|{n}|{aggregato}").hexdigest()`. Somme cumulative: costo O(n). Refresh: calcola gli hash candidati, ricalcola le feature solo per le righe nuove o cambiate (slice del segmento da `prima riga da ricalcolare − MAX_FEATURE_WINDOW + 1`, valori identici grazie alla proprietà del Task 2), cancella le righe non più candidate, una transazione breve per asset. W/M con `resample_bars(..., as_of=now.date())` per segmento.
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_feature_store.py` (con `lab_connection` e helper):
+- [x] **Step 1: Test RED** in `tests/test_lab_feature_store.py` (con `lab_connection` e helper):
   - `test_refresh_inserts_d_w_m_rows_with_versions`;
   - `test_second_refresh_changes_nothing` (`unchanged` = totale, `inserted = updated = deleted = 0`);
   - `test_revised_bar_updates_only_rows_whose_window_contains_it`: si modifica il close di una barra a metà serie; le righe D aggiornate sono le 252 righe dalla barra rivista in avanti (meno se il segmento finisce prima), più le righe W/M la cui finestra contiene la barra; nessuna riga precedente cambia;
@@ -677,8 +677,8 @@ class FeatureStore:
   - `test_signal_panel_weekly_uses_last_closed_week` (il lunedì vede la riga della domenica precedente, il venerdì la settimana prima);
   - `test_read_frame_complete_only_filters_warmup`.
   In `tests/test_database.py`: tabella, vincolo univoco e `ON DELETE CASCADE` dalla cancellazione protetta dell'asset.
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** con `tests\test_lab_feature_store.py tests\test_database.py tests\test_lab_features.py tests\test_lab_score.py tests\test_lab_series.py` e Ruff.
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** con `tests\test_lab_feature_store.py tests\test_database.py tests\test_lab_features.py tests\test_lab_score.py tests\test_lab_series.py` e Ruff.
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: persist incremental features_daily store`
 
