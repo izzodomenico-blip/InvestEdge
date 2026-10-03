@@ -98,6 +98,12 @@ class Settings:
     lab_segment_max_gap_sessions: int = 5
     lab_split_tolerance: float = 0.03
     lab_jobs_executor: str = "thread"
+    lab_order_max_pending_sessions: int = 5
+    tr_commission_eur: float = 1.0
+    tr_cost_bps_equity: float = 10.0
+    tr_cost_bps_crypto: float = 50.0
+    backtest_fractional_shares: bool = False
+    backtest_min_trade_eur: float = 100.0
 
     @property
     def database_url(self) -> str:
@@ -234,6 +240,12 @@ class Settings:
             lab_segment_max_gap_sessions=int(os.getenv("LAB_SEGMENT_MAX_GAP_SESSIONS", "5")),
             lab_split_tolerance=float(os.getenv("LAB_SPLIT_TOLERANCE", "0.03")),
             lab_jobs_executor=os.getenv("LAB_JOBS_EXECUTOR", "thread").strip().lower() or "thread",
+            lab_order_max_pending_sessions=int(os.getenv("LAB_ORDER_MAX_PENDING_SESSIONS", "5")),
+            tr_commission_eur=float(os.getenv("TR_COMMISSION_EUR", "1.00")),
+            tr_cost_bps_equity=float(os.getenv("TR_COST_BPS_EQUITY", "10")),
+            tr_cost_bps_crypto=float(os.getenv("TR_COST_BPS_CRYPTO", "50")),
+            backtest_fractional_shares=os.getenv("BACKTEST_FRACTIONAL_SHARES", "false").lower() == "true",
+            backtest_min_trade_eur=float(os.getenv("BACKTEST_MIN_TRADE_EUR", "100")),
         )
 
 

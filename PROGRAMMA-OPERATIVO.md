@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 9 — Costi Trade Republic, strategie e simulatore.**
+**SP1 Task 10 — Backtest onesto in EUR come job, con registro dei tentativi.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-9` da `origin/investedge/sp1-task-8` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.2, §6.4 e §7, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 9), registro SP1 qui sotto (note dei Task 4 e 6 su serie, segmenti, `EurConverter` e `FeatureStore`).
-- Il Task 9 registra nel registro SP1 lo SHA del Task 8.
+- Branch `investedge/sp1-task-10` da `origin/investedge/sp1-task-9` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.1, §6.5–§6.6, §7 e §8.4, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 10), registro SP1 qui sotto (note del Task 9 su simulatore, costi, strategie e calendari misti; note dei Task 4, 6 e 8 su serie, `EurConverter`, `FeatureStore` e job).
+- Il Task 10 registra nel registro SP1 lo SHA del Task 9.
 
 ## Legenda
 
@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–7: `bcd7179` (2026-10-03) |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–8: `346596a` (2026-10-03) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -203,8 +203,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 5 | Backfill storico dei cambi BCE | FATTO | `0bd6c0e` | 2026-10-03 | Claude |
 | 6 | Feature store `features_daily` incrementale | FATTO | `96f7299` | 2026-10-03 | Claude |
 | 7 | Score unico in segnali e analisi tecnica | FATTO | `bcd7179` | 2026-10-03 | Claude |
-| 8 | Job asincroni del laboratorio | FATTO | branch `investedge/sp1-task-8` | 2026-10-03 | Claude |
-| 9 | Costi Trade Republic, strategie e simulatore | NON INIZIATO | — | — | — |
+| 8 | Job asincroni del laboratorio | FATTO | `346596a` | 2026-10-03 | Claude |
+| 9 | Costi Trade Republic, strategie e simulatore | FATTO | branch `investedge/sp1-task-9` | 2026-10-03 | Claude |
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | NON INIZIATO | — | — | — |
 | 11 | Statistiche, walk-forward vero e DSR | NON INIZIATO | — | — | — |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
@@ -399,6 +399,38 @@ Evidenza Task 8 (2026-10-03, Claude, nella stessa chat del Task 7 su richiesta d
 - ambiente: stesso `backend/.venv` del Task 7;
 - gate: `pytest tests\test_lab_jobs.py tests\test_lab_boundaries.py tests\test_config.py tests\test_database.py -p no:cacheprovider -W error::RuntimeWarning` = 63 passati, 2 xfail; suite completa `pytest -p no:cacheprovider` = 785 test, 783 passati, 2 xfail (strict, Task 7), 0 falliti, 0 errori (JUnit XML, 110 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
+Evidenza Task 9 (2026-10-03, Claude, sottoagente con contesto pulito avviato dalla chat dei Task 7–8 su richiesta dell'utente):
+
+- verifica Git iniziale: `origin/investedge/sp1-task-8` = `origin/main` = `346596a` (un commit sopra `origin/investedge/sp1-task-7` = `bcd7179`); il fast-forward di `main` a `346596a` del 2026-10-03 (Task 8, richiesta dell'utente) è registrato qui (quadro, registro decisioni, note di ripresa); base verificata con il protocollo del piano e lock `investedge/sp1-task-9` pubblicato subito;
+- `backend/app/lab/costs.py`: `CostProfile` (commissione per ordine eseguito, bps per lato equity e crypto, quote frazionarie, ordine minimo) con `from_settings`, `cost_rate` (crypto → bps crypto, ogni altra classe → bps equity) e `allows_fraction` (crypto sempre); valori non finiti o negativi rifiutati (`ValueError`); serializzabile con `dataclasses.asdict`;
+- `backend/app/lab/strategies.py`: `StrategyParams` (nome, frequenza, peso massimo in (0, 1] e N ≥ 1 validati), `rebalance_key` (giorno, settimana ISO, mese) e `target_weights` con la semantica del motore attuale: `SCORE_THRESHOLD` (posizioni con segnale ≤ sell a 0, integrazione fino al peso massimo con segnale ≥ buy, nessuna riduzione oltre il massimo), `TOP_N_SCORE` (primi N, a parità `asset_id` minore, peso `min(massimo, 1/selezionati)`, riduzione solo oltre il 5% sopra l'obiettivo, non selezionati a 0), `BUY_AND_HOLD` (solo al primo ribilanciamento); restituisce solo gli asset da modificare, `None` = nessun cambio;
+- `backend/app/lab/simulator.py`: `AssetMarket`, `SimulationConfig` (validata), `TradeRecord`, `SimulationResult`, `simulate` e `compute_metrics`: decisione alla chiusura, esecuzione all'apertura della barra successiva dello stesso listing (vendite prima degli acquisti, acquisti per segnale decrescente), `open × (1 ± costo)` più commissione, acquisto limitato dalla cassa al netto della commissione, quote intere salvo frazioni, stop e take profit sulla barra (`min(open, stop)`, `max(open, tp)`, lo stop prevale), `SEGMENT_EXIT` alla chiusura dell'ultima barra valida del segmento, ordini pendenti fino a `max_pending_sessions` sedute senza barra poi `PENDING_TIMEOUT`, `params_schedule` senza liquidazioni; valutazione al `close_eur`; metriche nelle unità del motore attuale (percentuali), Sharpe con tasso privo di rischio 0 × √252; nessun import da `technical_analysis`, nessuna nuova dipendenza, nessuna migrazione;
+- impostazioni `TR_COMMISSION_EUR` (1,00), `TR_COST_BPS_EQUITY` (10), `TR_COST_BPS_CRYPTO` (50), `BACKTEST_FRACTIONAL_SHARES` (false), `BACKTEST_MIN_TRADE_EUR` (100) e `LAB_ORDER_MAX_PENDING_SESSIONS` (5) in `config.py`, `.env.example` e `backend/.env.example`;
+- test: i 12 del piano in `tests/test_lab_simulator.py` con i nomi del piano (scenario calcolato a mano identico al piano) più 9 aggiuntivi (deviazioni);
+- RED verificato: `ModuleNotFoundError: No module named 'backend.app.lab.costs'`; un fallimento intermedio era del test (`test_no_fill_on_signal_bar` con calendario dei parametri dal 2024 su un calendario del 2018, nessuna decisione attiva), corretto nel test;
+- verifiche aggiuntive in scratch (non committate): 12 mutazioni temporanee del simulatore (fill alla chiusura, acquisti prima delle vendite, vendite assenti, stop valutato sulla chiusura, take profit che prevale, `SEGMENT_EXIT` assente, nessuna esclusione a fine segmento, minimo applicato alle uscite totali, timeout assente o anticipato di una seduta, quote non intere, commissione esclusa dal P&L), tutte rilevate dai test; file ripristinato e verificato per hash; prestazioni (50 asset × 1500 barre, segnali casuali): `simulate` 0,04–0,11 s per simulazione (`TOP_N_SCORE` giornaliero 0,11 s con 5.647 operazioni, `SCORE_THRESHOLD` settimanale 0,07 s, Buy & hold 0,04 s), cassa mai negativa, nessun `RuntimeWarning`;
+- review del diff: un Important corretto con TDD, emerso dallo smoke di prestazioni: gli acquisti non eseguibili per cassa esaurita risultavano `BELOW_MIN_TRADE` (3.152 annullamenti fuorvianti in 1500 sedute di `SCORE_THRESHOLD`), ora `INSUFFICIENT_CASH` quando la cassa è il vincolo (`test_buy_limited_by_cash_is_recorded_as_insufficient_cash`); un minore corretto con TDD: residuo di cassa negativo per arrotondamento dopo un acquisto frazionario (−9,1e-13 con 7.777,77 € e crypto a 30.000), ora `max(0, cassa)` dopo l'acquisto come nel motore attuale (`test_fractional_buy_never_leaves_negative_cash`); nessun Critical;
+- scelte interpretative:
+  - livelli di stop e take profit dal prezzo medio di esecuzione in EUR (costo per lato incluso, commissione esclusa), ricalcolati dopo ogni acquisto; valutati anche sulla barra d'ingresso (l'apertura precede massimo e minimo); i livelli sono in EUR, quindi anche un movimento del cambio può far scattare lo stop di un titolo in USD (TR quota in EUR: test a 3 asset);
+  - ordine minimo sugli acquisti (alla creazione sull'importo; all'esecuzione sul controvalore effettivo, ridotto da cassa o quote intere: annullato e registrato con `INSUFFICIENT_CASH` se la cassa era il vincolo, altrimenti `BELOW_MIN_TRADE`) e sulle riduzioni parziali; le uscite totali (segnale a peso 0, stop, take profit, `SEGMENT_EXIT`) non sono mai bloccate, per non lasciare posizioni invendibili;
+  - commissione in aggiunta all'importo deciso (quantità crypto `5000 / (20000 × 1,005)` del piano); costo di carico e P&L netti delle commissioni d'acquisto e di vendita (scenario del piano);
+  - un asset all'ultima barra valida del segmento non è negoziabile nella decisione della stessa chiusura (dopo `SEGMENT_EXIT` l'ordine si eseguirebbe nel segmento successivo, non confrontabile): stessa informazione di segmento che la spec impone per l'uscita;
+  - decisione alla prima data di un nuovo periodo di ribilanciamento con almeno un asset negoziabile (barra valida, non a fine segmento); `first_rebalance` = prima decisione della simulazione; Buy & hold ignora il valore del segnale (come il motore attuale) e pesa `min(massimo, 1/asset negoziabili)`;
+  - asset negoziabile con segnale NaN: posizione invariata per `SCORE_THRESHOLD`, venduta da `TOP_N_SCORE` se posseduta (il motore attuale vende le posizioni fuori selezione che hanno un prezzo);
+  - barra con un prezzo EUR mancante, non finito o non positivo trattata come assente (nessuna esecuzione, nessuno stop, valutazione all'ultimo close, seduta senza barra per gli ordini pendenti);
+  - motivi: `SIGNAL` apre o chiude una posizione, `REBALANCE` la ridimensiona; `gross_eur` = quantità × prezzo di esecuzione (costo per lato incluso), `net_eur` = movimento di cassa;
+  - curva: `drawdown` in percento (≤ 0) dal massimo, capitale iniziale compreso, come `drawdown_percent`; turnover = valore scambiato (acquisti + vendite) / valore medio del portafoglio; esposizione = media di investito/valore; metriche nelle unità di `BacktestSummaryOut` (rendimento, CAGR, drawdown e win rate in percento, profit factor 999 senza perdite come oggi);
+  - ordini ancora pendenti a fine calendario né eseguiti né registrati; chiave settimanale `AAAA-Www` (serve solo a riconoscere il cambio di periodo);
+- deviazioni: 9 test oltre i 12 del piano (`test_hand_scenario_accounting_turnover_and_exposure`, `test_full_exit_is_allowed_below_min_trade`, `test_buy_below_min_trade_at_open_is_cancelled_and_recorded`, `test_buy_limited_by_cash_is_recorded_as_insufficient_cash`, `test_fractional_buy_never_leaves_negative_cash`, `test_sells_execute_before_buys_at_the_same_open`, `test_three_asset_scenario_converts_usd_and_stops_on_eur_gap` per la spec §14: USD convertito con `EurConverter`, EUR, crypto, quote intere e stop su gap del cambio, con le imposte che restano al Task 10 in `_net_analysis`; `test_rebalance_key_by_frequency`, `test_cost_profile_from_settings_and_rates`); le impostazioni sono verificate in `tests/test_lab_simulator.py` (`tests/test_config.py` eseguito come regressione, non modificato); nessun file fuori elenco;
+- note per i task successivi:
+  - Task 10: `AssetMarket.bars` con indice = data e colonne `open_eur`, `high_eur`, `low_eur`, `close_eur`, `segment_id` (da `EurConverter.convert_bars` sui segmenti di `load_series`); `signals` = `FeatureStore.signal_panel` (indice data, colonne `asset_id`, NaN senza riga completa); `max_pending_sessions` = `settings.lab_order_max_pending_sessions`; profilo = `CostProfile.from_settings()` con gli override del run (`dataclasses.replace`), salvato con `dataclasses.asdict`; `TradeRecord` → `backtest_trades` (`fees` = commissione, nuove colonne `commission`/`spread_cost`); `compute_metrics` è già nelle unità di `BacktestSummaryOut`; imposte e bollo restano a `_net_analysis` (in EUR); `cancelled_orders` negli avvisi del run, meglio come conteggi per motivo (con cassa esaurita sono centinaia); date in stringa `AAAA-MM-GG` per calendario, barre e segnali (un `DatetimeIndex` darebbe solo NaN);
+  - Task 10–11, calendari misti: una decisione valuta solo i listing con barra a quella data (spec §7.1), quindi un ribilanciamento mensile che cade di sabato considera solo le crypto e Buy & hold acquista solo gli asset con barra alla prima decisione; il simulatore non lo corregge, da considerare nel calendario dell'universo;
+  - Task 11: `simulate` accetta già un `params_schedule` con più voci (decisione al cambio di periodo con i parametri attivi, nessuna liquidazione); `daily_returns` copre ogni data del calendario (zero nei giorni senza movimenti);
+  - Task 14: motivi `SIGNAL`, `REBALANCE`, `STOP_LOSS`, `TAKE_PROFIT`, `SEGMENT_EXIT` e annullamenti `PENDING_TIMEOUT`, `INSUFFICIENT_CASH`, `BELOW_MIN_TRADE` da mostrare;
+- minori aperti: il simulatore non valida l'ordinamento delle barre né la presenza di `segment_id` (precondizione del chiamante, come le unità precedenti); la vendita di una posizione con controvalore inferiore alla commissione riduce la cassa;
+- ambiente: stesso `backend/.venv` del worktree (Python 3.14.7), nessuna reinstallazione; la suite mostra 2 `StarletteDeprecationWarning` delle versioni installate, senza effetti sui test;
+- gate: `pytest tests\test_lab_simulator.py tests\test_config.py tests\test_lab_boundaries.py tests\test_lab_series.py -p no:cacheprovider -W error::RuntimeWarning` = 53 passati, 2 xfail (21 di `test_lab_simulator.py`); suite completa `pytest -p no:cacheprovider` = 809 test, 807 passati, 2 xfail (strict, Task 7), 0 falliti, 0 errori (JUnit XML, 191 s; +24 rispetto al Task 8: 21 test nuovi e 3 parametri del test di confine per i nuovi file del pacchetto `lab`); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; scansione dei segreti sulle righe aggiunte: 0 valori, solo falsi positivi su nomi di test lunghi; review del diff: nessun rilievo Critical o Important aperto.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -452,10 +484,13 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-03 | Adeguamento di `AnalysisPage` ai nomi `features-v1` e al 409 `INSUFFICIENT_REAL_HISTORY` rinviato al Task 15 | utente |
 | 2026-10-03 | Merge fast-forward su `main` del Task 7 su richiesta esplicita dell'utente (`main` = `bcd7179`) | utente |
 | 2026-10-03 | SP1 Task 8 eseguito nella stessa chat del Task 7 (deroga alla regola "nuova chat per task", solo per il Task 8) | utente |
+| 2026-10-03 | Merge fast-forward su `main` del Task 8 su richiesta esplicita dell'utente (`main` = `346596a`) | utente |
+| 2026-10-03 | SP1 Task 9 eseguito da un sottoagente con contesto pulito avviato dalla chat dei Task 7–8, su richiesta dell'utente | utente |
+| 2026-10-03 | Simulatore: livelli di stop e take profit dal prezzo medio di esecuzione in EUR; uscite totali mai bloccate dall'ordine minimo; asset all'ultima barra valida del segmento esclusi dalla decisione della stessa chiusura; decisione alla prima data del periodo con un asset negoziabile | Claude, motivata nel Task 9 |
 
 ## Note di ripresa
 
-- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6) e a `bcd7179` (Task 7). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
+- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7) e a `346596a` (Task 8). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.

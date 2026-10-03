@@ -872,7 +872,7 @@ def compute_metrics(result: SimulationResult, initial_cash_eur: float) -> dict[s
 
 Semantica (spec §7): giorno *d* per asset con barra: (1) apertura: ordini pendenti eseguiti a `open_eur × (1 ± costo)`; vendite prima degli acquisti; quantità intera per azioni/ETF salvo `fractional_shares`; acquisto limitato dalla cassa (commissione inclusa); ordine sotto `min_trade_eur` non creato; (2) stop/tp con i livelli dal prezzo di esecuzione: `low ≤ stop` → `min(open, stop)`, `high ≥ tp` → `max(open, tp)`, entrambi → stop, sempre con costo per lato e commissione; (3) chiusura: se la barra successiva dell'asset ha `segment_id` diverso, vendita `SEGMENT_EXIT` al `close_eur × (1 − costo)`; valutazione; decisione quando cambia `rebalance_key` del calendario: `target_weights` sugli asset con barra a *d* e segnale non NaN, importi = peso × valore del portafoglio alla chiusura di *d*. Ordine non eseguibile entro `max_pending_sessions` barre → annullato e registrato. Le strategie riproducono la semantica attuale (`SCORE_THRESHOLD`: vende con segnale ≤ sell, compra/integra con segnale ≥ buy fino al peso massimo; `TOP_N_SCORE`: primi N, gli altri venduti, peso `min(max, 1/N)`; `BUY_AND_HOLD`: solo al primo ribilanciamento).
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_simulator.py`. Scenario calcolato a mano (azione A, EUR, calendario 2024-01-01…2024-01-05, segnale 80 ogni giorno, `SCORE_THRESHOLD` buy 70 sell 40 peso massimo 0,5 ribilanciamento `WEEKLY`, stop 8%, capitale 10.000 €, commissione 1 €, 10 bps, quote intere, ordine minimo 100 €):
+- [x] **Step 1: Test RED** in `tests/test_lab_simulator.py`. Scenario calcolato a mano (azione A, EUR, calendario 2024-01-01…2024-01-05, segnale 80 ogni giorno, `SCORE_THRESHOLD` buy 70 sell 40 peso massimo 0,5 ribilanciamento `WEEKLY`, stop 8%, capitale 10.000 €, commissione 1 €, 10 bps, quote intere, ordine minimo 100 €):
 
 | Data | open | high | low | close |
 |---|---|---|---|---|
@@ -902,8 +902,8 @@ def test_hand_computed_scenario() -> None:
 ```
 
   Altri test: `test_no_fill_on_signal_bar` (nessun trade con data uguale alla prima decisione); `test_gap_down_stop_fills_at_open` (open 92 < stop → prezzo `92 × 0,999`); `test_take_profit_fills_at_level`; `test_stop_wins_when_both_levels_hit`; `test_crypto_quantity_is_fractional` (open 20.000, importo 5.000 → quantità `5000 / (20000 × 1.005)`); `test_order_below_min_trade_is_not_created`; `test_missing_next_bar_keeps_order_pending_then_cancels` (6 sedute senza barra → annullato e registrato); `test_segment_exit_sells_at_last_close_of_segment`; `test_top_n_and_buy_and_hold_follow_legacy_semantics`; `test_params_schedule_switches_without_liquidation` (posizione mantenuta al cambio di parametri); `test_metrics_known_values` (sharpe e drawdown su una curva costruita).
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_simulator.py`, `tests\test_config.py`, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_simulator.py`, `tests\test_config.py`, Ruff).
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: add next-open simulator with Trade Republic costs`
 
