@@ -123,6 +123,33 @@ class EcbFxProvider:
             return EcbFetchResult("NOT_MODIFIED", None)
         return EcbFetchResult("UPDATED", self._quote_from_csv(currency, response.payload, now))
 
+    def fetch_history(
+        self,
+        connection: sqlite3.Connection,
+        from_currency: str,
+        start: date,
+        end: date,
+        now: datetime,
+    ) -> list[FXQuote]:
+        """Storico giornaliero `currency -> EUR` da `start` a `end` in una sola chiamata, ordinato per data."""
+        currency = normalize_ecb_currency(from_currency)
+        if start > end:
+            raise ValueError("La data di inizio dello storico BCE non puo' essere successiva alla data di fine.")
+        try:
+            response = self._request(
+                connection,
+                base_url=ECB_DATA_API_BASE_URL,
+                path=f"/service/data/EXR/D.{currency}.EUR.SP00.A",
+                params={"format": "csvdata", "startPeriod": start.isoformat(), "endPeriod": end.isoformat()},
+                headers={},
+                cache_scope=f"fx-history:{currency}:{start.isoformat()}:{end.isoformat()}",
+                decoder="csv",
+                now=now,
+            )
+        except _NotModified:
+            raise ProviderError("ecb:FX:NOT_MODIFIED_WITHOUT_BASELINE") from None
+        return self._quotes_from_history_csv(currency, response.payload, now)
+
     def fetch_reference_rates(self, connection: sqlite3.Connection, now: datetime) -> list[FXQuote]:
         try:
             response = self._request(
@@ -188,25 +215,38 @@ class EcbFxProvider:
             raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
         observations: list[tuple[str, str]] = []
         for row in payload:
-            if not isinstance(row, Mapping):
-                raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
-            if (
-                str(row.get("FREQ") or "").strip() != "D"
-                or str(row.get("CURRENCY") or "").strip().upper() != currency
-                or str(row.get("CURRENCY_DENOM") or "").strip().upper() != "EUR"
-            ):
+            observation = _series_observation(row, currency)
+            if observation is None:
                 continue
-            try:
-                observed = date.fromisoformat(str(row.get("TIME_PERIOD") or "").strip())
-            except ValueError:
-                raise ProviderError("ecb:FX:MALFORMED_PAYLOAD") from None
+            observed, raw_value = observation
             _reject_future(observed, now)
-            observations.append((observed.isoformat(), str(row.get("OBS_VALUE") or "").strip()))
+            observations.append((observed.isoformat(), raw_value))
         if not observations:
             raise ProviderError("ecb:FX:PROVIDER_NO_DATA")
         observed_at, raw_value = max(observations)
         ecb_rate = _parse_rate(raw_value)
         return FXQuote(currency, "EUR", 1.0 / ecb_rate, observed_at, "ecb", "reference")
+
+    @staticmethod
+    def _quotes_from_history_csv(currency: str, payload: object, now: datetime) -> list[FXQuote]:
+        """Righe future e giorni senza valore scartati uno per uno; un valore non valido rifiuta tutto."""
+        if not isinstance(payload, list):
+            raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
+        quotes: list[FXQuote] = []
+        for row in payload:
+            observation = _series_observation(row, currency)
+            if observation is None:
+                continue
+            observed, raw_value = observation
+            try:
+                _reject_future(observed, now)
+                ecb_rate = _parse_rate(raw_value)
+            except ProviderError as exc:
+                if str(exc) in {"ecb:FX:FUTURE_TIMESTAMP", "ecb:FX:MISSING_VALUE"}:
+                    continue
+                raise
+            quotes.append(FXQuote(currency, "EUR", 1.0 / ecb_rate, observed.isoformat(), "ecb", "reference"))
+        return sorted(quotes, key=lambda quote: quote.observed_at)
 
     @staticmethod
     def _quotes_from_daily_xml(payload: bytes, now: datetime) -> list[FXQuote]:
@@ -246,6 +286,23 @@ class EcbFxProvider:
 
 class _NotModified(Exception):
     pass
+
+
+def _series_observation(row: object, currency: str) -> tuple[date, str] | None:
+    """(TIME_PERIOD, OBS_VALUE grezzo) di una riga della serie EXR D.<VAL>.EUR; None per le altre serie."""
+    if not isinstance(row, Mapping):
+        raise ProviderError("ecb:FX:MALFORMED_PAYLOAD")
+    if (
+        str(row.get("FREQ") or "").strip() != "D"
+        or str(row.get("CURRENCY") or "").strip().upper() != currency
+        or str(row.get("CURRENCY_DENOM") or "").strip().upper() != "EUR"
+    ):
+        return None
+    try:
+        observed = date.fromisoformat(str(row.get("TIME_PERIOD") or "").strip())
+    except ValueError:
+        raise ProviderError("ecb:FX:MALFORMED_PAYLOAD") from None
+    return observed, str(row.get("OBS_VALUE") or "").strip()
 
 
 def _reject_future(observed: date, now: datetime) -> None:

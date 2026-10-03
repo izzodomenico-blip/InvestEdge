@@ -34,6 +34,15 @@ class FXQuote:
     quality: str
 
 
+@dataclass(frozen=True)
+class FxBackfillResult:
+    currency: str
+    inserted: int
+    existing: int
+    first_observed_at: str | None
+    last_observed_at: str | None
+
+
 class FXService:
     def __init__(self, ecb_provider: EcbFxProvider | None = None) -> None:
         self._ecb_provider = ecb_provider
@@ -132,6 +141,30 @@ class FXService:
             rows_written=rows_written,
             observed_at=_datetime_or_none(result.quote.observed_at),
             ingested_at=moment,
+        )
+
+    def backfill_history(
+        self,
+        connection: sqlite3.Connection,
+        currency: str,
+        start: date,
+        now: datetime | None = None,
+    ) -> FxBackfillResult:
+        """Storico BCE `currency -> EUR` da `start` a oggi (UTC): inserisce solo le osservazioni mancanti."""
+        from backend.app.data_providers.ecb import normalize_ecb_currency
+
+        code = normalize_ecb_currency(currency)
+        moment = (now or datetime.now(UTC)).astimezone(UTC)
+        quotes = self._ecb(connection).fetch_history(connection, code, start, moment.date(), moment)
+        # Stessa direzione e qualita di refresh_currency; le righe esistenti non vengono toccate.
+        inserted = self._persist_quotes(connection, quotes, moment, replace_existing=False)
+        observed = [quote.observed_at for quote in quotes]
+        return FxBackfillResult(
+            currency=code,
+            inserted=inserted,
+            existing=len(quotes) - inserted,
+            first_observed_at=min(observed, default=None),
+            last_observed_at=max(observed, default=None),
         )
 
     def refresh_ecb(

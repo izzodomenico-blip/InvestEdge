@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -252,6 +252,67 @@ def test_ecb_quote_older_than_max_age_is_reported_stale() -> None:
     assert fresh.refresh_currency(fresh_connection, "USD", now=now).status == "UPDATED"
     assert old.get_rate(old_connection, "USD").quality == "stale"
     assert fresh.get_rate(fresh_connection, "USD").quality == "reference"
+
+
+HISTORY_NOW = datetime(2024, 1, 16, 12, 0, tzinfo=UTC)
+
+
+def test_ecb_fetch_history_requests_period_once_and_drops_future_rows() -> None:
+    connection = _connection()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _csv_response((FIXTURE_DIR / "ecb_exr_usd_eur_history.csv").read_bytes())
+
+    quotes = _ecb_provider(handler, now=HISTORY_NOW).fetch_history(
+        connection, " usd ", date(2024, 1, 1), date(2024, 1, 16), HISTORY_NOW
+    )
+
+    assert len(requests) == 1
+    assert requests[0].url.host == "data-api.ecb.europa.eu"
+    assert requests[0].url.path == "/service/data/EXR/D.USD.EUR.SP00.A"
+    assert dict(requests[0].url.params) == {
+        "format": "csvdata",
+        "startPeriod": "2024-01-01",
+        "endPeriod": "2024-01-16",
+    }
+    assert "lastNObservations" not in requests[0].url.params
+    usage = connection.execute(
+        "SELECT window_kind, used_count FROM provider_usage_windows WHERE provider = 'ecb' ORDER BY window_kind"
+    ).fetchall()
+    assert [tuple(row) for row in usage] == [("DAY", 1), ("MINUTE", 1), ("MONTH", 1)]
+    log = connection.execute("SELECT provider, outcome FROM provider_request_log").fetchall()
+    assert [tuple(row) for row in log] == [("ecb", "SUCCEEDED")]
+    assert len(quotes) == 10
+    assert [quote.observed_at for quote in quotes] == [
+        "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08",
+        "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-15",
+    ]
+    assert {(quote.from_currency, quote.to_currency, quote.provider, quote.quality) for quote in quotes} == {
+        ("USD", "EUR", "ecb", "reference")
+    }
+    assert quotes[0].rate == pytest.approx(1 / 1.1)
+    assert quotes[-1].rate == pytest.approx(1 / 1.109)
+
+
+def test_ecb_fetch_history_skips_missing_values_without_dropping_valid_days() -> None:
+    connection = _connection()
+    body = (
+        b"KEY,FREQ,CURRENCY,CURRENCY_DENOM,EXR_TYPE,EXR_SUFFIX,TIME_PERIOD,OBS_VALUE\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2024-01-02,1.1000\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2024-01-03,NaN\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2024-01-04,\n"
+        b"EXR.D.USD.EUR.SP00.A,D,USD,EUR,SP00,A,2024-01-05,1.1030\n"
+    )
+    provider = _ecb_provider(lambda _request: _csv_response(body), now=HISTORY_NOW)
+
+    quotes = provider.fetch_history(connection, "USD", date(2024, 1, 1), date(2024, 1, 16), HISTORY_NOW)
+
+    assert [quote.observed_at for quote in quotes] == ["2024-01-02", "2024-01-05"]
+    with pytest.raises(ValueError, match="data"):
+        provider.fetch_history(connection, "USD", date(2024, 1, 17), date(2024, 1, 16), HISTORY_NOW)
+    assert connection.execute("SELECT COUNT(*) FROM provider_request_log").fetchone()[0] == 1
 
 
 def test_registry_exposes_governed_ecb_adapter_with_canonical_code() -> None:

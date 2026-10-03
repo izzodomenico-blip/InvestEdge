@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 5 — Backfill storico dei cambi BCE.**
+**SP1 Task 6 — Feature store `features_daily` incrementale.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-5` da `origin/investedge/sp1-task-4` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.4, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 5), registro SP1 qui sotto (note del Task 4 su `EurConverter`).
-- Il Task 5 registra nel registro SP1 lo SHA del Task 4.
+- Branch `investedge/sp1-task-6` da `origin/investedge/sp1-task-5` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5.4–§5.6, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 6), registro SP1 qui sotto (note del Task 3 su `close_adj` in `features_json` e su `merge_asof`, note del Task 4 sulle colonne dei segmenti).
+- Il Task 6 registra nel registro SP1 lo SHA del Task 5.
 
 ## Legenda
 
@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | solo spec e piano: `53fe614` (2026-10-02) |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–3: `b76fff5` (2026-10-03) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -199,8 +199,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 1 | Fixture seed condivisa e guardia di rete globale | FATTO | `a115dab` | 2026-10-02 | Claude |
 | 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | `90b49ab` | 2026-10-03 | Claude |
 | 3 | Barre W/M e score v1 | FATTO | `b76fff5` | 2026-10-03 | Claude |
-| 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | branch `investedge/sp1-task-4` | 2026-10-03 | Claude |
-| 5 | Backfill storico dei cambi BCE | NON INIZIATO | — | — | — |
+| 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | `86d6f73` | 2026-10-03 | Claude |
+| 5 | Backfill storico dei cambi BCE | FATTO | branch `investedge/sp1-task-5` | 2026-10-03 | Claude |
 | 6 | Feature store `features_daily` incrementale | NON INIZIATO | — | — | — |
 | 7 | Score unico in segnali e analisi tecnica | NON INIZIATO | — | — | — |
 | 8 | Job asincroni del laboratorio | NON INIZIATO | — | — | — |
@@ -287,6 +287,31 @@ Evidenza Task 4 (2026-10-03, Claude):
 - ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito); la suite mostra 2 `StarletteDeprecationWarning` delle versioni installate, senza effetti sui test;
 - gate: `pytest tests\test_lab_series.py tests\test_config.py tests\test_fx_service.py -p no:cacheprovider` = 27 passati (10 di `test_lab_series.py`, anche con `-W error::RuntimeWarning`); `pytest tests\test_lab_features.py tests\test_lab_score.py -p no:cacheprovider` = 19 passati; suite completa `pytest -p no:cacheprovider` = 720 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 139 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
+Evidenza Task 5 (2026-10-03, Claude):
+
+- `EcbFxProvider.fetch_history(connection, from_currency, start, end, now)`: una sola GET `EXR/D.<VAL>.EUR.SP00.A` con `format=csvdata`, `startPeriod`, `endPeriod` (nessun `lastNObservations` né `If-Modified-Since`), stesso trasporto governato e bucket `ecb` (1 unità per chiamata, cache `fx-history:<VAL>:<start>:<end>` con il TTL BCE esistente); quote `X → EUR` reciproche, `reference`, ordinate per data; `start > end` rifiutato con `ValueError` prima del trasporto; filtro della serie e parsing della data estratti in `_series_observation`, condiviso con `fetch_rate` (comportamento invariato);
+- `FxBackfillResult` (dataclass del servizio) e `FXService.backfill_history(connection, currency, start, now=None)`: intervallo da `start` al giorno UTC di `now`; inserimento idempotente con `_persist_quotes(..., replace_existing=False)` (validazione preventiva, savepoint, righe esistenti mai modificate); `existing` = quote già presenti sul vincolo univoco; prima e ultima osservazione ricevute;
+- `backend/scripts/backfill_fx_history.py`: `--currency` (ripetibile, allowlist BCE, deduplicata), `--start`, `--apply`; anteprima di default senza chiamate né apertura del DB; con `--apply` una chiamata per valuta ed esito per valuta, `ProviderError` sanitizzato → exit 1; exit 2 con `ENABLE_REAL_DATA` falso, `--start` futura o argomenti non validi;
+- fixture `tests/fixtures/market_data/ecb_exr_usd_eur_history.csv`: header di `ecb_exr_usd_eur.csv`, 10 righe sintetiche (2024-01-02…2024-01-15, valori 1,1000…1,1090) più la riga 2099-01-01;
+- test del piano, con `now` esplicito 2024-01-16T12:00Z (mai la data reale): `test_ecb_fetch_history_requests_period_once_and_drops_future_rows` (richiesta del `MockTransport`, 1 unità in ogni finestra del budget `ecb`, riga futura scartata, 10 quote `reference`); `test_backfill_history_is_idempotent_and_feeds_the_eur_converter` (10 inserite; rerun 0 inserite e 10 `existing` dalla cache, una sola chiamata; `EurConverter` creato dopo il backfill = riga diretta del 2024-01-10); `test_backfill_script_refuses_without_real_data_before_any_call` (exit 2 con e senza `--apply`, nessuna riga in `provider_request_log`, guardia di rete attiva);
+- RED verificato: `AttributeError` per `fetch_history`/`backfill_history` assenti, `ImportError` per lo script assente;
+- scelte interpretative:
+  - `FUTURE_TIMESTAMP` scarta la sola riga; anche un giorno senza valore (`MISSING_VALUE`: vuoto, `NaN`, `NA`, `.`) viene scartato senza bloccare le altre righe (nessun cambio inventato: quella data usa l'ultima osservazione entro `ECB_FX_MAX_AGE_DAYS`); un valore non valido (`INVALID_RATE`, `MALFORMED_PAYLOAD`) rifiuta l'intera risposta senza scritture;
+  - "ON CONFLICT DO NOTHING" realizzato con l'`INSERT OR IGNORE` esistente di `_persist_quotes`: equivalente sul vincolo univoco `(from_currency, to_currency, observed_at, provider)` perché ogni quota è validata prima della scrittura;
+  - lo script con `ENABLE_REAL_DATA` falso rifiuta anche l'anteprima (exit 2 prima di ogni altra verifica, come il 409 della route); intervallo fino al giorno UTC corrente, nessuna opzione `--end`;
+  - risposta CSV senza righe valide → `inserted = existing = 0` e date `None`, nessun errore; un 304 (inatteso senza `If-Modified-Since`) → `ecb:FX:NOT_MODIFIED_WITHOUT_BASELINE`, come `fetch_reference_rates`;
+- deviazioni: 2 test oltre il piano (`test_ecb_fetch_history_skips_missing_values_without_dropping_valid_days`, con `start > end` senza chiamate; `test_backfill_script_previews_without_calls_and_applies_on_request`: anteprima senza chiamate, `--start` futura → exit 2, `--apply` → 10 righe); `main()` dello script accetta `service` e `now` iniettabili per i test; il test di `backfill_history` verifica anche `start` futura → `ValueError` senza chiamate; prima nota di ripresa aggiornata allo stato reale di `main`; nessun file fuori elenco;
+- smoke CLI (DB temporaneo, nessun `--apply`, nessuna rete): `ENABLE_REAL_DATA=false` → exit 2; anteprima con `--currency usd --currency GBP --currency USD` → "valute USD, GBP", exit 0, DB non creato; `--currency XYZ` → exit 2;
+- note per i task successivi:
+  - Task 8 (job `FX_BACKFILL`, `POST /data/fx/backfill`): riusare `FXService.backfill_history`, con il controllo di `ENABLE_REAL_DATA` (409 `REAL_DATA_DISABLED`) prima di ogni chiamata; il budget richiede una connessione senza transazione aperta, come `refresh_currency`;
+  - `EurConverter` va creato dopo il backfill (legge i cambi una volta per istanza);
+- minori aperti:
+  - il limite di risposta BCE di 1 MiB (byte decompressi, condiviso con `fetch_rate`) vale anche per lo storico: con circa 150 byte per riga `csvdata` (stima, non verificabile senza chiamate live) uno storico oltre circa 20 anni, per esempio dal 1999, potrebbe superarlo e fallire fail-closed con `ecb:FX:RESPONSE_TOO_LARGE`, senza scritture; l'esempio del piano (dal 2015) resta sotto;
+  - la risposta storica resta nella cache del trasporto per il TTL BCE (6 h);
+  - `lab_connection` (`init_db`) lascia una connessione SQLite non chiusa (`ResourceWarning`, minore preesistente del Task 1);
+- ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito); la suite mostra 2 `StarletteDeprecationWarning` delle versioni installate, senza effetti sui test;
+- gate: `pytest tests\test_reference_providers.py tests\test_fx_service.py tests\test_lab_series.py -p no:cacheprovider` = 49 passati (i 5 nuovi anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 725 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 115 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -332,10 +357,11 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-02 | Piano SP1 approvato; merge fast-forward su `main` di spec e piano (Task 0) | utente |
 | 2026-10-02 | SP1 Task 1 eseguito nella stessa chat del Task 0 (deroga alla regola "nuova chat per task") | utente |
 | 2026-10-02 | Guardia di rete dei test: ammesso solo il loopback, necessario all'event loop asyncio di `TestClient` su Windows | Claude, motivata nel Task 1 |
+| 2026-10-03 | Merge fast-forward su `main` dei task SP1 su richiesta esplicita dell'utente (`main` = `b76fff5`, Task 0–3, verificato nel Task 5) | utente |
 
 ## Note di ripresa
 
-- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02). I task SP1 partono dal branch remoto del task precedente, non da `main`; il codice SP1 entra in `main` al gate finale, previa conferma dell'utente.
+- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.

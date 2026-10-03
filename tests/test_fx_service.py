@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
 
 from backend.app.config import Settings, get_settings
 from backend.app.data_providers.base import ProviderError
+from backend.app.data_providers.ecb import ECB_ALLOWED_HOSTS, EcbFxProvider
+from backend.app.data_providers.transport import SafeProviderTransport
 from backend.app.database import SCHEMA
+from backend.app.lab.series import EurConverter
 from backend.app.services.fx_service import ECB_DAILY_URL, FXRateUnavailable, FXService
 from backend.scripts.seed_database import _seed_fx_rates
+
+HISTORY_CSV = Path(__file__).parent / "fixtures" / "market_data" / "ecb_exr_usd_eur_history.csv"
+HISTORY_NOW = datetime(2024, 1, 16, 12, 0, tzinfo=UTC)
 
 ECB_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <gesmes:Envelope
@@ -245,3 +252,119 @@ def test_seed_inserts_only_a_deterministic_usd_eur_quote(connection) -> None:
     assert row[:3] == ("USD", "EUR", 0.92)
     assert row[3] in {before_seed, after_seed}
     assert row[4:] == ("seed", "seed")
+
+
+def _history_provider(handler) -> EcbFxProvider:  # noqa: ANN001
+    transport = SafeProviderTransport(
+        allowed_hosts=ECB_ALLOWED_HOSTS,
+        settings=get_settings(),
+        clock=lambda: HISTORY_NOW,
+    ).with_client(httpx.Client(transport=httpx.MockTransport(handler)))
+    return EcbFxProvider(transport, sleeper=lambda _delay: None)
+
+
+def _history_response(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        stream=httpx.ByteStream(HISTORY_CSV.read_bytes()),
+        headers={"content-type": "text/csv"},
+    )
+
+
+def test_backfill_history_is_idempotent_and_feeds_the_eur_converter(connection) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _history_response(request)
+
+    service = FXService(ecb_provider=_history_provider(handler))
+    first = service.backfill_history(connection, "usd", date(2024, 1, 1), now=HISTORY_NOW)
+    second = service.backfill_history(connection, "USD", date(2024, 1, 1), now=HISTORY_NOW)
+
+    summary = ("currency", "inserted", "existing", "first_observed_at", "last_observed_at")
+    assert tuple(getattr(first, name) for name in summary) == ("USD", 10, 0, "2024-01-02", "2024-01-15")
+    assert tuple(getattr(second, name) for name in summary) == ("USD", 0, 10, "2024-01-02", "2024-01-15")
+    assert calls == 1
+    rows = connection.execute(
+        """
+        SELECT from_currency, to_currency, observed_at, provider, quality, ingested_at
+        FROM fx_rates ORDER BY observed_at
+        """
+    ).fetchall()
+    assert len(rows) == 10
+    assert {tuple(row[:2]) + tuple(row[3:]) for row in rows} == {
+        ("USD", "EUR", "ecb", "reference", "2024-01-16T12:00:00+00:00")
+    }
+    assert "2099-01-01" not in {row["observed_at"] for row in rows}
+    direct = connection.execute(
+        "SELECT rate FROM fx_rates WHERE from_currency = 'USD' AND to_currency = 'EUR' AND observed_at = '2024-01-10'"
+    ).fetchone()["rate"]
+    assert direct == pytest.approx(1 / 1.106)
+    # EurConverter legge i cambi una volta per istanza: va creato dopo il backfill.
+    converter = EurConverter(connection, max_age_days=7)
+    assert converter.rate_on("USD", "2024-01-10") == direct
+    with pytest.raises(ValueError, match="data"):
+        service.backfill_history(connection, "USD", date(2024, 1, 17), now=HISTORY_NOW)
+    assert calls == 1
+
+
+def test_backfill_script_refuses_without_real_data_before_any_call(
+    lab_connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from backend.scripts import backfill_fx_history
+
+    monkeypatch.setenv("ENABLE_REAL_DATA", "false")
+    get_settings.cache_clear()
+
+    for argv in (
+        ["--currency", "USD", "--start", "2024-01-02", "--apply"],
+        ["--currency", "USD", "--start", "2024-01-02"],
+    ):
+        assert backfill_fx_history.main(argv) == 2
+
+    assert "ENABLE_REAL_DATA" in capsys.readouterr().err
+    assert lab_connection.execute("SELECT COUNT(*) FROM provider_request_log").fetchone()[0] == 0
+    assert lab_connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 0
+
+
+def test_backfill_script_previews_without_calls_and_applies_on_request(
+    lab_connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from backend.scripts import backfill_fx_history
+
+    monkeypatch.setenv("ENABLE_REAL_DATA", "true")
+    get_settings.cache_clear()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _history_response(request)
+
+    service = FXService(ecb_provider=_history_provider(handler))
+    argv = ["--currency", "usd", "--start", "2024-01-01"]
+
+    assert backfill_fx_history.main(argv, service=service, now=HISTORY_NOW) == 0
+    preview = capsys.readouterr().out
+    assert calls == 0
+    assert "Anteprima" in preview
+    assert "USD" in preview
+    assert "2024-01-01" in preview and "2024-01-16" in preview
+    assert lab_connection.execute("SELECT COUNT(*) FROM provider_request_log").fetchone()[0] == 0
+
+    assert backfill_fx_history.main(
+        ["--currency", "USD", "--start", "2024-01-17"], service=service, now=HISTORY_NOW
+    ) == 2
+    assert calls == 0
+
+    assert backfill_fx_history.main([*argv, "--apply"], service=service, now=HISTORY_NOW) == 0
+    applied = capsys.readouterr().out
+    assert calls == 1
+    assert "USD" in applied and "10" in applied
+    assert lab_connection.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0] == 10

@@ -595,13 +595,13 @@ FXService.backfill_history(connection, currency: str, start: date, now: datetime
 
 Script: `python -m backend.scripts.backfill_fx_history --currency USD --start 2015-01-01` mostra l'anteprima (valute, intervallo, nessuna chiamata); con `--apply` esegue; rifiuta con exit 2 se `ENABLE_REAL_DATA` è falso.
 
-- [ ] **Step 1: Fixture** `ecb_exr_usd_eur_history.csv`: stesso header di `ecb_exr_usd_eur.csv`, 10 righe sintetiche dal 2024-01-02 al 2024-01-15 più una riga con data futura (2099-01-01).
-- [ ] **Step 2: Test RED**:
+- [x] **Step 1: Fixture** `ecb_exr_usd_eur_history.csv`: stesso header di `ecb_exr_usd_eur.csv`, 10 righe sintetiche dal 2024-01-02 al 2024-01-15 più una riga con data futura (2099-01-01).
+- [x] **Step 2: Test RED**:
   - in `test_reference_providers.py`: `fetch_history` invia `startPeriod`/`endPeriod` e non `lastNObservations` (asserzione sulla richiesta del `httpx.MockTransport`), consuma 1 unità del budget `ecb`, scarta la riga futura e ritorna 10 quote `reference`;
   - in `test_fx_service.py`: `backfill_history` inserisce 10 righe, il rerun inserisce 0 e conta 10 `existing`; dopo il backfill `EurConverter.rate_on("USD", "2024-01-10")` è coerente con la riga diretta inserita; lo script con `ENABLE_REAL_DATA=false` esce con codice 2 senza rete.
-- [ ] **Step 3: RED** `pytest tests\test_reference_providers.py tests\test_fx_service.py -k "history or backfill"` → FAIL (metodi assenti).
-- [ ] **Step 4: Implementare**, poi **GREEN** con i due file completi e Ruff.
-- [ ] **Step 5: Chiusura**
+- [x] **Step 3: RED** `pytest tests\test_reference_providers.py tests\test_fx_service.py -k "history or backfill"` → FAIL (metodi assenti).
+- [x] **Step 4: Implementare**, poi **GREEN** con i due file completi e Ruff.
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: backfill historical ECB FX rates`
 
