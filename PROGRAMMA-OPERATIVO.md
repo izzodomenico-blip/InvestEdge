@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 4 — Serie reale/demo, segmenti, guardia split e conversione EUR.**
+**SP1 Task 5 — Backfill storico dei cambi BCE.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-4` da `origin/investedge/sp1-task-3` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.1–§6.3 e la conversione di §6.4, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 4), registro SP1 qui sotto.
-- Il Task 4 registra nel registro SP1 lo SHA del Task 3.
+- Branch `investedge/sp1-task-5` da `origin/investedge/sp1-task-4` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.4, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 5), registro SP1 qui sotto (note del Task 4 su `EurConverter`).
+- Il Task 5 registra nel registro SP1 lo SHA del Task 4.
 
 ## Legenda
 
@@ -198,8 +198,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 0 | Brainstorming, spec e piano | FATTO | `e579667`, `fcb6392`, `aa13c44`, `53fe614` | 2026-10-02 | Claude |
 | 1 | Fixture seed condivisa e guardia di rete globale | FATTO | `a115dab` | 2026-10-02 | Claude |
 | 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | `90b49ab` | 2026-10-03 | Claude |
-| 3 | Barre W/M e score v1 | FATTO | branch `investedge/sp1-task-3` | 2026-10-03 | Claude |
-| 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | NON INIZIATO | — | — | — |
+| 3 | Barre W/M e score v1 | FATTO | `b76fff5` | 2026-10-03 | Claude |
+| 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | branch `investedge/sp1-task-4` | 2026-10-03 | Claude |
 | 5 | Backfill storico dei cambi BCE | NON INIZIATO | — | — | — |
 | 6 | Feature store `features_daily` incrementale | NON INIZIATO | — | — | — |
 | 7 | Score unico in segnali e analisi tecnica | NON INIZIATO | — | — | — |
@@ -259,6 +259,33 @@ Evidenza Task 3 (2026-10-03, Claude):
 - minori aperti: `resample_bars` non valida ordinamento e unicità delle date (precondizione, come `compute_features`); serie piatta: `warmup_complete` resta 0 (dichiarato nel Task 2, non corretto);
 - ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
 - gate: `pytest tests\test_lab_score.py tests\test_lab_features.py -p no:cacheprovider` = 19 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 710 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 78 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
+
+Evidenza Task 4 (2026-10-03, Claude):
+
+- `backend/app/lab/series.py`:
+  - `load_series(connection, asset_id, data_mode)`: solo le righe del `data_mode` (REAL = `is_real_data = 1`, DEMO = `0`, mai mescolate), una riga per data (`substr(date, 1, 10)`, vince l'`id` maggiore), date ordinate e uniche in ogni segmento; `None` senza asset o senza righe; `available_data_modes` e `preferred_data_mode` (REAL se esiste, altrimenti DEMO, `None` senza prezzi);
+  - `PROVIDER_ADJUSTMENT_BASIS` (`coingecko` → `NOT_APPLICABLE`, `stooq` → `UNKNOWN`); base della serie = base comune dei provider delle righe usate, altrimenti `UNKNOWN`;
+  - `split_into_segments` vettoriale: buchi oltre `LAB_SEGMENT_MAX_GAP_SESSIONS` (giorni lavorativi con `numpy.busday_count` per azioni/ETF, di calendario per `crypto`); guardia split solo con base `UNKNOWN` (rapporti 2, 3, 4, 5, 10, 3/2; close e open entro `LAB_SPLIT_TOLERANCE` relativa); `segment_id` da 0, `SplitEvent` (data, rapporto, `FORWARD`/`REVERSE`), `gap_starts`;
+  - `EurConverter.rate_on` e `convert_bars` (`open/high/low/close_eur` = prezzi rettificati × cambio, NaN senza cambio valido, più il conteggio delle barre escluse): ultima osservazione con data ≤ barra ed età ≤ `max_age_days`; riga diretta X→EUR, altrimenti inversa EUR→X con reciproco, come `FXService.get_rate`; EUR = 1;
+  - nessun import da `technical_analysis`, nessuna nuova dipendenza, nessuna migrazione;
+- impostazioni `lab_segment_max_gap_sessions` (5) e `lab_split_tolerance` (0.03) in `config.py`, documentate in `.env.example` e `backend/.env.example`;
+- test: helper `insert_asset`, `insert_bars` (`source` = provider, oppure `real`/`mock`) e `insert_fx` (righe dirette) in `tests/lab_fixtures.py`; fixture `lab_connection` in `tests/conftest.py` (DB temporaneo con `init_db`, nessun seed; fixture esistenti invariate); gli 8 test del piano in `tests/test_lab_series.py` con i nomi del piano;
+- RED verificato: `ModuleNotFoundError: No module named 'backend.app.lab.series'`;
+- scelte interpretative:
+  - spec §5.1 "con base `UNKNOWN` il fattore vale 1": `load_series` pone `adjusted_close = close` con base `UNKNOWN` o `NOT_APPLICABLE`; con base dichiarata (`SPLIT`, `SPLIT_DIVIDEND`, oggi nessun provider) un `adjusted_close` NULL diventa `close`;
+  - `EurConverter` esclude le righe FX con provider `seed` (dato demo: vincolo REAL/DEMO del piano);
+  - preferenza diretta/inversa valutata alla data della barra: una riga diretta con data ≤ barra ma più vecchia di `max_age_days` dà NaN, senza ripiegare sull'inversa (come `FXService`, che la restituisce marcata `stale`);
+  - un buco e uno split sulla stessa barra aprono un solo segmento e compaiono in entrambi gli elenchi; con più rapporti compatibili vince il primo di `SPLIT_RATIOS` (con la tolleranza di default gli intervalli non si sovrappongono);
+  - `test_eur_converter_matches_fx_service_direction`: orologio di `fx_service` bloccato al 2024-01-08 e date fisse ("oggi" = 2024-01-08; verificata anche `quality == "reference"`);
+- deviazioni: 2 test oltre gli 8 del piano, per coprire con TDD le due scelte fail-closed (`test_unknown_basis_ignores_unverified_adjusted_close`, `test_eur_converter_ignores_seed_rates`); `test_real_series_never_contains_seed_rows` verifica anche la regola "vince l'`id` maggiore"; nessun file fuori elenco;
+- verifiche aggiuntive in scratch (non committate): 1500 barre con buco di 8 sedute e split 2:1 → 3 segmenti con date ordinate e uniche, `compute_features` e `resample_bars` su ogni segmento; `load_series` circa 7 ms, `convert_bars` circa 1 ms; `rate_on` coerente con `convert_bars` riga per riga;
+- note per i task successivi:
+  - `EurConverter` legge i cambi di una valuta una sola volta per istanza: nel Task 5 il convertitore va creato dopo il backfill;
+  - `LabSeries.currency` è `assets.currency` com'è salvato (il convertitore normalizza maiuscole e spazi);
+  - le barre dei segmenti hanno le colonne `date, open, high, low, close, adjusted_close, volume`; `open/high/low/volume` restano NaN se NULL nel DB;
+- minori aperti: nessuna validazione di `close ≤ 0` o di date malformate (dati validati all'ingestione); `SeriesSegment` e `LabSeries` sono frozen con un `DataFrame`: l'uguaglianza fra istanze non è definita;
+- ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito); la suite mostra 2 `StarletteDeprecationWarning` delle versioni installate, senza effetti sui test;
+- gate: `pytest tests\test_lab_series.py tests\test_config.py tests\test_fx_service.py -p no:cacheprovider` = 27 passati (10 di `test_lab_series.py`, anche con `-W error::RuntimeWarning`); `pytest tests\test_lab_features.py tests\test_lab_score.py -p no:cacheprovider` = 19 passati; suite completa `pytest -p no:cacheprovider` = 720 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 139 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
 ## Backlog per i sottoprogetti futuri
 

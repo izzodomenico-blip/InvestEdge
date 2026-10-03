@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import shutil
 import socket
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -135,3 +136,20 @@ def client(
         yield test_client
 
     get_settings.cache_clear()
+
+
+@pytest.fixture()
+def lab_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
+    """DB temporaneo con schema e migrazioni, senza seed, per i test del laboratorio."""
+    from backend.app.config import get_settings
+    from backend.app.database import get_connection, init_db
+
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(tmp_path / "lab.db"))
+    get_settings.cache_clear()
+    init_db()
+    connection = get_connection()
+    try:
+        yield connection
+    finally:
+        connection.close()
+        get_settings.cache_clear()

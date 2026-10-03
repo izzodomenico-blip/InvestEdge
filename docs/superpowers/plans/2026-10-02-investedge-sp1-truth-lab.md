@@ -551,7 +551,7 @@ fixture lab_connection -> sqlite3.Connection     # DB temporaneo inizializzato, 
 
 Regole: righe di `data_mode` REAL = `is_real_data = 1`, DEMO = `is_real_data = 0`; con più righe per data nello stesso modo vince quella con `id` maggiore. Base della serie: `NOT_APPLICABLE` solo se tutte le righe hanno provider `coingecko`, altrimenti `UNKNOWN`. Buco: più di `max_gap_sessions` giorni lavorativi (`numpy.busday_count`) per azioni/ETF, giorni di calendario per `asset_type == "crypto"`. Split sospetto solo con base `UNKNOWN`: per un `k` in `SPLIT_RATIOS`, `close_{t-1}/close_t` (FORWARD) o `close_t/close_{t-1}` (REVERSE) entro `split_tolerance` relativa da `k`, e lo stesso rapporto per `close_{t-1}/open_t` o `open_t/close_{t-1}`. Cambio: ultima osservazione con data ≤ `on_date`, stessa direzione e reciprocità di `FXService.get_rate` (riga diretta `X→EUR` oppure inversa `EUR→X` con reciproco).
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_series.py`:
+- [x] **Step 1: Test RED** in `tests/test_lab_series.py`:
   - `test_real_series_never_contains_seed_rows`: asset con righe seed 2018–2019 e righe reali dal 2019-06-03; `load_series(REAL)` contiene solo date reali, `load_series(DEMO)` solo seed; `preferred_data_mode` = `REAL`.
   - `test_business_day_gap_over_limit_opens_new_segment`: buco di 6 giorni lavorativi → 2 segmenti e `gap_starts` con la prima data dopo il buco; buco di 5 → 1 segmento.
   - `test_crypto_gap_counts_calendar_days`.
@@ -560,10 +560,10 @@ Regole: righe di `data_mode` REAL = `is_real_data = 1`, DEMO = `is_real_data = 0
   - `test_coingecko_basis_skips_split_guard`.
   - `test_eur_converter_uses_latest_rate_within_max_age`: tassi venerdì; barra lunedì usa venerdì; barra con ultimo tasso a 8 giorni → NaN e conteggio 1; EUR → 1.0.
   - `test_eur_converter_matches_fx_service_direction`: con riga diretta e con riga inversa, `rate_on(oggi)` == `FXService().get_rate(conn, currency).rate`.
-- [ ] **Step 2: RED** `pytest tests\test_lab_series.py` → FAIL in import.
-- [ ] **Step 3: Implementare** `series.py`, impostazioni (`lab_segment_max_gap_sessions: int = 5`, `lab_split_tolerance: float = 0.03`) con documentazione nei due `.env.example`, helper e fixture.
-- [ ] **Step 4: GREEN** con `tests\test_lab_series.py`, `tests\test_config.py`, `tests\test_fx_service.py` e Ruff.
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED** `pytest tests\test_lab_series.py` → FAIL in import.
+- [x] **Step 3: Implementare** `series.py`, impostazioni (`lab_segment_max_gap_sessions: int = 5`, `lab_split_tolerance: float = 0.03`) con documentazione nei due `.env.example`, helper e fixture.
+- [x] **Step 4: GREEN** con `tests\test_lab_series.py`, `tests\test_config.py`, `tests\test_fx_service.py` e Ruff.
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: load real and demo series with segments and EUR conversion`
 

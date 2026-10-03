@@ -95,6 +95,8 @@ class Settings:
     enable_google_sheets_import: bool = False
     google_sheets_csv_url: str | None = None
     google_sheets_import_max_bytes: int = 5 * 1024 * 1024
+    lab_segment_max_gap_sessions: int = 5
+    lab_split_tolerance: float = 0.03
 
     @property
     def database_url(self) -> str:
@@ -228,6 +230,8 @@ class Settings:
             enable_google_sheets_import=os.getenv("ENABLE_GOOGLE_SHEETS_IMPORT", "false").lower() == "true",
             google_sheets_csv_url=os.getenv("GOOGLE_SHEETS_CSV_URL") or None,
             google_sheets_import_max_bytes=int(os.getenv("GOOGLE_SHEETS_IMPORT_MAX_BYTES", "5242880")),
+            lab_segment_max_gap_sessions=int(os.getenv("LAB_SEGMENT_MAX_GAP_SESSIONS", "5")),
+            lab_split_tolerance=float(os.getenv("LAB_SPLIT_TOLERANCE", "0.03")),
         )
 
 
