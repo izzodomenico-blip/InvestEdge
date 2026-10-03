@@ -211,7 +211,7 @@ def synthetic_bars(n: int, seed: int, start: str = "2018-01-01", freq: str = "B"
 
 Finestre (spec §5.3): `sma_20` 20, `sma_50` 50, `sma_200` 200, `price_vs_sma50` 50, `price_vs_sma200` 200, `sma50_vs_sma200` 200, `rsi_14` 101 (Wilder α=1/14, L=100), `macd_line` 104 (EMA 12 L=48, EMA 26 L=104), `macd_signal`/`macd_histogram`/`macd_*_pct` 139 (EMA 9 L=36), `stochastic_k` 14, `stochastic_d` 16, `roc_12` 13, `close_return_1d/5d/20d` 2/6/21, `volatility_30d` 31 (× √`PERIODS_PER_YEAR[timeframe]`), `atr_14`/`atr_14_pct` 15 (media semplice del true range), `plus_di`/`minus_di` 101 (Wilder L=100), `adx_14` 200 (Wilder L=100 sul DX), `supertrend_10_3` 110 (ATR 10 semplice, stato ricalcolato sulle ultime L=100 barre), `bollinger_percent_b` 20, `max_drawdown_252` 252, `drawdown_60` 60, `volume_ratio_20` 20, `obv_ratio_20` 21, `nearest_*` e `*_distance_pct` 180 (pivot ±2, solo indici ≤ *i*−2). Prezzi rettificati: O/H/L/C × `adjusted_close/close`.
 
-- [ ] **Step 1: Scrivere i test RED**
+- [x] **Step 1: Scrivere i test RED**
 
 `tests/lab_fixtures.py`:
 
@@ -340,7 +340,7 @@ def test_obv_ratio_is_bounded_and_prices_are_adjusted() -> None:
     assert adjusted["price_vs_sma50"].iloc[-1] == pytest.approx(features["price_vs_sma50"].iloc[-1])
 ```
 
-- [ ] **Step 2: Eseguire RED**
+- [x] **Step 2: Eseguire RED**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_lab_features.py -p no:cacheprovider
@@ -348,18 +348,18 @@ def test_obv_ratio_is_bounded_and_prices_are_adjusted() -> None:
 
 Expected: FAIL in import (`backend.app.lab.features` inesistente).
 
-- [ ] **Step 3: Implementare**
+- [x] **Step 3: Implementare**
 
 `contracts.py` con il blocco dei contratti condivisi. `features.py` vettoriale con numpy/pandas: `truncated_ewm_mean` con pesi `(1-α)^k`, `k = 0..L-1` normalizzati (convoluzione), NaN finché mancano `length` valori; ogni indicatore secondo la tabella; Supertrend con ciclo sulle ultime 100 barre per riga; `max_drawdown_252` esatto sulla finestra; pivot confermati. Nessun import da `backend.app.services.technical_analysis`.
 
-- [ ] **Step 4: GREEN**
+- [x] **Step 4: GREEN**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest tests\test_lab_features.py -p no:cacheprovider
 & '.\backend\.venv\Scripts\python.exe' -m ruff check backend scripts tests
 ```
 
-- [ ] **Step 5: Chiusura** (suite completa, review, protocollo)
+- [x] **Step 5: Chiusura** (suite completa, review, protocollo)
 
 Commit: `feat: add causal window-bounded feature pipeline`
 

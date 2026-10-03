@@ -2,16 +2,16 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-02.
+Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 2 — Pipeline di feature causale a finestra limitata (D).**
+**SP1 Task 3 — Barre W/M e score v1.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-2` da `origin/investedge/sp1-task-1` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 2), registro SP1 qui sotto.
-- Il Task 2 registra nel registro SP1 lo SHA del Task 1.
+- Branch `investedge/sp1-task-3` da `origin/investedge/sp1-task-2` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §5.4–§5.5, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 3), registro SP1 qui sotto.
+- Il Task 3 registra nel registro SP1 lo SHA del Task 2.
 
 ## Legenda
 
@@ -196,8 +196,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | Task | Titolo | Stato | Commit | Data | Owner |
 |---|---|---|---|---|---|
 | 0 | Brainstorming, spec e piano | FATTO | `e579667`, `fcb6392`, `aa13c44`, `53fe614` | 2026-10-02 | Claude |
-| 1 | Fixture seed condivisa e guardia di rete globale | FATTO | branch `investedge/sp1-task-1` | 2026-10-02 | Claude |
-| 2 | Pipeline di feature causale a finestra limitata (D) | NON INIZIATO | — | — | — |
+| 1 | Fixture seed condivisa e guardia di rete globale | FATTO | `a115dab` | 2026-10-02 | Claude |
+| 2 | Pipeline di feature causale a finestra limitata (D) | FATTO | branch `investedge/sp1-task-2` | 2026-10-03 | Claude |
 | 3 | Barre W/M e score v1 | NON INIZIATO | — | — | — |
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | NON INIZIATO | — | — | — |
 | 5 | Backfill storico dei cambi BCE | NON INIZIATO | — | — | — |
@@ -228,6 +228,17 @@ Evidenza Task 1 (2026-10-02, Claude, nella stessa chat del Task 0 su richiesta d
 - tempi: `pytest tests\test_api.py` da 711,99 s a 45,23 s (193 passati in entrambi, JUnit XML); `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
 - minore preesistente, fuori perimetro: `init_db` (`with get_connection()`) e il seed lasciano connessioni SQLite non chiuse (`ResourceWarning`);
 - gate: `pytest tests\test_test_infrastructure.py` = 4 passati; suite completa `pytest -p no:cacheprovider` = 691 passati, 0 falliti, 0 errori (JUnit XML, 83 s, guardia di rete attiva su tutti i test); `ruff check backend scripts tests` verde; `git diff --check` verde; review del diff senza rilievi Critical o Important.
+
+Evidenza Task 2 (2026-10-03, Claude):
+
+- `backend/app/lab/contracts.py` (contratti condivisi: `DataMode`, `Timeframe`, versioni, `PERIODS_PER_YEAR`, `LabError`) e `backend/app/lab/features.py`: 34 colonne `features-v1` con le finestre W della spec §5.3; ogni riduzione lavora sulla propria finestra (`sliding_window_view`, nessuna somma cumulata dall'inizio serie); warm-up applicato per colonna (NaN prima di W barre); EMA/Wilder troncati con pesi `(1 − α)^k` normalizzati; Supertrend vettoriale con la macchina a stati attuale ricalcolata sulle ultime 100 barre; pivot ±2 confermati sulle ultime 180 barre; O/H/L/C × `adjusted_close/close`; nessun import da `technical_analysis`, nessuna nuova dipendenza;
+- RED verificato: `ModuleNotFoundError: No module named 'backend.app.lab'`; test e fixture identici al piano;
+- verifiche aggiuntive in scratch (non committate): uguali agli indicatori attuali entro 1e-12 SMA, stocastico, ROC, volatilità, ATR, Bollinger, volume ratio, Supertrend e supporti/resistenze; MACD e DI/ADX differiscono solo per il troncamento (MACD ≤ 0,5% della mediana, ADX ≤ 0,05 punti); `max_drawdown_252` uguale al calcolo a forza bruta; indipendenza **bit a bit** dalla finestra su 34 righe × 34 colonne e warm-up stretto (W − 1 barre → NaN); 1500 barre in circa 15 ms;
+- scelte interpretative: `macd_line_pct` resta NaN fino a 139 barre (W della spec, attivazione insieme al segnale); `atr_14_pct` e `macd_*_pct` come frazione (diviso per il close, spec §5.3); `support_distance_pct`/`resistance_distance_pct` e `roc_12` in percento come gli indicatori attuali (unità attese dal Task 3); divisioni per zero → NaN come oggi;
+- deviazioni: nessun file fuori elenco; review del diff svolta nella chat del task;
+- minori aperti: `compute_features` non valida ordinamento e unicità delle date (precondizione del chiamante: serie e segmenti del Task 4, feature store del Task 6); una serie piatta dà NaN su RSI, stocastico, Bollinger e DI/ADX, quindi nel Task 3 il warm-up dello score non risulterà mai completo per quella serie;
+- ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
+- gate: `pytest tests\test_lab_features.py` = 10 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 701 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 138 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
 ## Backlog per i sottoprogetti futuri
 
