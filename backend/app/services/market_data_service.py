@@ -8,7 +8,6 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-import pandas as pd
 
 from backend.app.config import get_settings
 from backend.app.data_providers import (
@@ -23,7 +22,6 @@ from backend.app.data_providers import (
 )
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.models.market_data import MarketObservationEnvelope
-from backend.app.services.common import now_utc as _now
 from backend.app.services.data_coverage_service import (
     CoverageInvariantError,
     DataCoverageService,
@@ -33,8 +31,7 @@ from backend.app.services.instrument_quality_service import InstrumentQualitySer
 from backend.app.services.instrument_service import InstrumentService, parse_stored_utc
 from backend.app.services.market_observation_service import MarketObservationService
 from backend.app.services.portfolio_engine import PortfolioEngine
-from backend.app.services.scoring_engine import ScoringEngine
-from backend.app.services.sentiment_engine import aggregate_news_sentiment
+from backend.app.services.signals_service import recalculate_signal
 
 # Una barra EOD resta valida (non stale) fino a MARKET_DATA_EOD_MAX_AGE_HOURS per coprire
 # weekend e festivi, ma dopo un giorno puo esistere una seduta piu recente: oltre questa
@@ -44,7 +41,6 @@ _EOD_REFRESH_DUE_AFTER = timedelta(hours=24)
 
 class MarketDataService:
     def __init__(self) -> None:
-        self.scoring_engine = ScoringEngine()
         self.portfolio_engine = PortfolioEngine()
         self.observation_service = MarketObservationService()
 
@@ -1061,76 +1057,7 @@ class MarketDataService:
         return "EOD"
 
     def _recalculate_signal(self, connection: sqlite3.Connection, asset_id: int) -> None:
-        asset = connection.execute(
-            """
-            SELECT id, symbol, risk_level
-            FROM assets
-            WHERE id = ?
-            """,
-            (asset_id,),
-        ).fetchone()
-        if asset is None:
-            return
-
-        rows = connection.execute(
-            """
-            SELECT date, open, high, low, close, adjusted_close, volume, source
-            FROM price_history
-            WHERE asset_id = ?
-            ORDER BY date ASC
-            """,
-            (asset_id,),
-        ).fetchall()
-        if not rows:
-            return
-
-        score = self.scoring_engine.score_prices(
-            pd.DataFrame([dict(row) for row in rows]),
-            asset_id=asset["id"],
-            symbol=asset["symbol"],
-            risk_level=asset["risk_level"],
-        )
-        news_summary = aggregate_news_sentiment(connection, asset["symbol"], lookback_days=7)
-        news_score = 0.0
-        if news_summary["news_count"] > 0:
-            weight = get_settings().news_sentiment_weight
-            news_score = float(news_summary["average_sentiment_score"]) * weight
-            news_score = max(-weight, min(weight, news_score))
-        final_score = round(max(0.0, min(100.0, float(score["score"]) + news_score)), 2)
-        final_signal = self.scoring_engine._signal_from_score(final_score)
-        now = _now()
-        connection.execute("DELETE FROM signals WHERE asset_id = ? AND source = 'scoring_engine'", (asset_id,))
-        connection.execute(
-            """
-            INSERT INTO signals (
-                asset_id, symbol, signal, score, technical_score, news_score, final_score,
-                news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
-                reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
-            """,
-            (
-                asset["id"],
-                score["symbol"],
-                final_signal,
-                final_score,
-                score["score"],
-                round(news_score, 2),
-                final_score,
-                news_summary["sentiment_label"],
-                news_summary["impact_level"],
-                score["risk_level"],
-                score["confidence"],
-                score["technical_summary"],
-                json.dumps(score["reasons"]),
-                json.dumps(score["subscores"]),
-                json.dumps(score["indicators"]),
-                score["technical_summary"],
-                now,
-                now,
-                now,
-            ),
-        )
+        recalculate_signal(connection, asset_id)
 
     def _refresh_portfolio_if_needed(self, connection: sqlite3.Connection, asset_id: int) -> None:
         row = connection.execute(

@@ -8,22 +8,23 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.app.database import ISIN_BY_SYMBOL, db_session
+from backend.app.lab.series import preferred_data_mode
 from backend.app.models import PortfolioInitIn, SimulatedOrderIn
 from backend.app.services.backup_service import prepare_database
 from backend.app.services.news_engine import NewsEngine
 from backend.app.services.portfolio_engine import PortfolioEngine
-from backend.app.services.scoring_engine import ScoringEngine
+from backend.app.services.signals_service import recalculate_signal
 
 FIXED_SEED = 20260517
 SEED_END_DATE = date(2026, 5, 17)
 SEED_CREATED_AT = "2026-05-17T00:00:00"
+SEED_NOW = datetime.fromisoformat(SEED_CREATED_AT).replace(tzinfo=UTC)
 SEED_USD_EUR_RATE = 0.92
 
 
@@ -230,7 +231,6 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
         "simulated_orders_inserted": 0,
         "portfolio_snapshots_inserted": 0,
     }
-    scoring_engine = ScoringEngine()
 
     with db_session() as connection:
         if reset:
@@ -312,49 +312,14 @@ def seed_database(reset: bool = False) -> dict[str, Any]:
             )
             price_rows_inserted += len(price_rows)
 
-            prices_frame = pd.DataFrame(price_rows)
-            score = scoring_engine.score_prices(
-                prices_frame,
-                asset_id=asset_id,
-                symbol=asset["symbol"],
-                risk_level=asset["risk_level"],
-            )
-            connection.execute(
-                "DELETE FROM signals WHERE asset_id = ? AND source = 'scoring_engine'",
+            # Segnale dallo score unico v1 (serie REAL se l'asset ne ha una, altrimenti la demo):
+            # la sola serie demo usa l'orologio del seed (deterministico), una serie reale quello attuale.
+            seed_clock = SEED_NOW if preferred_data_mode(connection, asset_id) == "DEMO" else None
+            recalculate_signal(connection, asset_id, now=seed_clock)
+            signals_inserted += connection.execute(
+                "SELECT COUNT(*) FROM signals WHERE asset_id = ? AND source = 'scoring_engine'",
                 (asset_id,),
-            )
-            connection.execute(
-                """
-                INSERT INTO signals (
-                    asset_id, symbol, signal, score, technical_score, news_score, final_score,
-                    news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
-                    reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scoring_engine', ?, ?, ?)
-                """,
-                (
-                    asset_id,
-                    score["symbol"],
-                    score["signal"],
-                    score["score"],
-                    score["score"],
-                    0,
-                    score["score"],
-                    "NEUTRAL",
-                    "LOW",
-                    score["risk_level"],
-                    score["confidence"],
-                    score["technical_summary"],
-                    json.dumps(score["reasons"]),
-                    json.dumps(score["subscores"]),
-                    json.dumps(score["indicators"]),
-                    score["technical_summary"],
-                    SEED_CREATED_AT,
-                    SEED_CREATED_AT,
-                    SEED_CREATED_AT,
-                ),
-            )
-            signals_inserted += 1
+            ).fetchone()[0]
 
         if reset:
             portfolio_summary = _create_demo_portfolio(connection)

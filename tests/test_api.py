@@ -361,6 +361,8 @@ def test_assets_contract_preserves_assetout_fields_and_excludes_listing_identity
         "confidence",
         "technical_summary",
         "updated_at",
+        "signal_data_mode",
+        "score_unavailable_reason",
     ]
 
     assert list(AssetCreate.model_fields) == expected_create_fields
@@ -409,7 +411,8 @@ def test_assets_contract_preserves_assetout_fields_and_excludes_listing_identity
         b'"technical_score":70.0,"news_score":5.0,"final_score":75.0,'
         b'"news_sentiment_label":"POSITIVE","news_impact_level":"MEDIUM",'
         b'"signal":"BUY","confidence":"HIGH","technical_summary":"Legacy summary",'
-        b'"updated_at":"2026-08-16T10:00:00Z"}'
+        b'"updated_at":"2026-08-16T10:00:00Z","signal_data_mode":null,'
+        b'"score_unavailable_reason":null}'
     )
     response = client.get("/assets")
     assert response.status_code == 200
@@ -1972,6 +1975,59 @@ def test_advanced_seed_signal_payload(client: TestClient) -> None:
     assert data["signal"] in {"STRONG_BUY", "BUY", "HOLD", "REDUCE", "SELL"}
     assert "trend_score" in data["subscores"]
     assert isinstance(data["reasons"], list)
+
+
+def test_signals_and_assets_expose_score_data_mode(client: TestClient) -> None:
+    signals = client.get("/signals").json()
+    assets = client.get("/assets").json()
+
+    assert len(signals) == 25
+    assert {signal["data_mode"] for signal in signals} == {"DEMO"}
+    assert all(signal["final_score"] == signal["technical_score"] == signal["score"] for signal in signals)
+    assert client.get("/signals/AAPL").json()["data_mode"] == "DEMO"
+    assert {asset["signal_data_mode"] for asset in assets} == {"DEMO"}
+    assert all(asset["score_unavailable_reason"] is None for asset in assets)
+
+
+def test_technical_analysis_serves_the_signal_score_v1(client: TestClient) -> None:
+    analysis = client.get("/technical-analysis/AAPL").json()
+    signal = client.get("/signals/AAPL").json()
+
+    assert analysis["data_mode"] == "DEMO"
+    assert analysis["score"] == analysis["technical_score"] == analysis["final_score"] == signal["score"]
+    assert analysis["signal"] == signal["signal"]
+    assert {"volatility_30d", "max_drawdown_252"} <= set(analysis["indicators"])
+    assert "volatility_annualized_30d" not in analysis["indicators"]
+
+
+def test_technical_analysis_short_real_history_returns_409(client: TestClient) -> None:
+    from backend.app.database import db_session
+    from tests.lab_fixtures import insert_asset, insert_bars, synthetic_bars
+
+    with db_session() as connection:
+        asset_id = insert_asset(connection, "SHORTREAL")
+        insert_bars(connection, asset_id, synthetic_bars(100, seed=3), real=True, provider="stooq")
+    reason = "Storico reale insufficiente (100 barre, servono 252)."
+
+    response = client.get("/technical-analysis/SHORTREAL")
+    asset = client.get("/assets/SHORTREAL").json()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"reason_code": "INSUFFICIENT_REAL_HISTORY", "message": reason}
+    assert asset["score"] is None
+    assert asset["signal_data_mode"] is None
+    assert asset["score_unavailable_reason"] == reason
+    listed = next(item for item in client.get("/assets").json() if item["symbol"] == "SHORTREAL")
+    assert listed["score_unavailable_reason"] == reason
+
+
+def test_action_board_items_expose_signal_data_mode(client: TestClient) -> None:
+    actions = client.get("/action-board").json()["actions"]
+
+    signal_actions = [action for action in actions if action["type"] in {"BUY", "REDUCE", "SELL"}]
+    assert signal_actions
+    assert {action["data_mode"] for action in signal_actions} == {"DEMO"}
+    assert all(action["data_mode"] is None for action in actions if action["type"] in {"RISK", "OK"})
 
 
 def test_portfolio_endpoint_after_seed(client: TestClient) -> None:

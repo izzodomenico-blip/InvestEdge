@@ -20,6 +20,23 @@ def _buy_priority(signal: str | None, score: float | None) -> str:
     return "MEDIUM"
 
 
+def _signal_data_modes(connection: sqlite3.Connection) -> dict[str, str | None]:
+    """`data_mode` dell'ultimo segnale per simbolo (serie dello score: REAL o DEMO)."""
+    rows = connection.execute(
+        """
+        SELECT a.symbol, sig.data_mode
+        FROM assets a
+        JOIN signals sig ON sig.id = (
+            SELECT s.id FROM signals s
+            WHERE s.asset_id = a.id
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT 1
+        )
+        """
+    ).fetchall()
+    return {str(row[0]): row[1] for row in rows}
+
+
 def get_action_board(connection: sqlite3.Connection) -> dict[str, Any]:
     """Cruscotto 'Cosa fare oggi': azioni prioritizzate in linguaggio semplice.
 
@@ -29,6 +46,7 @@ def get_action_board(connection: sqlite3.Connection) -> dict[str, Any]:
     recommendations = portfolio_engine.recommendations(connection)
     summary = portfolio_engine.refresh_portfolio(connection, create_snapshot=False)
     data_status = market_data_service.get_global_status(connection)
+    signal_modes = _signal_data_modes(connection)
 
     actions: list[dict[str, Any]] = []
     buy_candidates: list[dict[str, Any]] = []
@@ -50,6 +68,7 @@ def get_action_board(connection: sqlite3.Connection) -> dict[str, Any]:
                         "signal": signal,
                         "score": score,
                         "weight_percent": rec.portfolio_weight,
+                        "data_mode": signal_modes.get(rec.symbol),
                     }
                 )
             elif signal == "REDUCE" or rec.final_recommendation == "REDUCE":
@@ -63,6 +82,7 @@ def get_action_board(connection: sqlite3.Connection) -> dict[str, Any]:
                         "signal": signal,
                         "score": score,
                         "weight_percent": rec.portfolio_weight,
+                        "data_mode": signal_modes.get(rec.symbol),
                     }
                 )
         else:
@@ -77,6 +97,7 @@ def get_action_board(connection: sqlite3.Connection) -> dict[str, Any]:
                         "signal": signal,
                         "score": score,
                         "weight_percent": 0.0,
+                        "data_mode": signal_modes.get(rec.symbol),
                     }
                 )
 

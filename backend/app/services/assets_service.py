@@ -6,6 +6,7 @@ from typing import Literal
 from backend.app.models import AssetCreate, AssetOut
 from backend.app.services.fx_service import FXRateUnavailable, FXService
 from backend.app.services.instrument_service import InstrumentService
+from backend.app.services.signals_service import score_unavailable_reason
 
 fx_service = FXService()
 
@@ -107,6 +108,10 @@ def _asset_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> AssetOu
         confidence=row["confidence"],
         technical_summary=row["technical_summary"],
         updated_at=row["updated_at"],
+        signal_data_mode=row["signal_data_mode"],
+        score_unavailable_reason=(
+            score_unavailable_reason(connection, row["id"]) if row["signal"] is None else None
+        ),
     )
 
 
@@ -117,7 +122,7 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
     signal_row = connection.execute(
         """
         SELECT score, technical_score, news_score, final_score, news_sentiment_label, news_impact_level,
-            signal, confidence, technical_summary
+            signal, confidence, technical_summary, data_mode
         FROM signals
         WHERE asset_id = ?
         ORDER BY created_at DESC, id DESC
@@ -157,6 +162,8 @@ def _asset_from_base_row(connection: sqlite3.Connection, row: sqlite3.Row) -> As
         confidence=signal_row["confidence"] if signal_row else None,
         technical_summary=signal_row["technical_summary"] if signal_row else None,
         updated_at=row["updated_at"],
+        signal_data_mode=signal_row["data_mode"] if signal_row else None,
+        score_unavailable_reason=None if signal_row else score_unavailable_reason(connection, row["id"]),
     )
 
 
@@ -194,7 +201,8 @@ def list_assets(connection: sqlite3.Connection) -> list[AssetOut]:
             sig.news_impact_level,
             sig.signal,
             sig.confidence,
-            sig.technical_summary
+            sig.technical_summary,
+            sig.data_mode AS signal_data_mode
         FROM assets a
         LEFT JOIN price_history latest
             ON latest.id = (

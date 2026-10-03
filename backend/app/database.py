@@ -579,6 +579,7 @@ CREATE TABLE IF NOT EXISTS signals (
     generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    data_mode TEXT CHECK(data_mode IS NULL OR data_mode IN ('REAL', 'DEMO')),
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
@@ -1230,6 +1231,11 @@ MIGRATIONS = {
         ("indicators_json", "ALTER TABLE signals ADD COLUMN indicators_json TEXT"),
         ("created_at", "ALTER TABLE signals ADD COLUMN created_at TEXT"),
         ("updated_at", "ALTER TABLE signals ADD COLUMN updated_at TEXT"),
+        (
+            "data_mode",
+            "ALTER TABLE signals ADD COLUMN data_mode TEXT "
+            "CHECK(data_mode IS NULL OR data_mode IN ('REAL', 'DEMO'))",
+        ),
     ],
     "portfolio_positions": [
         ("symbol", "ALTER TABLE portfolio_positions ADD COLUMN symbol TEXT"),
@@ -1326,13 +1332,15 @@ CREATE TABLE signals_new (
     generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    data_mode TEXT CHECK(data_mode IS NULL OR data_mode IN ('REAL', 'DEMO')),
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
 
 INSERT INTO signals_new (
     id, asset_id, symbol, signal, score, technical_score, news_score, final_score,
     news_sentiment_label, news_impact_level, risk_level, confidence, technical_summary,
-    reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at
+    reasons_json, subscores_json, indicators_json, rationale, source, generated_at, created_at, updated_at,
+    data_mode
 )
 SELECT
     id,
@@ -1355,7 +1363,8 @@ SELECT
     source,
     COALESCE(generated_at, CURRENT_TIMESTAMP),
     COALESCE(created_at, generated_at, CURRENT_TIMESTAMP),
-    COALESCE(updated_at, created_at, generated_at, CURRENT_TIMESTAMP)
+    COALESCE(updated_at, created_at, generated_at, CURRENT_TIMESTAMP),
+    data_mode
 FROM signals;
 
 DROP TABLE signals;

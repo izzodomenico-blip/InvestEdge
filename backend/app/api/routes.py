@@ -14,6 +14,7 @@ from backend.app.data_providers.base import ProviderError, RateLimitExceeded
 from backend.app.data_providers.ecb import normalize_ecb_currency
 from backend.app.data_providers.transport import SafeProviderTransportError
 from backend.app.database import db_session
+from backend.app.lab.contracts import LabError
 from backend.app.models import (
     ActionBoardOut,
     AlertSendOut,
@@ -722,6 +723,11 @@ def technical_analysis(symbol: str) -> TechnicalAnalysisOut:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
+        ) from exc
+    except LabError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason_code": exc.code, "message": exc.message},
         ) from exc
     if analysis is None:
         raise HTTPException(

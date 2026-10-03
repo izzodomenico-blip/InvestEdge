@@ -525,13 +525,16 @@ class NewsEngine:
 
         settings = get_settings()
         summary = aggregate_news_sentiment(connection, symbol, lookback_days=7)
-        technical_score = float(latest_signal["technical_score"] or latest_signal["score"] or 50)
+        technical_score = float(
+            latest_signal["score"] if latest_signal["technical_score"] is None else latest_signal["technical_score"]
+        )
         if summary["news_count"] == 0:
             news_score = 0.0
         else:
             news_score = float(summary["average_sentiment_score"]) * float(settings.news_sentiment_weight)
             news_score = max(-settings.news_sentiment_weight, min(settings.news_sentiment_weight, news_score))
-        final_score = round(_clamp(technical_score + news_score), 2)
+        # Score unico v1 (spec SP1 §2): la correzione news resta informativa, `final_score = score`.
+        final_score = round(_clamp(technical_score), 2)
         now = _now()
         connection.execute(
             """

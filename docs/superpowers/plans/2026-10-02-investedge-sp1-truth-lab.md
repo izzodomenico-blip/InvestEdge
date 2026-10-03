@@ -713,7 +713,7 @@ def score_unavailable_reason(connection, asset_id: int) -> str | None
 
 Migrazione: `("data_mode", "ALTER TABLE signals ADD COLUMN data_mode TEXT CHECK(data_mode IS NULL OR data_mode IN ('REAL', 'DEMO'))")` in `MIGRATIONS["signals"]`; `SIGNALS_REBUILD_SQL` e la `CREATE TABLE signals` di `BASE_SCHEMA` includono la colonna.
 
-- [ ] **Step 1: Test RED**
+- [x] **Step 1: Test RED**
   - `tests/test_lab_boundaries.py`: con `ast` sui file di `backend/app/lab/` e su `scoring_engine.py`, `backtest_engine.py`, `ml_dataset_service.py`, `ml_engine.py`, `technical_analysis_service.py`, `signals_service.py`, `market_data_service.py`: nessun import di `backend.app.services.technical_analysis`. (Fallisce oggi su `scoring_engine`, `backtest_engine`, `ml_dataset_service`.)
   - `tests/test_lab_signals.py`:
     - `test_signal_score_equals_features_daily_latest_row` (asset REAL con 400 barre sintetiche reali): `signals.score == features_daily.score` dell'ultima riga D completa e `data_mode == "REAL"`;
@@ -722,10 +722,10 @@ Migrazione: `("data_mode", "ALTER TABLE signals ADD COLUMN data_mode TEXT CHECK(
     - `test_short_real_history_yields_no_signal_and_reason`: 100 barre reali → nessun segnale e `score_unavailable_reason` = "Storico reale insufficiente (100 barre, servono 252).";
     - `test_score_prices_keeps_signature_and_uses_score_v1`.
   - `tests/test_api.py`: `/signals` e `/assets` espongono `data_mode`/`signal_data_mode`; `/technical-analysis/{symbol}` per asset REAL corto risponde 409 `INSUFFICIENT_REAL_HISTORY`; il test esistente `test_provider_failure_fallback_to_demo_does_not_change_final_score` resta verde.
-- [ ] **Step 2: RED** `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_api.py -k "signal or technical or boundary or news"` → FAIL per i motivi previsti.
-- [ ] **Step 3: Implementare.** `backtest_engine.py` e `ml_dataset_service.py` sono riscritti nei Task 10 e 13: in questo task il test di confine li elenca in `PENDING_BOUNDARY = {"backtest_engine.py", "ml_dataset_service.py"}` con un `xfail(strict=True)` per ciascuno; i Task 10 e 13 rimuovono la voce.
-- [ ] **Step 4: GREEN** con suite completa e Ruff.
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED** `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_api.py -k "signal or technical or boundary or news"` → FAIL per i motivi previsti.
+- [x] **Step 3: Implementare.** `backtest_engine.py` e `ml_dataset_service.py` sono riscritti nei Task 10 e 13: in questo task il test di confine li elenca in `PENDING_BOUNDARY = {"backtest_engine.py", "ml_dataset_service.py"}` con un `xfail(strict=True)` per ciascuno; i Task 10 e 13 rimuovono la voce.
+- [x] **Step 4: GREEN** con suite completa e Ruff.
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: serve the single score v1 to signals and analysis`
 

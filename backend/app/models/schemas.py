@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from backend.app.lab.contracts import DataMode
 from backend.app.models.market_data import (
     EffectiveObservationQuality,
     SourceObservationQuality,
@@ -155,6 +156,8 @@ class AssetOut(AssetCreate):
     confidence: str | None = None
     technical_summary: str | None = None
     updated_at: str | None = None
+    signal_data_mode: DataMode | None = None
+    score_unavailable_reason: str | None = None
 
 
 class AssetDependencyCountsOut(BaseModel):
@@ -263,6 +266,7 @@ class SignalOut(BaseModel):
     reasons: list[dict[str, str]] = Field(default_factory=list)
     subscores: dict[str, float] = Field(default_factory=dict)
     created_at: str
+    data_mode: DataMode | None = None
 
 
 class NewsItemOut(BaseModel):
@@ -704,6 +708,7 @@ class TechnicalAnalysisOut(BaseModel):
     reasons: list[dict[str, str]] = Field(default_factory=list)
     summaries: dict[str, str] = Field(default_factory=dict)
     technical_summary: str
+    data_mode: DataMode | None = None
 
 
 class SeedSummaryOut(BaseModel):
@@ -1017,6 +1022,7 @@ class ActionItemOut(BaseModel):
     signal: str | None = None
     score: float | None = None
     weight_percent: float | None = None
+    data_mode: DataMode | None = None
 
 
 class ActionBoardOut(BaseModel):

@@ -6,12 +6,12 @@ Ultimo aggiornamento: 2026-10-03.
 
 ## Prossimo passo
 
-**SP1 Task 7 — Score unico in segnali e analisi tecnica.**
+**SP1 Task 8 — Job asincroni del laboratorio.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-7` da `origin/investedge/sp1-task-6` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §4.2–§4.3, §5.5–§5.6 e §6.1, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 7), registro SP1 qui sotto (nota del Task 3 sui nomi degli indicatori in `AnalysisPage`, note del Task 6 su `FeatureStore`).
-- Il Task 7 registra nel registro SP1 lo SHA del Task 6.
+- Branch `investedge/sp1-task-8` da `origin/investedge/sp1-task-7` (verifica della base con il protocollo del piano).
+- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §6.4, §9, §10 e §13, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 8), registro SP1 qui sotto (note del Task 5 su `FX_BACKFILL`, del Task 6 su `FeatureStore` e del Task 7 sul ricalcolo dei segnali).
+- Il Task 8 registra nel registro SP1 lo SHA del Task 7.
 
 ## Legenda
 
@@ -33,7 +33,7 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
-| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–3: `b76fff5` (2026-10-03) |
+| SP1 | Laboratorio di verità | IN CORSO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | — | Task 0–6: `96f7299` (2026-10-03) |
 | SP2b | Dati per l'alpha | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -201,8 +201,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 3 | Barre W/M e score v1 | FATTO | `b76fff5` | 2026-10-03 | Claude |
 | 4 | Serie reale/demo, segmenti, guardia split e conversione EUR | FATTO | `86d6f73` | 2026-10-03 | Claude |
 | 5 | Backfill storico dei cambi BCE | FATTO | `0bd6c0e` | 2026-10-03 | Claude |
-| 6 | Feature store `features_daily` incrementale | FATTO | branch `investedge/sp1-task-6` | 2026-10-03 | Claude |
-| 7 | Score unico in segnali e analisi tecnica | NON INIZIATO | — | — | — |
+| 6 | Feature store `features_daily` incrementale | FATTO | `96f7299` | 2026-10-03 | Claude |
+| 7 | Score unico in segnali e analisi tecnica | FATTO | branch `investedge/sp1-task-7` | 2026-10-03 | Claude |
 | 8 | Job asincroni del laboratorio | NON INIZIATO | — | — | — |
 | 9 | Costi Trade Republic, strategie e simulatore | NON INIZIATO | — | — | — |
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | NON INIZIATO | — | — | — |
@@ -338,6 +338,38 @@ Evidenza Task 6 (2026-10-03, Claude, nella stessa chat del Task 5 su richiesta d
 - ambiente: stesso `backend/.venv` del Task 5;
 - gate: `pytest tests\test_lab_feature_store.py tests\test_database.py tests\test_lab_features.py tests\test_lab_score.py tests\test_lab_series.py -p no:cacheprovider` = 67 passati (anche con `-W error::RuntimeWarning`); suite completa `pytest -p no:cacheprovider` = 736 passati, 0 falliti, 0 errori, 0 skip (JUnit XML, 93 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff senza rilievi Critical o Important.
 
+Evidenza Task 7 (2026-10-03, Claude):
+
+- verifica Git iniziale: `origin/investedge/sp1-task-6` = `origin/main` = `96f7299` (un commit sopra `origin/investedge/sp1-task-5` = `0bd6c0e`); il fast-forward di `main` a `96f7299` del 2026-10-03 (Task 4–6, richiesta dell'utente) è registrato qui (quadro, registro decisioni, note di ripresa);
+- `signals_service.recalculate_signal(connection, asset_id, now=None)`: serie REAL se esiste, altrimenti DEMO (`preferred_data_mode`), `FeatureStore.refresh_asset` incrementale del solo asset, ultima riga D di `features_daily`, `explain` sul livello di rischio dell'asset; `score = technical_score = final_score`, segnale da `signal_from_score(score)`, `signals.data_mode` valorizzato; `news_score` = sentiment medio 7 giorni × peso entro ±peso (solo informativo, news demo escluse come prima); senza riga completa nessun segnale (quello vecchio di `scoring_engine` viene rimosso); `score_unavailable_reason(connection, asset_id)` = "Storico reale insufficiente (N barre, servono 252)." oppure `None`;
+- `MarketDataService._recalculate_signal` delega a `recalculate_signal` (attributo `scoring_engine` rimosso); `ScoringEngine.score_prices` con la stessa firma = `compute_features` sul frame (un segmento) + `explain` dell'ultima riga, più la chiave `warmup_complete` (helper legacy rimasti senza uso eliminati); nessun import di `technical_analysis`;
+- `/technical-analysis/{symbol}` da `features`/`explain` sull'ultimo segmento della serie del segnale (barre fino al giorno UTC corrente): `data_mode`, `final_score = score`, news informative; serie REAL corta → 409 `{"reason_code": "INSUFFICIENT_REAL_HISTORY", "message": "Storico reale insufficiente (N barre, servono 252)."}`;
+- schemi additivi: `data_mode` su `SignalOut`, `TechnicalAnalysisOut`, `ActionItemOut`; `signal_data_mode` e `score_unavailable_reason` su `AssetOut` (in coda, default `null`);
+- migrazione additiva `signals.data_mode` con CHECK `NULL`/`REAL`/`DEMO` in `MIGRATIONS["signals"]`, `SIGNALS_REBUILD_SQL` (colonna e copia) e `BASE_SCHEMA`;
+- seed: segnali via `recalculate_signal`; con la sola serie demo l'orologio è quello del seed (`2026-05-17T00:00:00`, come il vecchio `created_at`), con una serie reale quello attuale; `signals_inserted` conta le righe create;
+- test: `tests/test_lab_boundaries.py` (`ast` su `backend/app/lab/*.py` e sui 7 servizi del piano, `PENDING_BOUNDARY = {"backtest_engine.py", "ml_dataset_service.py"}` con `xfail(strict=True)`, controllo che il rilevatore veda l'import legittimo di `prices_service`); `tests/test_lab_signals.py` con i 5 test del piano; in `tests/test_api.py` contratto `/assets` con i 2 campi additivi e 4 test (`data_mode` di `/signals` e `/assets`, score di `/technical-analysis` = segnale, 409 `INSUFFICIENT_REAL_HISTORY` con `score_unavailable_reason` su `/assets`, `data_mode` delle azioni dell'action board); `test_provider_failure_fallback_to_demo_does_not_change_final_score` (in `tests/test_news_providers.py`, non in `tests/test_api.py`) verde e invariato;
+- RED verificato: `ImportError` di `recalculate_signal`; confine fallito su `scoring_engine.py` (2 xfail strict sui moduli pendenti); `KeyError: 'data_mode'`; 200 invece di 409; contratto `AssetOut` senza i nuovi campi; regressione news: score 0 riportato a 50 (vedi deviazioni);
+- scelte interpretative:
+  - "riga D più recente con `warmup_complete`" = l'ultima riga D deve essere completa: nessun ripiego su righe più vecchie o su un segmento precedente (dopo un buco o uno split il segmento nuovo ha il proprio warm-up); `N` del messaggio = barre del segmento corrente;
+  - `score_unavailable_reason` solo per le serie REAL; una serie DEMO corta non ha segnale né motivo e `/technical-analysis` risponde 404;
+  - l'analisi tecnica ricalcola in memoria (nessuna scrittura in una GET), uguale alla riga di `features_daily` per la proprietà di finestra limitata (test di uguaglianza con il segnale);
+  - il 409 porta anche `message` (testo sicuro) oltre al `reason_code`;
+  - `ActionItemOut.data_mode` = `data_mode` dell'ultimo segnale del simbolo per BUY/REDUCE/SELL, `null` per RISK/OK;
+  - la finestra news di `aggregate_news_sentiment` resta sull'orologio reale anche quando `recalculate_signal` riceve `now` (`sentiment_engine.py` non toccato); i test bloccano l'orologio di `sentiment_engine`;
+- deviazioni:
+  - `backend/app/services/news_engine.py` (fuori elenco): `_update_signal_news_score` sommava la correzione news a `final_score`, `score` e `signal` a ogni refresh news reale, rompendo `final_score = score` e l'uguaglianza con `features_daily`; ora aggiorna solo la parte informativa (`final_score = score = technical_score`); corretta anche la catena `technical_score or score or 50`, che riportava uno score 0 a 50;
+  - 7 test oltre i 5 del piano in `tests/test_lab_signals.py`: refresh news, score 0, analisi tecnica (uguaglianza e `LabError`), migrazione (ricostruzione e `ALTER`), schema nuovo;
+  - il `-k "... boundary ..."` del piano non seleziona il test del rilevatore (modulo `test_lab_boundaries`): i file nuovi sono stati eseguiti per intero;
+- impatto frontend (non toccato, in attesa di decisione dell'utente): `AnalysisPage` legge `indicators.volatility_annualized_30d` e `indicators.max_drawdown`, ora `volatility_30d` e `max_drawdown_252`, quindi i riquadri "Volatilita" e "Max drawdown" mostrano "N/D"; per un asset REAL corto la pagina mostra "API request failed: 409" (`api.ts` traduce solo i reason code noti); i tipi di `api.ts` non hanno ancora `data_mode`, `signal_data_mode`, `score_unavailable_reason`; nessun crash;
+- tempi: sullo stesso PC il seed con lo score v1 è più rapido della base `96f7299` (template 4,0 s contro 5,9 s; i test che eseguono il seed 3,3–5,9 s contro 4,6–8,6 s); una prima esecuzione della suite a 174 s era rumore della macchina (finale 94 s);
+- note per i task successivi:
+  - Task 10 e 13: rimuovere la propria voce da `PENDING_BOUNDARY` in `tests/test_lab_boundaries.py`;
+  - Task 15 (Analisi, badge, marcatore DEMO): adeguare `AnalysisPage` ai nomi `features-v1`, mostrare `score_unavailable_reason`/`message` del 409 e `data_mode`; tipi `api.ts` omologhi ai nuovi campi (anche Task 14);
+  - ogni ricalcolo del segnale aggiorna `features_daily` del solo asset (D, W, M) nella serie del segnale;
+- minori aperti: una serie REAL con almeno 252 barre ma input NaN (serie piatta) non ha segnale e `score_unavailable_reason` è `None`; `/assets` carica la serie di ogni asset senza segnale per il motivo; l'analisi tecnica ricalcola le feature a ogni richiesta (circa 15 ms per 1500 barre);
+- ambiente: `backend/.venv` creato nel worktree con i comandi di AGENTS.md (Python 3.14.7, `pip check` pulito);
+- gate: `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_lab_feature_store.py tests\test_lab_score.py tests\test_lab_features.py tests\test_lab_series.py tests\test_database.py tests\test_news_providers.py -p no:cacheprovider -W error::RuntimeWarning` = 113 passati, 2 xfail; `pytest tests\test_lab_boundaries.py tests\test_lab_signals.py tests\test_api.py -k "signal or technical or boundar or news or assets or action_board"` = 58 passati, 2 xfail; suite completa `pytest -p no:cacheprovider` = 767 test, 765 passati, 2 xfail (strict), 0 falliti, 0 errori (JUnit XML, 94 s); `ruff check backend scripts tests` verde; `git diff --cached --check` verde; review del diff: nessun rilievo Critical o Important aperto (la regressione score 0 → 50 trovata in review è stata corretta con TDD).
+
 ## Backlog per i sottoprogetti futuri
 
 Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
@@ -386,10 +418,12 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-03 | Merge fast-forward su `main` dei task SP1 su richiesta esplicita dell'utente (`main` = `b76fff5`, Task 0–3, verificato nel Task 5) | utente |
 | 2026-10-03 | SP1 Task 6 eseguito nella stessa chat del Task 5 (deroga alla regola "nuova chat per task", solo per il Task 6) | utente |
 | 2026-10-03 | `features_daily`: con due barre W/M della stessa `available_at` in segmenti diversi (split a metà periodo) resta quella del segmento successivo; `signal_panel` W/M usa la riga as-of solo se è dello stesso segmento della data | Claude, motivata nel Task 6 |
+| 2026-10-03 | Merge fast-forward su `main` dei Task 4–6 su richiesta esplicita dell'utente (`main` = `96f7299`) | utente |
+| 2026-10-03 | Score unico nei segnali: l'ultima riga D deve avere `warmup_complete`, senza ripiego su righe o segmenti precedenti; anche il refresh news lascia `final_score = score` (correzione news solo informativa, `news_engine.py` fuori elenco) | Claude, motivata nel Task 7 |
 
 ## Note di ripresa
 
-- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
+- Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3) e poi a `96f7299` (Task 4–6). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
 - `backend/.venv` non è versionato: ogni worktree lo crea con i comandi di `AGENTS.md`.
