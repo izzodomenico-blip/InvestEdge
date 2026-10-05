@@ -966,7 +966,7 @@ def precheck(self, connection, symbols: Sequence[str], data_mode: DataMode) -> N
 
 Modifiche agli schemi: `BacktestRunIn` senza `fee_percent`; nuovi campi `data_mode: DataMode = "REAL"`, `signal_name: str = "score"` (validato su `score`, `SUBSCORE_COLUMNS`, `FEATURE_COLUMNS_V1`), `signal_timeframe: Timeframe = "D"`, `commission_eur`, `cost_bps_equity`, `cost_bps_crypto`, `fractional_shares`, `min_trade_eur` (tutti `| None`, default dalle settings). `BacktestCompareIn` uguale. `BacktestSummaryOut`: `fee_percent: float | None`, più `engine_version`, `data_mode`, `signal_name`, `signal_timeframe`, `cost_profile: dict | None`, `warnings: list[str]`, `excluded: dict[str, str]`, `commission_eur`, `spread_cost_eur`, `turnover`, `exposure`. Fingerprint = `canonical_hash` di config normalizzata, versioni, `data_mode`, `inputs_hash`. Ogni run REAL registra un tentativo `BACKTEST` (o `COMPARE` per strategia) nella famiglia `(signal_name, signal_timeframe)`.
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_backtest.py` e `tests/test_api.py`:
+- [x] **Step 1: Test RED** in `tests/test_lab_backtest.py` e `tests/test_api.py`:
   - `test_usd_asset_trades_are_converted_to_eur` (cambio 0,9: prezzo di esecuzione `open × 0,9 × 1,001`);
   - `test_real_run_excludes_assets_without_real_series_and_lists_them`;
   - `test_real_universe_empty_is_rejected_before_enqueue` (409 `LAB_NO_REAL_SERIES`);
@@ -976,8 +976,8 @@ Modifiche agli schemi: `BacktestRunIn` senza `fee_percent`; nuovi campi `data_mo
   - `test_trials_count_distinct_configs_only` (stesso config due volte → `family_trial_sharpes` di lunghezza 1);
   - `test_lab_trials_are_append_only` (UPDATE e DELETE sollevano);
   - API: `POST /backtests/run` → 202 con `job_id`; `GET /lab/jobs/{id}` → `SUCCEEDED` con `result_ref` = id del run; `GET /backtests/{id}` con `engine_version == "v1"`; confronto → 202 e `result` con le strategie ordinate per Sharpe netto (il confronto non corregge per i tentativi: l'evidenza viene dal walk-forward, che lo dichiara nella UI del Task 14).
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_backtest.py`, `tests\test_lab_boundaries.py`, suite completa, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_backtest.py`, `tests\test_lab_boundaries.py`, suite completa, Ruff).
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: run honest EUR backtests as jobs with trial registry`
 

@@ -4,11 +4,13 @@
   richiesto o, se nullo, in quello preferito dell'asset (REAL se esiste, altrimenti DEMO); asset senza prezzi saltati.
 - `FX_BACKFILL`: `FXService.backfill_history` per ogni valuta, su una connessione senza transazione aperta
   (il budget del trasporto la rifiuta); ricontrolla `ENABLE_REAL_DATA` prima di ogni chiamata.
+- `BACKTEST`: run v1 persistito (`result_ref` = id del run); `COMPARE`: confronto non persistito (risultato inline).
+  Avanzamento e `raise_if_cancelled` fra un passo e l'altro: un job annullato non scrive run ne tentativi.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -19,6 +21,8 @@ from backend.app.lab.contracts import LabError
 from backend.app.lab.feature_store import FeatureStore
 from backend.app.lab.jobs import JobContext, JobOutcome, register_job_handler
 from backend.app.lab.series import preferred_data_mode
+from backend.app.models import BacktestCompareIn, BacktestRunIn
+from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.fx_service import FXService
 
 _REFRESH_COUNTS = ("inserted", "updated", "deleted", "unchanged")
@@ -80,5 +84,39 @@ def backfill_fx(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
     return JobOutcome(result={"currencies": results})
 
 
+def _checkpoint(context: JobContext) -> Callable[[float], None]:
+    def step(progress: float) -> None:
+        context.set_progress(progress)
+        context.raise_if_cancelled()
+
+    return step
+
+
+def run_backtest(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
+    config = BacktestRunIn.model_validate(dict(params))
+    connection = get_connection()
+    try:
+        result = BacktestEngine().run_backtest(
+            connection, config, job_id=context.job_id, now=datetime.now(UTC), checkpoint=_checkpoint(context)
+        )
+    finally:
+        connection.close()
+    return JobOutcome(result_ref=str(result.backtest_id), result={"backtest_id": result.backtest_id})
+
+
+def compare_backtests(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
+    payload = BacktestCompareIn.model_validate(dict(params))
+    connection = get_connection()
+    try:
+        result = BacktestEngine().compare_strategies(
+            connection, payload, job_id=context.job_id, now=datetime.now(UTC), checkpoint=_checkpoint(context)
+        )
+    finally:
+        connection.close()
+    return JobOutcome(result=result)
+
+
 register_job_handler("FEATURE_REFRESH", refresh_features)
 register_job_handler("FX_BACKFILL", backfill_fx)
+register_job_handler("BACKTEST", run_backtest)
+register_job_handler("COMPARE", compare_backtests)

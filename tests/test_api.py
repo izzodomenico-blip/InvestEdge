@@ -5,13 +5,13 @@ import csv
 import hashlib
 import io
 import sqlite3
+from datetime import UTC, datetime
 
 import httpx
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.technical_analysis import TechnicalAnalysisService
 
 
@@ -2338,6 +2338,8 @@ def test_portfolio_recommendations_endpoint(client: TestClient) -> None:
 
 
 def _backtest_payload(strategy_name: str = "SCORE_THRESHOLD") -> dict[str, object]:
+    # Contratto v1 (SP1 Task 10): niente `fee_percent` (costi Trade Republic dalle impostazioni) e un solo
+    # `data_mode`; il seed contiene solo serie DEMO.
     payload: dict[str, object] = {
         "name": f"Test {strategy_name}",
         "strategy_name": strategy_name,
@@ -2349,35 +2351,71 @@ def _backtest_payload(strategy_name: str = "SCORE_THRESHOLD") -> dict[str, objec
         "buy_threshold": 55,
         "sell_threshold": 40,
         "max_asset_weight": 0.2,
-        "fee_percent": 0.1,
         "stop_loss_percent": 8,
         "take_profit_percent": 25,
         "rebalance_frequency": "WEEKLY",
+        "data_mode": "DEMO",
     }
     if strategy_name == "TOP_N_SCORE":
         payload["top_n"] = 2
     return payload
 
 
-def test_run_backtest_score_threshold(client: TestClient) -> None:
-    response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
+@pytest.fixture()
+def backtest_client(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Seed DEMO con cambi USD->EUR storici sintetici (BCE) e orologio dei job bloccato dopo la fine del seed."""
+    from backend.app.database import db_session
 
-    assert response.status_code == 200
-    data = response.json()
+    frozen = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return frozen.replace(tzinfo=None) if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr("backend.app.lab.handlers.datetime", FrozenDatetime)
+    days = pd.date_range("2024-05-01", "2026-05-31", freq="D").strftime("%Y-%m-%d")
+    with db_session() as connection:
+        connection.executemany(
+            """
+            INSERT INTO fx_rates (from_currency, to_currency, rate, observed_at, provider, quality)
+            VALUES ('USD', 'EUR', 0.92, ?, 'ecb', 'reference')
+            """,
+            [(day,) for day in days],
+        )
+    return client
+
+
+def _backtest_job(client: TestClient, path: str, payload: dict[str, object]) -> dict[str, object]:
+    response = client.post(path, json=payload)
+    assert response.status_code == 202, response.text
+    job = response.json()
+    assert job["status"] == "SUCCEEDED", job
+    return job
+
+
+def _run_backtest(client: TestClient, payload: dict[str, object]) -> dict:
+    job = _backtest_job(client, "/backtests/run", payload)
+    detail = client.get(f"/backtests/{job['result_ref']}")
+    assert detail.status_code == 200
+    return detail.json()
+
+
+def test_run_backtest_score_threshold(backtest_client: TestClient) -> None:
+    data = _run_backtest(backtest_client, _backtest_payload("SCORE_THRESHOLD"))
+
     summary = data["summary"]
     assert data["backtest_id"] > 0
     assert summary["strategy_name"] == "SCORE_THRESHOLD"
+    assert (summary["engine_version"], summary["data_mode"]) == ("v1", "DEMO")
     assert {"total_return_percent", "cagr", "max_drawdown", "sharpe_ratio", "win_rate", "profit_factor", "final_value"} <= set(summary)
     assert len(data["equity_curve"]) > 50
     assert all(trade["quantity"] > 0 and trade["price"] > 0 for trade in data["trades"])
     assert "alpha_vs_benchmark" in data["benchmark_comparison"]
 
 
-def test_backtest_net_analysis(client: TestClient) -> None:
-    response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
-
-    assert response.status_code == 200
-    net = response.json()["net_analysis"]
+def test_backtest_net_analysis(backtest_client: TestClient) -> None:
+    net = _run_backtest(backtest_client, _backtest_payload("SCORE_THRESHOLD"))["net_analysis"]
     assert net is not None
     # struttura completa
     assert {
@@ -2399,21 +2437,17 @@ def test_backtest_net_analysis(client: TestClient) -> None:
         assert 0 < net["effective_tax_rate_percent"] <= 26.0 + 1e-6
 
 
-def test_run_backtest_buy_and_hold(client: TestClient) -> None:
-    response = client.post("/backtests/run", json=_backtest_payload("BUY_AND_HOLD"))
+def test_run_backtest_buy_and_hold(backtest_client: TestClient) -> None:
+    data = _run_backtest(backtest_client, _backtest_payload("BUY_AND_HOLD"))
 
-    assert response.status_code == 200
-    data = response.json()
     assert data["summary"]["strategy_name"] == "BUY_AND_HOLD"
     assert data["summary"]["total_trades"] >= 1
     assert data["final_positions"]
 
 
-def test_run_backtest_top_n_score(client: TestClient) -> None:
-    response = client.post("/backtests/run", json=_backtest_payload("TOP_N_SCORE"))
+def test_run_backtest_top_n_score(backtest_client: TestClient) -> None:
+    data = _run_backtest(backtest_client, _backtest_payload("TOP_N_SCORE"))
 
-    assert response.status_code == 200
-    data = response.json()
     assert data["summary"]["strategy_name"] == "TOP_N_SCORE"
     assert len(data["equity_curve"]) > 50
     assert data["summary"]["total_trades"] >= 1
@@ -2431,19 +2465,19 @@ def _compare_payload() -> dict[str, object]:
         "buy_threshold": 55,
         "sell_threshold": 40,
         "max_asset_weight": 0.2,
-        "fee_percent": 0.1,
         "stop_loss_percent": 8,
         "take_profit_percent": 25,
         "rebalance_frequency": "WEEKLY",
         "top_n": 2,
+        "data_mode": "DEMO",
     }
 
 
-def test_compare_strategies_endpoint(client: TestClient) -> None:
-    response = client.post("/backtests/compare", json=_compare_payload())
+def test_compare_strategies_endpoint(backtest_client: TestClient) -> None:
+    client = backtest_client
+    data = _backtest_job(client, "/backtests/compare", _compare_payload())["result"]
 
-    assert response.status_code == 200
-    data = response.json()
+    assert isinstance(data, dict)
     assert len(data["entries"]) == 3
     assert {entry["strategy_name"] for entry in data["entries"]} == {
         "SCORE_THRESHOLD",
@@ -2469,11 +2503,12 @@ def test_compare_strategies_requires_two(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_walk_forward_endpoint(client: TestClient) -> None:
+def test_walk_forward_endpoint(backtest_client: TestClient) -> None:
+    # Fino al Task 11 il walk-forward resta sincrono con il contratto a fold, sulla pipeline v1.
     payload = _backtest_payload("SCORE_THRESHOLD")
     payload["folds"] = 4
 
-    response = client.post("/backtests/walk-forward", json=payload)
+    response = backtest_client.post("/backtests/walk-forward", json=payload)
 
     assert response.status_code == 200
     data = response.json()
@@ -2486,13 +2521,13 @@ def test_walk_forward_endpoint(client: TestClient) -> None:
     assert folds_seen == [1, 2, 3, 4]
 
 
-def test_walk_forward_period_too_short(client: TestClient) -> None:
+def test_walk_forward_period_too_short(backtest_client: TestClient) -> None:
     payload = _backtest_payload("BUY_AND_HOLD")
     payload["start_date"] = "2026-05-10"
     payload["end_date"] = "2026-05-15"
     payload["folds"] = 12
 
-    response = client.post("/backtests/walk-forward", json=payload)
+    response = backtest_client.post("/backtests/walk-forward", json=payload)
 
     assert response.status_code == 400
     assert "fold" in response.json()["detail"].lower()
@@ -2991,9 +3026,9 @@ def test_allocation_invalid_symbol(client: TestClient) -> None:
     assert "NOPE" in response.json()["detail"]
 
 
-def test_backtest_history_and_detail_endpoints(client: TestClient) -> None:
-    run_response = client.post("/backtests/run", json=_backtest_payload("SCORE_THRESHOLD"))
-    backtest_id = run_response.json()["backtest_id"]
+def test_backtest_history_and_detail_endpoints(backtest_client: TestClient) -> None:
+    client = backtest_client
+    backtest_id = int(_backtest_job(client, "/backtests/run", _backtest_payload("SCORE_THRESHOLD"))["result_ref"])
 
     list_response = client.get("/backtests")
     detail_response = client.get(f"/backtests/{backtest_id}")
@@ -3005,10 +3040,9 @@ def test_backtest_history_and_detail_endpoints(client: TestClient) -> None:
     assert detail_response.json()["trades"] is not None
 
 
-def test_delete_backtest_requires_backend_confirmation(client: TestClient) -> None:
-    run_response = client.post("/backtests/run", json=_backtest_payload("BUY_AND_HOLD"))
-    assert run_response.status_code == 200
-    backtest_id = run_response.json()["backtest_id"]
+def test_delete_backtest_requires_backend_confirmation(backtest_client: TestClient) -> None:
+    client = backtest_client
+    backtest_id = int(_backtest_job(client, "/backtests/run", _backtest_payload("BUY_AND_HOLD"))["result_ref"])
 
     response = client.delete(f"/backtests/{backtest_id}")
 
@@ -3023,17 +3057,9 @@ def test_delete_backtest_requires_backend_confirmation(client: TestClient) -> No
     assert client.get(f"/backtests/{backtest_id}").status_code == 404
 
 
-def test_backtest_no_lookahead_on_future_jump() -> None:
-    engine = BacktestEngine()
-    stable_values = [100.0] * 90
-    future_jump = [250.0] * 20
-    full_frame = _price_frame(stable_values + future_jump)
-    truncated_frame = _price_frame(stable_values)
-
-    full_scored = engine.prepare_price_frame_for_backtest(full_frame)
-    truncated_scored = engine.prepare_price_frame_for_backtest(truncated_frame)
-
-    assert full_scored.loc[89, "rolling_score"] == truncated_scored.loc[89, "rolling_score"]
+# `test_backtest_no_lookahead_on_future_jump` (SP1 Task 10): il motore v1 non ha piu uno score proprio;
+# la stessa proprieta e verificata sulla pipeline condivisa da
+# `tests/test_lab_backtest.py::test_universe_signals_ignore_future_bars`.
 
 
 def test_api_cache_save_and_read(client: TestClient) -> None:

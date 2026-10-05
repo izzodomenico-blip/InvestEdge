@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -14,7 +15,9 @@ from backend.app.data_providers.base import ProviderError, RateLimitExceeded
 from backend.app.data_providers.ecb import normalize_ecb_currency
 from backend.app.data_providers.transport import SafeProviderTransportError
 from backend.app.database import db_session
+from backend.app.lab import handlers as _lab_handlers  # noqa: F401 - registra gli handler BACKTEST e COMPARE
 from backend.app.lab.contracts import LabError
+from backend.app.lab.jobs import JobKind, JobRecord, get_job_service
 from backend.app.models import (
     ActionBoardOut,
     AlertSendOut,
@@ -27,7 +30,6 @@ from backend.app.models import (
     AssetDataStatusOut,
     AssetOut,
     BacktestCompareIn,
-    BacktestCompareOut,
     BacktestResultOut,
     BacktestRunIn,
     BacktestSummaryOut,
@@ -45,6 +47,7 @@ from backend.app.models import (
     InstrumentDetailOut,
     InstrumentSearchOut,
     InstrumentType,
+    JobOut,
     ListingMetadataApplyIn,
     ListingMetadataPreviewIn,
     ListingMetadataPreviewOut,
@@ -625,32 +628,52 @@ def rebalance_portfolio(payload: AllocationPlanIn) -> RebalanceOut:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.post("/backtests/run", response_model=BacktestResultOut)
-def run_backtest(payload: BacktestRunIn) -> BacktestResultOut:
-    try:
-        with db_session() as connection:
-            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
-            return backtest_engine.run_backtest(connection, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+def _lab_conflict(exc: LabError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"reason_code": exc.code, "message": exc.message},
+    )
 
 
-@router.post("/backtests/compare", response_model=BacktestCompareOut)
-def compare_backtests(payload: BacktestCompareIn) -> BacktestCompareOut:
+def _enqueue_backtest_job(
+    kind: JobKind,
+    payload: BacktestRunIn | BacktestCompareIn,
+) -> JobOut:
+    """Controlli prima di accodare (univocita dei simboli, serie reale in REAL), poi job asincrono (202).
+
+    Il lock di univocita viene rilasciato prima di accodare: il job usa una propria connessione.
+    """
     try:
         with db_session() as connection:
-            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
-            return BacktestCompareOut(**backtest_engine.compare_strategies(connection, payload))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            _ensure_unambiguous_before_provider_calls(connection, [*payload.symbols, payload.benchmark_symbol])
+            backtest_engine.precheck(connection, payload.symbols, payload.data_mode)
+        record: JobRecord = get_job_service().enqueue(kind, payload.model_dump(mode="json"))
+    except LabError as exc:
+        raise _lab_conflict(exc) from None
+    return JobOut(**asdict(record))
+
+
+@router.post("/backtests/run", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def run_backtest(payload: BacktestRunIn) -> JobOut:
+    """Backtest v1 come job: il risultato e il run indicato da `result_ref` (`GET /backtests/{id}`)."""
+    return _enqueue_backtest_job("BACKTEST", payload)
+
+
+@router.post("/backtests/compare", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def compare_backtests(payload: BacktestCompareIn) -> JobOut:
+    """Confronto come job: il risultato (`BacktestCompareOut`) e nel job, ordinato per Sharpe netto."""
+    return _enqueue_backtest_job("COMPARE", payload)
 
 
 @router.post("/backtests/walk-forward", response_model=WalkForwardOut)
 def walk_forward_backtest(payload: WalkForwardIn) -> WalkForwardOut:
+    # Contratto a fold sincrono sulla pipeline v1 fino al walk-forward vero (SP1 Task 11).
     try:
         with db_session() as connection:
-            _ensure_unambiguous_symbols(connection, [*payload.symbols, payload.benchmark_symbol])
+            _ensure_unambiguous_before_provider_calls(connection, [*payload.symbols, payload.benchmark_symbol])
             return WalkForwardOut(**backtest_engine.walk_forward(connection, payload))
+    except LabError as exc:
+        raise _lab_conflict(exc) from None
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from backend.app.lab.contracts import DataMode
+from backend.app.lab.contracts import DataMode, Timeframe
+from backend.app.lab.features import FEATURE_COLUMNS_V1
+from backend.app.lab.score_v1 import SUBSCORE_COLUMNS
 from backend.app.models.market_data import (
     EffectiveObservationQuality,
     SourceObservationQuality,
@@ -829,22 +831,70 @@ class PortfolioRecommendationOut(BaseModel):
     reason: str
 
 
-class BacktestRunIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=120)
-    strategy_name: BacktestStrategy
+# Segnali valutabili dal laboratorio: score, sottopunteggi e feature `features-v1` (come il feature store).
+BACKTEST_SIGNAL_NAMES: frozenset[str] = frozenset({"score", *SUBSCORE_COLUMNS, *FEATURE_COLUMNS_V1})
+_ISO_DATE = r"^\d{4}-\d{2}-\d{2}$"
+
+
+class _BacktestSettingsIn(BaseModel):
+    """Campi comuni di run, confronto e walk-forward del motore v1 (SP1 Task 10).
+
+    Via `fee_percent` (un campo legacy inviato viene ignorato): profilo costi Trade Republic con i default delle
+    impostazioni per i campi nulli. Un solo `data_mode` per run (REAL di default).
+    """
+
     symbols: list[str] = Field(..., min_length=1)
     initial_cash: float = Field(default=100000, gt=0)
-    start_date: str
-    end_date: str
+    start_date: str = Field(..., pattern=_ISO_DATE)
+    end_date: str = Field(..., pattern=_ISO_DATE)
     benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
     buy_threshold: float = Field(default=70, ge=0, le=100)
     sell_threshold: float = Field(default=40, ge=0, le=100)
     max_asset_weight: float = Field(default=0.15, gt=0, le=1)
-    fee_percent: float = Field(default=0.1, ge=0, le=5)
     stop_loss_percent: float | None = Field(default=8, gt=0, le=100)
     take_profit_percent: float | None = Field(default=25, gt=0, le=500)
     rebalance_frequency: RebalanceFrequency = "WEEKLY"
     top_n: int | None = Field(default=5, ge=1, le=25)
+    data_mode: DataMode = "REAL"
+    signal_name: str = "score"
+    signal_timeframe: Timeframe = "D"
+    commission_eur: float | None = Field(default=None, ge=0, le=100)
+    cost_bps_equity: float | None = Field(default=None, ge=0, le=1000)
+    cost_bps_crypto: float | None = Field(default=None, ge=0, le=1000)
+    fractional_shares: bool | None = None
+    min_trade_eur: float | None = Field(default=None, ge=0, le=1_000_000)
+
+    @field_validator("symbols")
+    @classmethod
+    def _normalize_symbols(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in value if symbol.strip()))
+        if not normalized:
+            raise ValueError("Seleziona almeno un asset.")
+        return normalized
+
+    @field_validator("signal_name")
+    @classmethod
+    def _known_signal(cls, value: str) -> str:
+        if value not in BACKTEST_SIGNAL_NAMES:
+            raise ValueError("Segnale non disponibile nel laboratorio.")
+        return value
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _valid_date(cls, value: str) -> str:
+        date.fromisoformat(value)
+        return value
+
+    @model_validator(mode="after")
+    def _ordered_period(self) -> _BacktestSettingsIn:
+        if self.end_date < self.start_date:
+            raise ValueError("La data fine deve essere uguale o successiva alla data inizio.")
+        return self
+
+
+class BacktestRunIn(_BacktestSettingsIn):
+    name: str = Field(..., min_length=1, max_length=120)
+    strategy_name: BacktestStrategy
 
 
 class BacktestSummaryOut(BaseModel):
@@ -858,7 +908,7 @@ class BacktestSummaryOut(BaseModel):
     buy_threshold: float
     sell_threshold: float
     max_asset_weight: float
-    fee_percent: float
+    fee_percent: float | None = None  # solo motore v0; i run v1 usano il profilo costi
     stop_loss_percent: float | None = None
     take_profit_percent: float | None = None
     rebalance_frequency: str
@@ -873,6 +923,19 @@ class BacktestSummaryOut(BaseModel):
     benchmark_return_percent: float = 0
     alpha_vs_benchmark: float = 0
     created_at: str | None = None
+    # Campi additivi del motore v1 (SP1 Task 10); i run `v0` ("motore precedente") li hanno nulli o vuoti.
+    engine_version: str = "v0"
+    data_mode: DataMode | None = None
+    signal_name: str | None = None
+    signal_timeframe: Timeframe | None = None
+    cost_profile: dict[str, Any] | None = None
+    warnings: list[str] = Field(default_factory=list)
+    excluded: dict[str, str] = Field(default_factory=dict)
+    commission_eur: float | None = None
+    spread_cost_eur: float | None = None
+    turnover: float | None = None
+    exposure: float | None = None
+    fingerprint: str | None = None
 
 
 class BacktestEquityPointOut(BaseModel):
@@ -898,6 +961,8 @@ class BacktestTradeOut(BaseModel):
     net_amount: float
     pnl: float
     reason: str | None = None
+    commission: float | None = None   # v1: commissione dell'ordine (uguale a `fees`)
+    spread_cost: float | None = None  # v1: costo per lato (spread e slippage) incluso nel prezzo
 
 
 class BacktestPositionOut(BaseModel):
@@ -943,22 +1008,17 @@ class BacktestResultOut(BaseModel):
     net_analysis: BacktestNetAnalysisOut | None = None
 
 
-class BacktestCompareIn(BaseModel):
+class BacktestCompareIn(_BacktestSettingsIn):
     name: str = Field(default="Confronto strategie", min_length=1, max_length=120)
     strategy_names: list[BacktestStrategy] = Field(..., min_length=2, max_length=3)
-    symbols: list[str] = Field(..., min_length=1)
-    initial_cash: float = Field(default=100000, gt=0)
-    start_date: str
-    end_date: str
-    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=24)
-    buy_threshold: float = Field(default=70, ge=0, le=100)
-    sell_threshold: float = Field(default=40, ge=0, le=100)
-    max_asset_weight: float = Field(default=0.15, gt=0, le=1)
-    fee_percent: float = Field(default=0.1, ge=0, le=5)
-    stop_loss_percent: float | None = Field(default=8, gt=0, le=100)
-    take_profit_percent: float | None = Field(default=25, gt=0, le=500)
-    rebalance_frequency: RebalanceFrequency = "WEEKLY"
-    top_n: int | None = Field(default=5, ge=1, le=25)
+
+    @field_validator("strategy_names")
+    @classmethod
+    def _distinct_strategies(cls, value: list[str]) -> list[str]:
+        distinct = list(dict.fromkeys(value))
+        if len(distinct) < 2:
+            raise ValueError("Seleziona almeno due strategie diverse.")
+        return distinct
 
 
 class BacktestCompareEntryOut(BaseModel):

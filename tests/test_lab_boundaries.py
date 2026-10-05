@@ -20,8 +20,8 @@ GUARDED_SERVICES = (
     "signals_service.py",
     "market_data_service.py",
 )
-# Riscritti nei Task 10 (backtest) e 13 (ML), che rimuovono la propria voce.
-PENDING_BOUNDARY = {"backtest_engine.py", "ml_dataset_service.py"}
+# Riscritto nel Task 13 (ML), che rimuove la propria voce (il Task 10 ha rimosso `backtest_engine.py`).
+PENDING_BOUNDARY = {"ml_dataset_service.py"}
 
 
 def _guarded_files() -> list[Path]:
@@ -66,7 +66,7 @@ def test_guarded_modules_exist_and_detector_finds_the_chart_import() -> None:
             path,
             id=f"{path.parent.name}/{path.name}",
             marks=(
-                pytest.mark.xfail(strict=True, reason="riscritto nel Task 10/13")
+                pytest.mark.xfail(strict=True, reason="riscritto nel Task 13")
                 if path.parent == SERVICES_DIR and path.name in PENDING_BOUNDARY
                 else ()
             ),

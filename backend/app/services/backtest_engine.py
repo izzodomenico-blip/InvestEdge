@@ -1,16 +1,49 @@
+"""Motore di backtest v1: orchestratore di universo, strategie, simulatore e persistenza (spec SP1 §4.2, §7).
+
+- Run `v1` (`engine_version`): segnale as-of dal feature store (`signal_name`, `signal_timeframe`), decisione alla
+  chiusura e ordini all'apertura della barra successiva dello stesso listing, costi Trade Republic, contabilita in
+  EUR, un solo `data_mode` (REAL di default), impronta canonica di configurazione, versioni e input.
+- Ogni run REAL registra un tentativo nel registro (`BACKTEST`, o `COMPARE` per strategia del confronto) nella
+  famiglia (`signal_name`, `signal_timeframe`); i run DEMO sono etichettati e mai registrati.
+- Imposte e bollo restano nell'analisi netta, in EUR (utili e perdite di cambio inclusi).
+- I run `v0` del motore precedente restano leggibili e cancellabili ("motore precedente").
+- `walk_forward` mantiene il contratto a fold del motore precedente sulla pipeline v1 fino al walk-forward vero
+  (Task 11); ogni fold e una simulazione indipendente e non e registrato come tentativo.
+"""
+
 from __future__ import annotations
 
+import json
+import math
 import sqlite3
 import statistics
-from dataclasses import dataclass, field
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from backend.app.config import get_settings
+from backend.app.lab.contracts import PIPELINE_VERSION, SCORE_VERSION, DataMode, LabError
+from backend.app.lab.costs import CostProfile
+from backend.app.lab.series import available_data_modes
+from backend.app.lab.simulator import SimulationConfig, SimulationResult, compute_metrics, simulate
+from backend.app.lab.strategies import StrategyParams
+from backend.app.lab.trials import canonical_hash, family_key, record_trial, trial_config
+from backend.app.lab.universe import (
+    UniverseInputs,
+    benchmark_curve,
+    build_universe_inputs,
+    no_real_series_error,
+)
 from backend.app.models import (
     BacktestBenchmarkComparisonOut,
+    BacktestCompareEntryOut,
     BacktestCompareIn,
+    BacktestCompareOut,
     BacktestEquityPointOut,
     BacktestNetAnalysisOut,
     BacktestPositionOut,
@@ -21,37 +54,16 @@ from backend.app.models import (
     WalkForwardIn,
 )
 from backend.app.services.common import (
-    SCORE_BUY,
-    SCORE_HOLD,
-    SCORE_REDUCE,
-    SCORE_STRONG_BUY,
-)
-from backend.app.services.common import (
     now_local as _now,
 )
 from backend.app.services.common import (
     round_safe as _round,
 )
-from backend.app.services.technical_analysis import TechnicalAnalysisService
 
-
-def _date(value: str) -> pd.Timestamp:
-    parsed = pd.to_datetime(value, errors="coerce")
-    if pd.isna(parsed):
-        raise ValueError(f"Data non valida: {value}.")
-    return pd.Timestamp(parsed).normalize()
-
-
-@dataclass
-class _Position:
-    symbol: str
-    quantity: float = 0.0
-    average_price: float = 0.0
-    realized_pnl: float = 0.0
-
-    def value(self, price: float) -> float:
-        return self.quantity * price
-
+ENGINE_VERSION = "v1"
+LEGACY_ENGINE_VERSION = "v0"
+Checkpoint = Callable[[float], None]
+BacktestSettings = BacktestRunIn | BacktestCompareIn
 
 STRATEGY_LABELS: dict[str, str] = {
     "SCORE_THRESHOLD": "Score threshold",
@@ -59,176 +71,163 @@ STRATEGY_LABELS: dict[str, str] = {
     "TOP_N_SCORE": "Top N score",
 }
 
-# Modello fiscale/costi Italia (semplificato, per stima "netto in tasca")
+# Modello fiscale Italia (semplificato, per stima "netto in tasca"), in EUR
 TAX_RATE_STANDARD = 26.0      # azioni, ETF, cripto: 26% sulle plusvalenze realizzate
 TAX_RATE_BONDS = 12.5         # titoli di Stato white-list ed ETF obbligazionari govt
 STAMP_DUTY_ANNUAL = 0.2       # imposta di bollo titoli: 0.2% annuo sul controvalore
-SLIPPAGE_PER_SIDE = 0.05      # slippage/spread stimato per lato, in percento
+SLIPPAGE_PER_SIDE = 0.05      # solo run v0: slippage stimato per lato, in percento (nel v1 e nel prezzo)
 BOND_ASSET_TYPES = {"bond", "bond_etf"}
+
+_V1_NET_NOTES = [
+    "Importi in EUR: plusvalenze e minusvalenze includono gli effetti di cambio.",
+    "Tasse stimate sulle sole plusvalenze realizzate (26% standard, 12,5% titoli di Stato/ETF govt).",
+    "Le plusvalenze non realizzate sulle posizioni finali non sono tassate.",
+    f"Bollo {STAMP_DUTY_ANNUAL:.1f}% annuo sul controvalore medio.",
+    "Commissioni e costo per lato (spread e slippage) gia inclusi nel valore finale lordo: mostrati per trasparenza.",
+]
+_RUN_COLUMNS = (
+    "name", "strategy_name", "initial_cash", "start_date", "end_date", "benchmark_symbol", "buy_threshold",
+    "sell_threshold", "max_asset_weight", "fee_percent", "stop_loss_percent", "take_profit_percent",
+    "rebalance_frequency", "total_return_percent", "cagr", "max_drawdown", "sharpe_ratio", "win_rate",
+    "profit_factor", "total_trades", "final_value", "benchmark_return_percent", "alpha_vs_benchmark", "created_at",
+    "engine_version", "data_mode", "signal_name", "signal_timeframe", "cost_profile_json", "fingerprint",
+    "warnings_json", "excluded_json", "commission_eur", "spread_cost_eur", "turnover", "exposure",
+)
+
+
+def _no_checkpoint(_progress: float) -> None:
+    return None
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    """Una strategia simulata sull'universo: risultato, sintesi, curva e chiave del tentativo."""
+
+    strategy_name: str
+    result: SimulationResult
+    metrics: dict[str, float]
+    summary: BacktestSummaryOut
+    equity_curve: list[BacktestEquityPointOut]
+    config_hash: str
 
 
 @dataclass
 class BacktestEngine:
-    """Local backtest engine for simulated strategies only."""
+    """Backtest locale su dati simulati o reali: nessun broker, nessun ordine reale."""
 
-    technical_service: TechnicalAnalysisService = field(default_factory=TechnicalAnalysisService)
+    def precheck(self, connection: sqlite3.Connection, symbols: Sequence[str], data_mode: DataMode) -> None:
+        """Prima di accodare: in REAL almeno un simbolo deve avere una serie reale (`LAB_NO_REAL_SERIES`)."""
+        if data_mode != "REAL":
+            return
+        for symbol in dict.fromkeys(item.strip().upper() for item in symbols if item and item.strip()):
+            rows = connection.execute(
+                "SELECT id FROM assets WHERE UPPER(symbol) = ? ORDER BY id", (symbol,)
+            ).fetchall()
+            if len(rows) == 1 and "REAL" in available_data_modes(connection, int(rows[0][0])):
+                return
+        raise no_real_series_error()
 
-    def run_backtest(self, connection: sqlite3.Connection, config: BacktestRunIn) -> BacktestResultOut:
-        symbols = self._normalize_symbols(config.symbols)
-        start_date = _date(config.start_date)
-        end_date = _date(config.end_date)
-        if end_date < start_date:
-            raise ValueError("La data fine deve essere successiva alla data inizio.")
-
-        market_data = self._load_market_data(connection, symbols, end_date)
-        if not market_data:
-            raise ValueError("Database non inizializzato o storico prezzi non disponibile. Esegui il seed.")
-
-        benchmark_symbol = config.benchmark_symbol.upper()
-        benchmark_data = self._load_market_data(connection, [benchmark_symbol], end_date).get(benchmark_symbol)
-
-        available_dates = self._available_dates(market_data, start_date, end_date)
-        if not available_dates:
-            raise ValueError("Nessun dato prezzo disponibile nel periodo richiesto.")
-
-        state = self._simulate(config, symbols, market_data, available_dates)
-        benchmark_curve = self._benchmark_curve(
-            benchmark_symbol,
-            benchmark_data,
-            available_dates,
-            config.initial_cash,
+    def run_backtest(
+        self,
+        connection: sqlite3.Connection,
+        config: BacktestRunIn,
+        *,
+        job_id: int | None = None,
+        now: datetime | None = None,
+        checkpoint: Checkpoint | None = None,
+    ) -> BacktestResultOut:
+        """Run v1 persistito; `checkpoint(progress)` fra i passi (annullamento cooperativo dei job)."""
+        step = checkpoint or _no_checkpoint
+        inputs = self._universe(connection, config, now, step, share=0.6)
+        costs = _cost_profile(config)
+        benchmark = benchmark_curve(
+            connection, config.benchmark_symbol, data_mode=config.data_mode, calendar=inputs.calendar
         )
-        self._attach_benchmark(state["equity_curve"], benchmark_curve)
-
-        summary = self._calculate_summary(config, state, available_dates, benchmark_curve)
-        backtest_id = self._persist(connection, config, summary, state)
+        outcome = self._simulate(config, config.strategy_name, config.name, inputs, costs, benchmark)
+        step(0.9)
+        backtest_id = self._persist(connection, config, outcome, inputs, job_id)
         return self.get_backtest(connection, backtest_id)
 
-    def compare_strategies(self, connection: sqlite3.Connection, payload: BacktestCompareIn) -> dict[str, Any]:
-        """Esegue piu strategie sullo stesso periodo/universo senza persistere i run."""
-        symbols = self._normalize_symbols(payload.symbols)
-        start_date = _date(payload.start_date)
-        end_date = _date(payload.end_date)
-        if end_date < start_date:
-            raise ValueError("La data fine deve essere successiva alla data inizio.")
+    def compare_strategies(
+        self,
+        connection: sqlite3.Connection,
+        payload: BacktestCompareIn,
+        *,
+        job_id: int | None = None,
+        now: datetime | None = None,
+        checkpoint: Checkpoint | None = None,
+    ) -> dict[str, Any]:
+        """Piu strategie sullo stesso universo, ordinate per Sharpe netto; nessun run persistito.
 
-        strategy_names: list[str] = []
-        for name in payload.strategy_names:
-            if name not in strategy_names:
-                strategy_names.append(name)
-        if len(strategy_names) < 2:
-            raise ValueError("Seleziona almeno due strategie diverse.")
-
-        market_data = self._load_market_data(connection, symbols, end_date)
-        if not market_data:
-            raise ValueError("Database non inizializzato o storico prezzi non disponibile. Esegui il seed.")
-
-        benchmark_symbol = payload.benchmark_symbol.upper()
-        benchmark_data = self._load_market_data(connection, [benchmark_symbol], end_date).get(benchmark_symbol)
-
-        available_dates = self._available_dates(market_data, start_date, end_date)
-        if not available_dates:
-            raise ValueError("Nessun dato prezzo disponibile nel periodo richiesto.")
-
-        benchmark_curve = self._benchmark_curve(
-            benchmark_symbol,
-            benchmark_data,
-            available_dates,
-            payload.initial_cash,
+        Il confronto non corregge per i tentativi (l'evidenza viene dal walk-forward), ma in REAL registra un
+        tentativo `COMPARE` per strategia.
+        """
+        step = checkpoint or _no_checkpoint
+        names = list(dict.fromkeys(payload.strategy_names))
+        if len(names) < 2:
+            raise LabError("LAB_INVALID_STRATEGIES", "Seleziona almeno due strategie diverse.")
+        inputs = self._universe(connection, payload, now, step, share=0.5)
+        costs = _cost_profile(payload)
+        benchmark = benchmark_curve(
+            connection, payload.benchmark_symbol, data_mode=payload.data_mode, calendar=inputs.calendar
         )
-
-        entries: list[dict[str, Any]] = []
-        for strategy_name in strategy_names:
-            config = BacktestRunIn(
-                name=f"{payload.name} - {strategy_name}",
-                strategy_name=strategy_name,
-                symbols=symbols,
-                initial_cash=payload.initial_cash,
-                start_date=payload.start_date,
-                end_date=payload.end_date,
-                benchmark_symbol=payload.benchmark_symbol,
-                buy_threshold=payload.buy_threshold,
-                sell_threshold=payload.sell_threshold,
-                max_asset_weight=payload.max_asset_weight,
-                fee_percent=payload.fee_percent,
-                stop_loss_percent=payload.stop_loss_percent,
-                take_profit_percent=payload.take_profit_percent,
-                rebalance_frequency=payload.rebalance_frequency,
-                top_n=payload.top_n,
+        outcomes: list[_Outcome] = []
+        for index, name in enumerate(names):
+            outcomes.append(self._simulate(payload, name, f"{payload.name} - {name}", inputs, costs, benchmark))
+            step(0.5 + 0.4 * (index + 1) / len(names))
+        ranked = sorted(range(len(outcomes)), key=lambda index: (-outcomes[index].metrics["sharpe_ratio"], index))
+        self._record_trials(connection, payload, outcomes, "COMPARE", job_id)
+        entries = [
+            BacktestCompareEntryOut(
+                strategy_name=outcomes[index].strategy_name,
+                label=STRATEGY_LABELS.get(outcomes[index].strategy_name, outcomes[index].strategy_name),
+                rank=rank,
+                summary=outcomes[index].summary,
+                equity_curve=outcomes[index].equity_curve,
             )
-            state = self._simulate(config, symbols, market_data, available_dates)
-            self._attach_benchmark(state["equity_curve"], benchmark_curve)
-            summary = self._calculate_summary(config, state, available_dates, benchmark_curve)
-            entries.append(
-                {
-                    "strategy_name": strategy_name,
-                    "label": STRATEGY_LABELS.get(strategy_name, strategy_name),
-                    "summary": summary,
-                    "equity_curve": state["equity_curve"],
-                }
-            )
+            for rank, index in enumerate(ranked, start=1)
+        ]
+        best = entries[0]
+        return BacktestCompareOut(
+            name=payload.name,
+            start_date=inputs.calendar[0],
+            end_date=inputs.calendar[-1],
+            benchmark_symbol=payload.benchmark_symbol.upper(),
+            benchmark_return_percent=best.summary.benchmark_return_percent,
+            best_strategy=best.strategy_name,
+            entries=entries,
+        ).model_dump(mode="json")
 
-        ranked = sorted(entries, key=lambda item: item["summary"].total_return_percent, reverse=True)
-        for position, entry in enumerate(ranked, start=1):
-            entry["rank"] = position
+    def walk_forward(
+        self,
+        connection: sqlite3.Connection,
+        payload: WalkForwardIn,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Contratto a fold del motore precedente sulla pipeline v1 (sostituito dal walk-forward vero nel Task 11).
 
-        benchmark_return = ranked[0]["summary"].benchmark_return_percent if ranked else 0.0
-        return {
-            "name": payload.name,
-            "start_date": payload.start_date,
-            "end_date": payload.end_date,
-            "benchmark_symbol": benchmark_symbol,
-            "benchmark_return_percent": benchmark_return,
-            "best_strategy": ranked[0]["strategy_name"] if ranked else "",
-            "entries": entries,
-        }
-
-    def walk_forward(self, connection: sqlite3.Connection, payload: WalkForwardIn) -> dict[str, Any]:
-        """Validazione out-of-sample: divide il periodo in N fold consecutivi e
-        misura la consistenza della strategia su ciascun sottoperiodo indipendente.
-        Smaschera il rischio che il rendimento dipenda da una sola finestra fortunata."""
-        symbols = self._normalize_symbols(payload.symbols)
-        start_date = _date(payload.start_date)
-        end_date = _date(payload.end_date)
-        if end_date < start_date:
-            raise ValueError("La data fine deve essere successiva alla data inizio.")
-
-        market_data = self._load_market_data(connection, symbols, end_date)
-        if not market_data:
-            raise ValueError("Database non inizializzato o storico prezzi non disponibile. Esegui il seed.")
-
-        benchmark_symbol = payload.benchmark_symbol.upper()
-        benchmark_data = self._load_market_data(connection, [benchmark_symbol], end_date).get(benchmark_symbol)
-
-        available_dates = self._available_dates(market_data, start_date, end_date)
-        if len(available_dates) < payload.folds * 2:
+        Il periodo si divide in N fold consecutivi del calendario; ogni fold e una simulazione indipendente.
+        """
+        inputs = self._universe(connection, payload, now, _no_checkpoint, share=1.0)
+        calendar = inputs.calendar
+        if len(calendar) < payload.folds * 2:
             raise ValueError("Periodo troppo corto per il numero di fold richiesto.")
+        costs = _cost_profile(payload)
+        benchmark = benchmark_curve(
+            connection, payload.benchmark_symbol, data_mode=payload.data_mode, calendar=calendar
+        )
+        full = self._period_metrics(payload, inputs, costs, benchmark, calendar)
 
-        full_summary = self._summary_for_dates(payload, symbols, market_data, benchmark_data, available_dates)
-
-        fold_size = len(available_dates) // payload.folds
+        fold_size = len(calendar) // payload.folds
         fold_results: list[dict[str, Any]] = []
         for index in range(payload.folds):
             start_idx = index * fold_size
-            end_idx = len(available_dates) if index == payload.folds - 1 else (index + 1) * fold_size
-            fold_dates = available_dates[start_idx:end_idx]
+            end_idx = len(calendar) if index == payload.folds - 1 else (index + 1) * fold_size
+            fold_dates = calendar[start_idx:end_idx]
             if len(fold_dates) < 2:
                 continue
-            summary = self._summary_for_dates(payload, symbols, market_data, benchmark_data, fold_dates)
-            fold_results.append(
-                {
-                    "fold": index + 1,
-                    "start_date": summary.start_date,
-                    "end_date": summary.end_date,
-                    "total_return_percent": summary.total_return_percent,
-                    "cagr": summary.cagr,
-                    "max_drawdown": summary.max_drawdown,
-                    "sharpe_ratio": summary.sharpe_ratio,
-                    "alpha_vs_benchmark": summary.alpha_vs_benchmark,
-                    "total_trades": summary.total_trades,
-                    "final_value": summary.final_value,
-                }
-            )
+            fold_results.append({"fold": index + 1, **self._period_metrics(payload, inputs, costs, benchmark, fold_dates)})
 
         returns = [item["total_return_percent"] for item in fold_results]
         alphas = [item["alpha_vs_benchmark"] for item in fold_results]
@@ -249,7 +248,7 @@ class BacktestEngine:
         return {
             "strategy_name": payload.strategy_name,
             "folds": count,
-            "full_period_return_percent": full_summary.total_return_percent,
+            "full_period_return_percent": full["total_return_percent"],
             "mean_return_percent": _round(mean_return, 2),
             "median_return_percent": _round(median_return, 2),
             "std_return_percent": _round(std_return, 2),
@@ -262,21 +261,6 @@ class BacktestEngine:
             "verdict": verdict,
             "fold_results": fold_results,
         }
-
-    def _summary_for_dates(
-        self,
-        config: BacktestRunIn,
-        symbols: list[str],
-        market_data: dict[str, pd.DataFrame],
-        benchmark_data: pd.DataFrame | None,
-        dates: list[pd.Timestamp],
-    ) -> BacktestSummaryOut:
-        state = self._simulate(config, symbols, market_data, dates)
-        benchmark_curve = self._benchmark_curve(
-            config.benchmark_symbol.upper(), benchmark_data, dates, config.initial_cash
-        )
-        self._attach_benchmark(state["equity_curve"], benchmark_curve)
-        return self._calculate_summary(config, state, dates, benchmark_curve)
 
     def _consistency_verdict(
         self,
@@ -305,29 +289,6 @@ class BacktestEngine:
             f"Positiva nel {positive_ratio * 100:.0f}% dei periodi, batte il benchmark nel {beating_ratio * 100:.0f}%. "
             "Segnali misti: non affidarti a questa strategia senza ulteriori verifiche.",
         )
-
-    def prepare_price_frame_for_backtest(self, prices: pd.DataFrame) -> pd.DataFrame:
-        """Precompute rolling indicators and score rows without using future values."""
-        frame = self.technical_service.enrich_price_history(prices)
-        if frame.empty:
-            return frame
-
-        frame["rolling_score"] = frame.apply(self._score_row, axis=1)
-        # Bins derivati dalle soglie condivise: ogni soglia e estremo destro escluso (epsilon).
-        eps = 0.001
-        frame["rolling_signal"] = pd.cut(
-            frame["rolling_score"],
-            bins=[
-                -1,
-                SCORE_REDUCE - eps,
-                SCORE_HOLD - eps,
-                SCORE_BUY - eps,
-                SCORE_STRONG_BUY - eps,
-                101,
-            ],
-            labels=["SELL", "REDUCE", "HOLD", "BUY", "STRONG_BUY"],
-        ).astype(str)
-        return frame
 
     def list_backtests(self, connection: sqlite3.Connection) -> list[BacktestSummaryOut]:
         rows = connection.execute(
@@ -384,7 +345,7 @@ class BacktestEngine:
             )
             for row in equity_rows
         ]
-        self._hydrate_benchmark_from_run(connection, summary, equity_curve)
+        self._hydrate_benchmark(connection, summary, equity_curve)
 
         benchmark_final = summary.initial_cash * (1 + (summary.benchmark_return_percent / 100))
         trades = [self._trade_from_row(row) for row in trade_rows]
@@ -409,517 +370,312 @@ class BacktestEngine:
         cursor = connection.execute("DELETE FROM backtest_runs WHERE id = ?", (backtest_id,))
         return cursor.rowcount > 0
 
-    def _normalize_symbols(self, symbols: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for symbol in symbols:
-            clean = symbol.strip().upper()
-            if clean and clean not in normalized:
-                normalized.append(clean)
-        if not normalized:
-            raise ValueError("Seleziona almeno un asset.")
-        return normalized
+    # --- Run v1 -------------------------------------------------------------------------------------------
 
-    def _load_market_data(
+    def _universe(
         self,
         connection: sqlite3.Connection,
-        symbols: list[str],
-        end_date: pd.Timestamp,
-    ) -> dict[str, pd.DataFrame]:
-        placeholders = ",".join("?" for _ in symbols)
-        if not placeholders:
-            return {}
-        rows = connection.execute(
-            f"""
-            SELECT a.symbol, ph.date, ph.open, ph.high, ph.low, ph.close, ph.adjusted_close, ph.volume
-            FROM price_history ph
-            JOIN assets a ON a.id = ph.asset_id
-            WHERE UPPER(a.symbol) IN ({placeholders}) AND ph.date <= ?
-            ORDER BY a.symbol, ph.date ASC
-            """,
-            [*symbols, end_date.strftime("%Y-%m-%d")],
-        ).fetchall()
-        if not rows:
-            return {}
-
-        raw = pd.DataFrame([dict(row) for row in rows])
-        result: dict[str, pd.DataFrame] = {}
-        for symbol, group in raw.groupby("symbol"):
-            prepared = self.prepare_price_frame_for_backtest(group.drop(columns=["symbol"]))
-            if not prepared.empty:
-                prepared["date_ts"] = pd.to_datetime(prepared["date"])
-                result[str(symbol).upper()] = prepared
-        return result
-
-    def _available_dates(
-        self,
-        market_data: dict[str, pd.DataFrame],
-        start_date: pd.Timestamp,
-        end_date: pd.Timestamp,
-    ) -> list[pd.Timestamp]:
-        dates: set[pd.Timestamp] = set()
-        for frame in market_data.values():
-            filtered = frame[(frame["date_ts"] >= start_date) & (frame["date_ts"] <= end_date)]
-            dates.update(pd.Timestamp(value).normalize() for value in filtered["date_ts"])
-        return sorted(dates)
+        config: BacktestSettings,
+        now: datetime | None,
+        step: Checkpoint,
+        *,
+        share: float,
+    ) -> UniverseInputs:
+        inputs = build_universe_inputs(
+            connection,
+            config.symbols,
+            data_mode=config.data_mode,
+            signal_name=config.signal_name,
+            signal_timeframe=config.signal_timeframe,
+            start=config.start_date,
+            end=config.end_date,
+            now=now or datetime.now(UTC),
+            progress=lambda value: step(value * share),
+        )
+        step(share)
+        return inputs
 
     def _simulate(
         self,
-        config: BacktestRunIn,
-        symbols: list[str],
-        market_data: dict[str, pd.DataFrame],
-        dates: list[pd.Timestamp],
+        config: BacktestSettings,
+        strategy_name: str,
+        name: str,
+        inputs: UniverseInputs,
+        costs: CostProfile,
+        benchmark: pd.Series | None,
+    ) -> _Outcome:
+        params = _strategy_params(config, strategy_name)
+        result = simulate(inputs.markets, inputs.signals, inputs.calendar, _simulation_config(config, costs, params, inputs.calendar))
+        metrics = compute_metrics(result, float(config.initial_cash))
+        trial = trial_config(
+            params,
+            signal_name=config.signal_name,
+            signal_timeframe=config.signal_timeframe,
+            stop_loss_percent=config.stop_loss_percent,
+            take_profit_percent=config.take_profit_percent,
+            costs=costs,
+            initial_cash_eur=float(config.initial_cash),
+            symbols=config.symbols,
+        )
+        fingerprint = canonical_hash(
+            {
+                "config": {
+                    **trial,
+                    "start_date": config.start_date,
+                    "end_date": config.end_date,
+                    "benchmark_symbol": config.benchmark_symbol.strip().upper(),
+                    "max_pending_sessions": get_settings().lab_order_max_pending_sessions,
+                },
+                "versions": {"engine": ENGINE_VERSION, "pipeline": PIPELINE_VERSION, "score": SCORE_VERSION},
+                "data_mode": config.data_mode,
+                "inputs_hash": inputs.inputs_hash,
+            }
+        )
+        benchmark_return = _benchmark_return(benchmark)
+        total_return = metrics["total_return_percent"]
+        summary = BacktestSummaryOut(
+            name=name,
+            strategy_name=strategy_name,
+            initial_cash=_round(config.initial_cash),
+            start_date=inputs.calendar[0],
+            end_date=inputs.calendar[-1],
+            benchmark_symbol=config.benchmark_symbol.strip().upper(),
+            buy_threshold=_round(config.buy_threshold),
+            sell_threshold=_round(config.sell_threshold),
+            max_asset_weight=_round(config.max_asset_weight),
+            fee_percent=None,
+            stop_loss_percent=_round(config.stop_loss_percent) if config.stop_loss_percent is not None else None,
+            take_profit_percent=_round(config.take_profit_percent) if config.take_profit_percent is not None else None,
+            rebalance_frequency=config.rebalance_frequency,
+            total_return_percent=_round(total_return),
+            cagr=_round(metrics["cagr"]),
+            max_drawdown=_round(metrics["max_drawdown"]),
+            sharpe_ratio=_round(metrics["sharpe_ratio"]),
+            win_rate=_round(metrics["win_rate"]),
+            profit_factor=_round(metrics["profit_factor"]),
+            total_trades=int(metrics["total_trades"]),
+            final_value=_round(float(result.equity["value_eur"].iloc[-1])),
+            benchmark_return_percent=_round(benchmark_return),
+            alpha_vs_benchmark=_round(total_return - benchmark_return),
+            engine_version=ENGINE_VERSION,
+            data_mode=config.data_mode,
+            signal_name=config.signal_name,
+            signal_timeframe=config.signal_timeframe,
+            cost_profile=asdict(costs),
+            warnings=_warnings(config, costs, inputs, result, benchmark),
+            excluded=dict(inputs.excluded),
+            commission_eur=_round(metrics["commission_eur"]),
+            spread_cost_eur=_round(metrics["spread_cost_eur"]),
+            turnover=_round(metrics["turnover"]),
+            exposure=_round(metrics["exposure"]),
+            fingerprint=fingerprint,
+        )
+        return _Outcome(
+            strategy_name=strategy_name,
+            result=result,
+            metrics=metrics,
+            summary=summary,
+            equity_curve=_equity_points(result, benchmark, float(config.initial_cash)),
+            config_hash=canonical_hash(trial),
+        )
+
+    def _period_metrics(
+        self,
+        config: WalkForwardIn,
+        inputs: UniverseInputs,
+        costs: CostProfile,
+        benchmark: pd.Series | None,
+        dates: list[str],
     ) -> dict[str, Any]:
-        positions: dict[str, _Position] = {}
-        cash = float(config.initial_cash)
-        trades: list[BacktestTradeOut] = []
-        equity_curve: list[BacktestEquityPointOut] = []
-        latest_rows: dict[str, pd.Series] = {}
-        record_index = dict.fromkeys(symbols, 0)
-        records = {symbol: frame.to_dict("records") for symbol, frame in market_data.items() if symbol in symbols}
-        peak_value = float(config.initial_cash)
-        last_rebalance_key: str | None = None
-
-        for current_date in dates:
-            for symbol in symbols:
-                symbol_records = records.get(symbol, [])
-                index = record_index.get(symbol, 0)
-                while index < len(symbol_records) and pd.Timestamp(symbol_records[index]["date_ts"]).normalize() <= current_date:
-                    latest_rows[symbol] = pd.Series(symbol_records[index])
-                    index += 1
-                record_index[symbol] = index
-
-            self._apply_stops(config, current_date, positions, latest_rows, trades, cash_holder := {"cash": cash})
-            cash = cash_holder["cash"]
-
-            rebalance_key = self._rebalance_key(current_date, config.rebalance_frequency)
-            if rebalance_key != last_rebalance_key:
-                if config.strategy_name == "BUY_AND_HOLD" and last_rebalance_key is None:
-                    cash = self._buy_and_hold(config, current_date, symbols, positions, latest_rows, trades, cash)
-                elif config.strategy_name == "SCORE_THRESHOLD":
-                    cash = self._score_threshold(config, current_date, symbols, positions, latest_rows, trades, cash)
-                elif config.strategy_name == "TOP_N_SCORE":
-                    cash = self._top_n_score(config, current_date, symbols, positions, latest_rows, trades, cash)
-                last_rebalance_key = rebalance_key
-
-            invested_value = self._invested_value(positions, latest_rows)
-            portfolio_value = cash + invested_value
-            peak_value = max(peak_value, portfolio_value)
-            drawdown = ((portfolio_value / peak_value) - 1) * 100 if peak_value > 0 else 0.0
-            equity_curve.append(
-                BacktestEquityPointOut(
-                    date=current_date.strftime("%Y-%m-%d"),
-                    portfolio_value=_round(portfolio_value),
-                    cash=_round(cash),
-                    invested_value=_round(invested_value),
-                    drawdown_percent=_round(drawdown),
-                )
-            )
-
-        final_positions = self._final_positions(positions, latest_rows)
+        params = _strategy_params(config, config.strategy_name)
+        result = simulate(inputs.markets, inputs.signals, dates, _simulation_config(config, costs, params, dates))
+        metrics = compute_metrics(result, float(config.initial_cash))
+        benchmark_return = _benchmark_return(benchmark.reindex(dates) if benchmark is not None else None)
         return {
-            "cash": cash,
-            "positions": positions,
-            "trades": trades,
-            "equity_curve": equity_curve,
-            "final_positions": final_positions,
+            "start_date": dates[0],
+            "end_date": dates[-1],
+            "total_return_percent": _round(metrics["total_return_percent"]),
+            "cagr": _round(metrics["cagr"]),
+            "max_drawdown": _round(metrics["max_drawdown"]),
+            "sharpe_ratio": _round(metrics["sharpe_ratio"]),
+            "alpha_vs_benchmark": _round(metrics["total_return_percent"] - benchmark_return),
+            "total_trades": int(metrics["total_trades"]),
+            "final_value": _round(float(result.equity["value_eur"].iloc[-1])),
         }
 
-    def _score_row(self, row: pd.Series) -> float:
-        score = 50.0
-        close = row.get("close")
-        sma_50 = row.get("sma_50")
-        sma_200 = row.get("sma_200")
-        rsi = row.get("rsi_14")
-        macd = row.get("macd_line")
-        macd_signal = row.get("macd_signal")
-        volatility = row.get("volatility_annualized_30d")
-        drawdown = row.get("max_drawdown")
-
-        if pd.notna(sma_50):
-            score += 10 if close > sma_50 else -10
-        if pd.notna(sma_200):
-            score += 12 if close > sma_200 else -12
-        if pd.notna(sma_50) and pd.notna(sma_200):
-            score += 8 if sma_50 > sma_200 else -8
-        if pd.notna(rsi):
-            if 45 <= rsi <= 65:
-                score += 10
-            elif 35 <= rsi < 45 or 65 < rsi <= 72:
-                score += 4
-            elif rsi > 78:
-                score -= 12
-            elif rsi < 30:
-                score -= 6
-        if pd.notna(macd) and pd.notna(macd_signal):
-            score += 8 if macd > macd_signal else -8
-        if pd.notna(volatility):
-            if volatility < 0.18:
-                score += 5
-            elif volatility > 0.45:
-                score -= 10
-        if pd.notna(drawdown) and drawdown < -0.25:
-            score -= 8
-        return _round(min(100, max(0, score)), 2)
-
-    def _rebalance_key(self, current_date: pd.Timestamp, frequency: str) -> str:
-        if frequency == "DAILY":
-            return current_date.strftime("%Y-%m-%d")
-        if frequency == "MONTHLY":
-            return current_date.strftime("%Y-%m")
-        iso = current_date.isocalendar()
-        return f"{iso.year}-{iso.week}"
-
-    def _row_price(self, rows: dict[str, pd.Series], symbol: str) -> float | None:
-        row = rows.get(symbol)
-        if row is None or pd.isna(row.get("close")):
-            return None
-        return float(row["close"])
-
-    def _row_score(self, rows: dict[str, pd.Series], symbol: str) -> float | None:
-        row = rows.get(symbol)
-        if row is None or pd.isna(row.get("rolling_score")):
-            return None
-        return float(row["rolling_score"])
-
-    def _portfolio_value(
+    def _record_trials(
         self,
-        cash: float,
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-    ) -> float:
-        return cash + self._invested_value(positions, rows)
-
-    def _invested_value(self, positions: dict[str, _Position], rows: dict[str, pd.Series]) -> float:
-        total = 0.0
-        for symbol, position in positions.items():
-            price = self._row_price(rows, symbol)
-            if price is not None and position.quantity > 0:
-                total += position.value(price)
-        return total
-
-    def _apply_stops(
-        self,
-        config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-        trades: list[BacktestTradeOut],
-        cash_holder: dict[str, float],
+        connection: sqlite3.Connection,
+        config: BacktestSettings,
+        outcomes: Sequence[_Outcome],
+        kind: str,
+        job_id: int | None,
     ) -> None:
-        for symbol, position in list(positions.items()):
-            price = self._row_price(rows, symbol)
-            if price is None or position.quantity <= 0:
-                continue
-            if config.stop_loss_percent and price <= position.average_price * (1 - config.stop_loss_percent / 100):
-                cash_holder["cash"] = self._sell(
-                    config,
-                    current_date,
-                    symbol,
-                    position.quantity,
-                    price,
-                    "Stop loss",
-                    positions,
-                    trades,
-                    cash_holder["cash"],
-                )
-            elif config.take_profit_percent and price >= position.average_price * (1 + config.take_profit_percent / 100):
-                cash_holder["cash"] = self._sell(
-                    config,
-                    current_date,
-                    symbol,
-                    position.quantity,
-                    price,
-                    "Take profit",
-                    positions,
-                    trades,
-                    cash_holder["cash"],
-                )
+        if config.data_mode != "REAL":
+            return
+        connection.execute("SAVEPOINT backtest_trials")
+        try:
+            for outcome in outcomes:
+                self._record_trial(connection, config, outcome, kind, job_id)
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT backtest_trials")
+            connection.execute("RELEASE SAVEPOINT backtest_trials")
+            raise
+        connection.execute("RELEASE SAVEPOINT backtest_trials")
 
-    def _buy_and_hold(
+    def _record_trial(
         self,
-        config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        symbols: list[str],
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-        trades: list[BacktestTradeOut],
-        cash: float,
-    ) -> float:
-        target_weight = min(config.max_asset_weight, 1 / max(len(symbols), 1))
-        portfolio_value = self._portfolio_value(cash, positions, rows)
-        for symbol in symbols:
-            price = self._row_price(rows, symbol)
-            if price is None:
-                continue
-            target_amount = portfolio_value * target_weight
-            cash = self._buy(config, current_date, symbol, target_amount, price, "Buy and hold entry", positions, trades, cash)
-        return cash
-
-    def _score_threshold(
-        self,
-        config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        symbols: list[str],
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-        trades: list[BacktestTradeOut],
-        cash: float,
-    ) -> float:
-        for symbol, position in list(positions.items()):
-            score = self._row_score(rows, symbol)
-            price = self._row_price(rows, symbol)
-            if score is not None and price is not None and score <= config.sell_threshold:
-                cash = self._sell(config, current_date, symbol, position.quantity, price, f"Score {score:.1f} <= sell threshold", positions, trades, cash)
-
-        candidates = []
-        for symbol in symbols:
-            score = self._row_score(rows, symbol)
-            price = self._row_price(rows, symbol)
-            if score is not None and price is not None and score >= config.buy_threshold:
-                candidates.append((symbol, score, price))
-        candidates.sort(key=lambda item: item[1], reverse=True)
-
-        for symbol, score, price in candidates:
-            portfolio_value = self._portfolio_value(cash, positions, rows)
-            current_value = positions.get(symbol, _Position(symbol)).value(price)
-            target_amount = max(0.0, (portfolio_value * config.max_asset_weight) - current_value)
-            cash = self._buy(config, current_date, symbol, target_amount, price, f"Score {score:.1f} >= buy threshold", positions, trades, cash)
-        return cash
-
-    def _top_n_score(
-        self,
-        config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        symbols: list[str],
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-        trades: list[BacktestTradeOut],
-        cash: float,
-    ) -> float:
-        scored = [
-            (symbol, score, self._row_price(rows, symbol))
-            for symbol in symbols
-            if (score := self._row_score(rows, symbol)) is not None and self._row_price(rows, symbol) is not None
-        ]
-        scored.sort(key=lambda item: item[1], reverse=True)
-        selected = scored[: max(1, config.top_n or 5)]
-        selected_symbols = {symbol for symbol, _, _ in selected}
-
-        for symbol, position in list(positions.items()):
-            price = self._row_price(rows, symbol)
-            if price is not None and symbol not in selected_symbols:
-                cash = self._sell(config, current_date, symbol, position.quantity, price, "Removed from TOP_N selection", positions, trades, cash)
-
-        target_weight = min(config.max_asset_weight, 1 / max(len(selected), 1))
-        for symbol, score, price in selected:
-            if price is None:
-                continue
-            portfolio_value = self._portfolio_value(cash, positions, rows)
-            target_value = portfolio_value * target_weight
-            current_value = positions.get(symbol, _Position(symbol)).value(price)
-            if current_value > target_value * 1.05:
-                excess_value = current_value - target_value
-                cash = self._sell(config, current_date, symbol, excess_value / price, price, "Rebalance down to TOP_N target", positions, trades, cash)
-            else:
-                cash = self._buy(config, current_date, symbol, target_value - current_value, price, f"TOP_N score {score:.1f}", positions, trades, cash)
-        return cash
-
-    def _buy(
-        self,
-        config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        symbol: str,
-        target_amount: float,
-        price: float,
-        reason: str,
-        positions: dict[str, _Position],
-        trades: list[BacktestTradeOut],
-        cash: float,
-    ) -> float:
-        if target_amount <= 0 or cash <= 0 or price <= 0:
-            return cash
-        spend = min(target_amount, cash)
-        fees = spend * (config.fee_percent / 100)
-        gross_amount = max(0.0, spend - fees)
-        if gross_amount <= 0:
-            return cash
-        quantity = gross_amount / price
-        position = positions.setdefault(symbol, _Position(symbol=symbol))
-        old_cost = position.average_price * position.quantity
-        new_quantity = position.quantity + quantity
-        position.average_price = (old_cost + gross_amount + fees) / new_quantity if new_quantity > 0 else 0.0
-        position.quantity = new_quantity
-        cash -= gross_amount + fees
-        trades.append(
-            BacktestTradeOut(
-                date=current_date.strftime("%Y-%m-%d"),
-                symbol=symbol,
-                order_type="BUY",
-                quantity=_round(quantity),
-                price=_round(price),
-                fees=_round(fees),
-                gross_amount=_round(gross_amount),
-                net_amount=_round(gross_amount + fees),
-                pnl=0,
-                reason=reason,
-            )
+        connection: sqlite3.Connection,
+        config: BacktestSettings,
+        outcome: _Outcome,
+        kind: str,
+        job_id: int | None,
+    ) -> bool:
+        returns = outcome.result.daily_returns
+        return record_trial(
+            connection,
+            data_mode=config.data_mode,
+            family=family_key(config.signal_name, config.signal_timeframe),
+            kind=kind,  # type: ignore[arg-type]
+            config_hash=outcome.config_hash,
+            fingerprint=str(outcome.summary.fingerprint),
+            sharpe_daily=_daily_sharpe(returns),
+            n_obs=len(returns),
+            job_id=job_id,
         )
-        return max(0.0, cash)
 
-    def _sell(
+    def _persist(
         self,
+        connection: sqlite3.Connection,
         config: BacktestRunIn,
-        current_date: pd.Timestamp,
-        symbol: str,
-        quantity: float,
-        price: float,
-        reason: str,
-        positions: dict[str, _Position],
-        trades: list[BacktestTradeOut],
-        cash: float,
-    ) -> float:
-        position = positions.get(symbol)
-        if position is None or position.quantity <= 0 or price <= 0:
-            return cash
-        sell_quantity = min(quantity, position.quantity)
-        gross_amount = sell_quantity * price
-        fees = gross_amount * (config.fee_percent / 100)
-        net_amount = gross_amount - fees
-        pnl = ((price - position.average_price) * sell_quantity) - fees
-        position.quantity -= sell_quantity
-        position.realized_pnl += pnl
-        if position.quantity <= 1e-9:
-            position.quantity = 0.0
-        cash += net_amount
-        trades.append(
-            BacktestTradeOut(
-                date=current_date.strftime("%Y-%m-%d"),
-                symbol=symbol,
-                order_type="SELL",
-                quantity=_round(sell_quantity),
-                price=_round(price),
-                fees=_round(fees),
-                gross_amount=_round(gross_amount),
-                net_amount=_round(net_amount),
-                pnl=_round(pnl),
-                reason=reason,
-            )
+        outcome: _Outcome,
+        inputs: UniverseInputs,
+        job_id: int | None,
+    ) -> int:
+        """Run, curva, operazioni, posizioni finali e tentativo REAL in un'unica transazione breve (savepoint)."""
+        summary = outcome.summary
+        created_at = _now()
+        values = (
+            summary.name, summary.strategy_name, float(config.initial_cash), summary.start_date, summary.end_date,
+            summary.benchmark_symbol, float(config.buy_threshold), float(config.sell_threshold),
+            float(config.max_asset_weight), 0.0, config.stop_loss_percent, config.take_profit_percent,
+            config.rebalance_frequency, summary.total_return_percent, summary.cagr, summary.max_drawdown,
+            summary.sharpe_ratio, summary.win_rate, summary.profit_factor, summary.total_trades, summary.final_value,
+            summary.benchmark_return_percent, summary.alpha_vs_benchmark, created_at, ENGINE_VERSION,
+            summary.data_mode, summary.signal_name, summary.signal_timeframe,
+            json.dumps(summary.cost_profile, sort_keys=True), summary.fingerprint,
+            json.dumps(summary.warnings, ensure_ascii=False), json.dumps(summary.excluded, sort_keys=True),
+            summary.commission_eur, summary.spread_cost_eur, summary.turnover, summary.exposure,
         )
-        return cash
-
-    def _final_positions(
-        self,
-        positions: dict[str, _Position],
-        rows: dict[str, pd.Series],
-    ) -> list[BacktestPositionOut]:
-        result: list[BacktestPositionOut] = []
-        for symbol, position in positions.items():
-            price = self._row_price(rows, symbol) or 0.0
-            final_value = position.quantity * price
-            unrealized = (price - position.average_price) * position.quantity if position.quantity > 0 else 0.0
-            result.append(
-                BacktestPositionOut(
-                    symbol=symbol,
-                    quantity=_round(position.quantity),
-                    average_price=_round(position.average_price),
-                    final_price=_round(price),
-                    final_value=_round(final_value),
-                    realized_pnl=_round(position.realized_pnl),
-                    unrealized_pnl=_round(unrealized),
-                )
+        equity = outcome.result.equity
+        connection.execute("SAVEPOINT backtest_persist")
+        try:
+            cursor = connection.execute(
+                f"INSERT INTO backtest_runs ({', '.join(_RUN_COLUMNS)}) VALUES ({', '.join('?' * len(_RUN_COLUMNS))})",
+                values,
             )
-        return sorted(result, key=lambda item: item.final_value, reverse=True)
+            backtest_id = int(cursor.lastrowid)
+            connection.executemany(
+                """
+                INSERT INTO backtest_equity_curve (
+                    backtest_id, date, portfolio_value, cash, invested_value, drawdown_percent, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (backtest_id, str(day), float(value), float(cash), float(invested), float(drawdown), created_at)
+                    for day, value, cash, invested, drawdown in equity.itertuples(index=False, name=None)
+                ],
+            )
+            connection.executemany(
+                """
+                INSERT INTO backtest_trades (
+                    backtest_id, date, symbol, order_type, quantity, price, fees,
+                    gross_amount, net_amount, pnl, reason, created_at, commission, spread_cost
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        backtest_id, trade.date, trade.symbol, trade.side, trade.quantity, trade.price_eur,
+                        trade.commission_eur, trade.gross_eur, trade.net_eur, trade.pnl_eur, trade.reason,
+                        created_at, trade.commission_eur, trade.spread_cost_eur,
+                    )
+                    for trade in outcome.result.trades
+                ],
+            )
+            connection.executemany(
+                """
+                INSERT INTO backtest_positions (
+                    backtest_id, symbol, quantity, average_price, final_price,
+                    final_value, realized_pnl, unrealized_pnl, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [(backtest_id, *position, created_at) for position in _final_positions(outcome.result, inputs)],
+            )
+            self._record_trial(connection, config, outcome, "BACKTEST", job_id)
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT backtest_persist")
+            connection.execute("RELEASE SAVEPOINT backtest_persist")
+            raise
+        connection.execute("RELEASE SAVEPOINT backtest_persist")
+        return backtest_id
 
-    def _benchmark_curve(
+    # --- Lettura e analisi netta --------------------------------------------------------------------------
+
+    def _hydrate_benchmark(
         self,
-        symbol: str,
-        frame: pd.DataFrame | None,
-        dates: list[pd.Timestamp],
-        initial_cash: float,
-    ) -> dict[str, dict[str, float]]:
-        if frame is None or frame.empty:
-            return {}
-        rows = frame.to_dict("records")
+        connection: sqlite3.Connection,
+        summary: BacktestSummaryOut,
+        equity_curve: list[BacktestEquityPointOut],
+    ) -> None:
+        if not summary.benchmark_symbol or not equity_curve:
+            return
+        if summary.engine_version == LEGACY_ENGINE_VERSION:
+            self._hydrate_legacy_benchmark(connection, summary, equity_curve)
+            return
+        if summary.data_mode is None:
+            return
+        growth = benchmark_curve(
+            connection,
+            summary.benchmark_symbol,
+            data_mode=summary.data_mode,
+            calendar=[point.date for point in equity_curve],
+        )
+        _attach_benchmark(equity_curve, growth, summary.initial_cash)
+
+    def _hydrate_legacy_benchmark(
+        self,
+        connection: sqlite3.Connection,
+        summary: BacktestSummaryOut,
+        equity_curve: list[BacktestEquityPointOut],
+    ) -> None:
+        """Run v0: benchmark dal close dello storico come nel motore precedente (nessuna conversione EUR)."""
+        rows = connection.execute(
+            """
+            SELECT substr(ph.date, 1, 10) AS day, ph.close
+            FROM price_history ph
+            JOIN assets a ON a.id = ph.asset_id
+            WHERE UPPER(a.symbol) = ? AND substr(ph.date, 1, 10) <= ?
+            ORDER BY day, ph.id
+            """,
+            (str(summary.benchmark_symbol).upper(), summary.end_date),
+        ).fetchall()
         index = 0
         latest_price: float | None = None
         first_price: float | None = None
-        curve: dict[str, dict[str, float]] = {}
-        for current_date in dates:
-            while index < len(rows) and pd.Timestamp(rows[index]["date_ts"]).normalize() <= current_date:
-                latest_price = float(rows[index]["close"])
+        for point in equity_curve:
+            while index < len(rows) and str(rows[index][0]) <= point.date:
+                latest_price = float(rows[index][1])
                 index += 1
             if latest_price is None:
                 continue
             if first_price is None:
                 first_price = latest_price
             return_percent = ((latest_price / first_price) - 1) * 100 if first_price else 0.0
-            curve[current_date.strftime("%Y-%m-%d")] = {
-                "benchmark_value": initial_cash * (1 + return_percent / 100),
-                "benchmark_return_percent": return_percent,
-            }
-        return curve
-
-    def _attach_benchmark(
-        self,
-        equity_curve: list[BacktestEquityPointOut],
-        benchmark_curve: dict[str, dict[str, float]],
-    ) -> None:
-        for point in equity_curve:
-            benchmark = benchmark_curve.get(point.date)
-            if benchmark:
-                point.benchmark_value = _round(benchmark["benchmark_value"])
-                point.benchmark_return_percent = _round(benchmark["benchmark_return_percent"])
-
-    def _calculate_summary(
-        self,
-        config: BacktestRunIn,
-        state: dict[str, Any],
-        dates: list[pd.Timestamp],
-        benchmark_curve: dict[str, dict[str, float]],
-    ) -> BacktestSummaryOut:
-        equity_curve: list[BacktestEquityPointOut] = state["equity_curve"]
-        final_value = equity_curve[-1].portfolio_value if equity_curve else config.initial_cash
-        total_return = ((final_value / config.initial_cash) - 1) * 100
-        days = max((dates[-1] - dates[0]).days, 1)
-        years = days / 365.25
-        cagr = ((final_value / config.initial_cash) ** (1 / years) - 1) * 100 if years > 0 and final_value > 0 else 0.0
-        returns = pd.Series([point.portfolio_value for point in equity_curve]).pct_change().dropna()
-        sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if len(returns) > 1 and returns.std() not in (0, np.nan) else 0.0
-        sell_trades = [trade for trade in state["trades"] if trade.order_type == "SELL"]
-        wins = [trade for trade in sell_trades if trade.pnl > 0]
-        losses = [trade for trade in sell_trades if trade.pnl < 0]
-        gross_profit = sum(trade.pnl for trade in wins)
-        gross_loss = abs(sum(trade.pnl for trade in losses))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
-        benchmark_return = 0.0
-        if benchmark_curve:
-            benchmark_return = list(benchmark_curve.values())[-1]["benchmark_return_percent"]
-
-        return BacktestSummaryOut(
-            name=config.name,
-            strategy_name=config.strategy_name,
-            initial_cash=_round(config.initial_cash),
-            start_date=dates[0].strftime("%Y-%m-%d"),
-            end_date=dates[-1].strftime("%Y-%m-%d"),
-            benchmark_symbol=config.benchmark_symbol.upper(),
-            buy_threshold=_round(config.buy_threshold),
-            sell_threshold=_round(config.sell_threshold),
-            max_asset_weight=_round(config.max_asset_weight),
-            fee_percent=_round(config.fee_percent),
-            stop_loss_percent=_round(config.stop_loss_percent) if config.stop_loss_percent is not None else None,
-            take_profit_percent=_round(config.take_profit_percent) if config.take_profit_percent is not None else None,
-            rebalance_frequency=config.rebalance_frequency,
-            total_return_percent=_round(total_return),
-            cagr=_round(cagr),
-            max_drawdown=_round(min((point.drawdown_percent for point in equity_curve), default=0.0)),
-            sharpe_ratio=_round(sharpe),
-            win_rate=_round((len(wins) / len(sell_trades)) * 100 if sell_trades else 0.0),
-            profit_factor=_round(profit_factor),
-            total_trades=len(state["trades"]),
-            final_value=_round(final_value),
-            benchmark_return_percent=_round(benchmark_return),
-            alpha_vs_benchmark=_round(total_return - benchmark_return),
-        )
+            point.benchmark_value = _round(summary.initial_cash * (1 + return_percent / 100))
+            point.benchmark_return_percent = _round(return_percent)
 
     def _net_analysis(
         self,
@@ -928,10 +684,14 @@ class BacktestEngine:
         trades: list[BacktestTradeOut],
         equity_curve: list[BacktestEquityPointOut],
     ) -> dict[str, Any]:
-        """Stima netta in tasca: tasse italiane sulle plusvalenze realizzate,
-        slippage/spread e imposta di bollo. Semplificazioni: compensazione perdite
-        solo entro la stessa classe (standard vs obbligazionario), bollo su controvalore
-        medio, slippage stimato per lato. Le plusvalenze NON realizzate non sono tassate."""
+        """Stima netta in tasca: tasse italiane sulle plusvalenze realizzate e imposta di bollo.
+
+        Run v1: importi in EUR, commissioni e costo per lato gia nel valore finale (mostrati per trasparenza).
+        Run v0: slippage stimato per lato e sottratto, come nel motore precedente. Semplificazioni: compensazione
+        delle perdite solo entro la stessa classe (standard vs obbligazionario), bollo sul controvalore medio,
+        plusvalenze non realizzate non tassate.
+        """
+        legacy = summary.engine_version == LEGACY_ENGINE_VERSION
         type_rows = connection.execute("SELECT UPPER(symbol) AS symbol, asset_type FROM assets").fetchall()
         type_map = {row["symbol"]: row["asset_type"] for row in type_rows}
 
@@ -941,7 +701,10 @@ class BacktestEngine:
         slippage = 0.0
         for trade in trades:
             commission += float(trade.fees)
-            slippage += abs(float(trade.gross_amount)) * (SLIPPAGE_PER_SIDE / 100)
+            if legacy:
+                slippage += abs(float(trade.gross_amount)) * (SLIPPAGE_PER_SIDE / 100)
+            else:
+                slippage += float(trade.spread_cost or 0.0)
             if trade.order_type == "SELL":
                 asset_type = type_map.get(trade.symbol.upper(), "stock")
                 if asset_type in BOND_ASSET_TYPES:
@@ -959,21 +722,27 @@ class BacktestEngine:
             if equity_curve
             else summary.final_value
         )
-        years = max((_date(summary.end_date) - _date(summary.start_date)).days, 1) / 365.25
+        days = (datetime.fromisoformat(summary.end_date[:10]) - datetime.fromisoformat(summary.start_date[:10])).days
+        years = max(days, 1) / 365.25
         stamp_duty = mean_equity * (STAMP_DUTY_ANNUAL / 100) * years
 
         initial = summary.initial_cash
         final_value = summary.final_value
-        net_final = final_value - capital_gains_tax - slippage - stamp_duty
+        deducted_slippage = slippage if legacy else 0.0
+        total_costs = capital_gains_tax + deducted_slippage + stamp_duty
+        net_final = final_value - total_costs
         net_return = ((net_final / initial) - 1) * 100 if initial > 0 else 0.0
         effective_rate = (capital_gains_tax / taxable_total * 100) if taxable_total > 0 else 0.0
 
-        notes = [
-            "Tasse stimate sulle sole plusvalenze realizzate (26% standard, 12,5% titoli di Stato/ETF govt).",
-            "Le plusvalenze non realizzate sulle posizioni finali non sono tassate.",
-            f"Slippage stimato {SLIPPAGE_PER_SIDE:.2f}% per operazione, bollo {STAMP_DUTY_ANNUAL:.1f}% annuo sul controvalore medio.",
-            "Commissioni gia incluse nel valore finale lordo; qui mostrate solo per trasparenza.",
-        ]
+        if legacy:
+            notes = [
+                "Tasse stimate sulle sole plusvalenze realizzate (26% standard, 12,5% titoli di Stato/ETF govt).",
+                "Le plusvalenze non realizzate sulle posizioni finali non sono tassate.",
+                f"Slippage stimato {SLIPPAGE_PER_SIDE:.2f}% per operazione, bollo {STAMP_DUTY_ANNUAL:.1f}% annuo sul controvalore medio.",
+                "Commissioni gia incluse nel valore finale lordo; qui mostrate solo per trasparenza.",
+            ]
+        else:
+            notes = list(_V1_NET_NOTES)
 
         return {
             "gross_return_percent": summary.total_return_percent,
@@ -983,132 +752,16 @@ class BacktestEngine:
             "realized_gains_taxable": _round(taxable_total, 2),
             "capital_gains_tax": _round(capital_gains_tax, 2),
             "stamp_duty": _round(stamp_duty, 2),
-            "total_costs_and_taxes": _round(capital_gains_tax + slippage + stamp_duty, 2),
+            "total_costs_and_taxes": _round(total_costs, 2),
             "net_final_value": _round(net_final, 2),
             "net_return_percent": _round(net_return, 2),
             "effective_tax_rate_percent": _round(effective_rate, 2),
             "notes": notes,
         }
 
-    def _persist(
-        self,
-        connection: sqlite3.Connection,
-        config: BacktestRunIn,
-        summary: BacktestSummaryOut,
-        state: dict[str, Any],
-    ) -> int:
-        now = _now()
-        cursor = connection.execute(
-            """
-            INSERT INTO backtest_runs (
-                name, strategy_name, initial_cash, start_date, end_date, benchmark_symbol,
-                buy_threshold, sell_threshold, max_asset_weight, fee_percent, stop_loss_percent,
-                take_profit_percent, rebalance_frequency, total_return_percent, cagr, max_drawdown,
-                sharpe_ratio, win_rate, profit_factor, total_trades, final_value,
-                benchmark_return_percent, alpha_vs_benchmark, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                config.name,
-                config.strategy_name,
-                config.initial_cash,
-                summary.start_date,
-                summary.end_date,
-                config.benchmark_symbol.upper(),
-                config.buy_threshold,
-                config.sell_threshold,
-                config.max_asset_weight,
-                config.fee_percent,
-                config.stop_loss_percent,
-                config.take_profit_percent,
-                config.rebalance_frequency,
-                summary.total_return_percent,
-                summary.cagr,
-                summary.max_drawdown,
-                summary.sharpe_ratio,
-                summary.win_rate,
-                summary.profit_factor,
-                summary.total_trades,
-                summary.final_value,
-                summary.benchmark_return_percent,
-                summary.alpha_vs_benchmark,
-                now,
-            ),
-        )
-        backtest_id = int(cursor.lastrowid)
-        connection.executemany(
-            """
-            INSERT INTO backtest_equity_curve (
-                backtest_id, date, portfolio_value, cash, invested_value, drawdown_percent, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    backtest_id,
-                    point.date,
-                    point.portfolio_value,
-                    point.cash,
-                    point.invested_value,
-                    point.drawdown_percent,
-                    now,
-                )
-                for point in state["equity_curve"]
-            ],
-        )
-        connection.executemany(
-            """
-            INSERT INTO backtest_trades (
-                backtest_id, date, symbol, order_type, quantity, price, fees,
-                gross_amount, net_amount, pnl, reason, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    backtest_id,
-                    trade.date,
-                    trade.symbol,
-                    trade.order_type,
-                    trade.quantity,
-                    trade.price,
-                    trade.fees,
-                    trade.gross_amount,
-                    trade.net_amount,
-                    trade.pnl,
-                    trade.reason,
-                    now,
-                )
-                for trade in state["trades"]
-            ],
-        )
-        connection.executemany(
-            """
-            INSERT INTO backtest_positions (
-                backtest_id, symbol, quantity, average_price, final_price,
-                final_value, realized_pnl, unrealized_pnl, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    backtest_id,
-                    position.symbol,
-                    position.quantity,
-                    position.average_price,
-                    position.final_price,
-                    position.final_value,
-                    position.realized_pnl,
-                    position.unrealized_pnl,
-                    now,
-                )
-                for position in state["final_positions"]
-            ],
-        )
-        return backtest_id
-
     def _summary_from_row(self, row: sqlite3.Row) -> BacktestSummaryOut:
+        engine_version = row["engine_version"] or LEGACY_ENGINE_VERSION
+        legacy = engine_version == LEGACY_ENGINE_VERSION
         return BacktestSummaryOut(
             id=row["id"],
             name=row["name"],
@@ -1120,7 +773,7 @@ class BacktestEngine:
             buy_threshold=_round(row["buy_threshold"]),
             sell_threshold=_round(row["sell_threshold"]),
             max_asset_weight=_round(row["max_asset_weight"]),
-            fee_percent=_round(row["fee_percent"]),
+            fee_percent=_round(row["fee_percent"]) if legacy else None,
             stop_loss_percent=_round(row["stop_loss_percent"]) if row["stop_loss_percent"] is not None else None,
             take_profit_percent=_round(row["take_profit_percent"]) if row["take_profit_percent"] is not None else None,
             rebalance_frequency=row["rebalance_frequency"],
@@ -1135,6 +788,18 @@ class BacktestEngine:
             benchmark_return_percent=_round(row["benchmark_return_percent"]),
             alpha_vs_benchmark=_round(row["alpha_vs_benchmark"]),
             created_at=row["created_at"],
+            engine_version=engine_version,
+            data_mode=row["data_mode"],
+            signal_name=row["signal_name"],
+            signal_timeframe=row["signal_timeframe"],
+            cost_profile=_json_or(row["cost_profile_json"], None),
+            warnings=_json_or(row["warnings_json"], []),
+            excluded=_json_or(row["excluded_json"], {}),
+            commission_eur=_optional_round(row["commission_eur"]),
+            spread_cost_eur=_optional_round(row["spread_cost_eur"]),
+            turnover=_optional_round(row["turnover"]),
+            exposure=_optional_round(row["exposure"]),
+            fingerprint=row["fingerprint"],
         )
 
     def _trade_from_row(self, row: sqlite3.Row) -> BacktestTradeOut:
@@ -1150,6 +815,8 @@ class BacktestEngine:
             net_amount=_round(row["net_amount"]),
             pnl=_round(row["pnl"]),
             reason=row["reason"],
+            commission=_optional_round(row["commission"]),
+            spread_cost=_optional_round(row["spread_cost"]),
         )
 
     def _position_from_row(self, row: sqlite3.Row) -> BacktestPositionOut:
@@ -1164,19 +831,178 @@ class BacktestEngine:
             unrealized_pnl=_round(row["unrealized_pnl"]),
         )
 
-    def _hydrate_benchmark_from_run(
-        self,
-        connection: sqlite3.Connection,
-        summary: BacktestSummaryOut,
-        equity_curve: list[BacktestEquityPointOut],
-    ) -> None:
-        if not summary.benchmark_symbol or not equity_curve:
-            return
-        benchmark_data = self._load_market_data(connection, [summary.benchmark_symbol], pd.Timestamp(summary.end_date)).get(
-            summary.benchmark_symbol
+
+def _cost_profile(config: BacktestSettings) -> CostProfile:
+    """Profilo costi Trade Republic delle impostazioni con gli override del run (spec §7.3)."""
+    overrides = {
+        field: getattr(config, field)
+        for field in ("commission_eur", "cost_bps_equity", "cost_bps_crypto", "fractional_shares", "min_trade_eur")
+        if getattr(config, field) is not None
+    }
+    return replace(CostProfile.from_settings(), **overrides)
+
+
+def _strategy_params(config: BacktestSettings, strategy_name: str) -> StrategyParams:
+    return StrategyParams(
+        name=strategy_name,  # type: ignore[arg-type]
+        buy_threshold=float(config.buy_threshold),
+        sell_threshold=float(config.sell_threshold),
+        max_asset_weight=float(config.max_asset_weight),
+        top_n=int(config.top_n or 5),
+        rebalance_frequency=config.rebalance_frequency,
+    )
+
+
+def _simulation_config(
+    config: BacktestSettings, costs: CostProfile, params: StrategyParams, calendar: Sequence[str]
+) -> SimulationConfig:
+    return SimulationConfig(
+        initial_cash_eur=float(config.initial_cash),
+        costs=costs,
+        params_schedule=((calendar[0], params),),
+        stop_loss_percent=config.stop_loss_percent,
+        take_profit_percent=config.take_profit_percent,
+        max_pending_sessions=get_settings().lab_order_max_pending_sessions,
+    )
+
+
+def _daily_sharpe(returns: pd.Series) -> float:
+    """Sharpe giornaliero (non annualizzato, tasso privo di rischio 0) del tentativo; NaN se non definito."""
+    values = returns.to_numpy(dtype=float)
+    if values.shape[0] < 2:
+        return math.nan
+    deviation = float(np.std(values, ddof=1))
+    if not math.isfinite(deviation) or deviation <= 0:
+        return math.nan
+    return float(np.mean(values)) / deviation
+
+
+def _benchmark_return(curve: pd.Series | None) -> float:
+    """Rendimento percentuale del benchmark fra il primo e l'ultimo valore noto della curva; 0 senza benchmark."""
+    if curve is None:
+        return 0.0
+    values = curve.dropna()
+    if values.empty or float(values.iloc[0]) <= 0:
+        return 0.0
+    return (float(values.iloc[-1]) / float(values.iloc[0]) - 1) * 100
+
+
+def _attach_benchmark(
+    equity_curve: list[BacktestEquityPointOut], growth: pd.Series | None, initial_cash: float
+) -> None:
+    if growth is None:
+        return
+    for point in equity_curve:
+        value = growth.get(point.date)
+        if value is not None and math.isfinite(float(value)):
+            point.benchmark_value = _round(initial_cash * float(value))
+            point.benchmark_return_percent = _round((float(value) - 1) * 100)
+
+
+def _equity_points(
+    result: SimulationResult, growth: pd.Series | None, initial_cash: float
+) -> list[BacktestEquityPointOut]:
+    points = [
+        BacktestEquityPointOut(
+            date=str(day),
+            portfolio_value=_round(value),
+            cash=_round(cash),
+            invested_value=_round(invested),
+            drawdown_percent=_round(drawdown),
         )
-        if benchmark_data is None:
-            return
-        dates = [pd.Timestamp(point.date) for point in equity_curve]
-        benchmark_curve = self._benchmark_curve(summary.benchmark_symbol, benchmark_data, dates, summary.initial_cash)
-        self._attach_benchmark(equity_curve, benchmark_curve)
+        for day, value, cash, invested, drawdown in result.equity.itertuples(index=False, name=None)
+    ]
+    _attach_benchmark(points, growth, initial_cash)
+    return points
+
+
+def _final_positions(result: SimulationResult, inputs: UniverseInputs) -> list[tuple[Any, ...]]:
+    """Posizioni a fine run ricostruite dalle operazioni (costo di carico con commissioni, come il simulatore)."""
+    book: dict[int, dict[str, Any]] = {}
+    for trade in result.trades:
+        entry = book.setdefault(trade.asset_id, {"symbol": trade.symbol, "quantity": 0.0, "cost": 0.0, "realized": 0.0})
+        if trade.side == "BUY":
+            entry["quantity"] += trade.quantity
+            entry["cost"] += trade.net_eur
+            continue
+        held = entry["quantity"]
+        share = trade.quantity / held if held > 0 else 1.0
+        entry["cost"] *= 1.0 - share
+        entry["quantity"] = held - trade.quantity
+        entry["realized"] += trade.pnl_eur
+        if entry["quantity"] <= 1e-12:
+            entry["quantity"], entry["cost"] = 0.0, 0.0
+    rows: list[tuple[Any, ...]] = []
+    for asset_id, entry in book.items():
+        closes = inputs.markets[asset_id].bars["close_eur"]
+        final_price = float(closes.iloc[-1]) if len(closes) else 0.0
+        quantity = entry["quantity"]
+        final_value = quantity * final_price
+        average_price = entry["cost"] / quantity if quantity > 0 else 0.0
+        unrealized = final_value - entry["cost"] if quantity > 0 else 0.0
+        rows.append((entry["symbol"], quantity, average_price, final_price, final_value, entry["realized"], unrealized))
+    return sorted(rows, key=lambda row: (-row[4], row[0]))
+
+
+def _warnings(
+    config: BacktestSettings,
+    costs: CostProfile,
+    inputs: UniverseInputs,
+    result: SimulationResult,
+    benchmark: pd.Series | None,
+) -> list[str]:
+    """Avvisi del run e limiti dichiarati (spec §6.5-§6.6), testi senza percorsi o dati sensibili."""
+    warnings: list[str] = []
+    if config.data_mode == "DEMO":
+        warnings.append(
+            "Run DEMO su dati dimostrativi: nessun valore di evidenza, non registrato nel registro dei tentativi."
+        )
+    if benchmark is None:
+        warnings.append(
+            f"Benchmark {config.benchmark_symbol.strip().upper()} non disponibile in modalita {config.data_mode}: "
+            "nessuna serie convertibile in EUR."
+        )
+    if inputs.fx_excluded_bars:
+        warnings.append(
+            f"{inputs.fx_excluded_bars} barre escluse per cambio EUR mancante o piu vecchio di "
+            f"{get_settings().ecb_fx_max_age_days} giorni."
+        )
+    for symbol, events in inputs.split_events.items():
+        for event in events:
+            warnings.append(
+                f"Split sospetto su {symbol} il {event.date} (rapporto {event.ratio:g}, {event.direction}): "
+                "la serie riparte con un nuovo segmento e un nuovo warm-up (SEGMENT_EXIT al confine)."
+            )
+    cancelled = Counter(str(order["reason"]) for order in result.cancelled_orders)
+    if cancelled:
+        counts = ", ".join(f"{reason} {count}" for reason, count in sorted(cancelled.items()))
+        warnings.append(f"Ordini annullati: {counts}.")
+    asset_types = {asset_type.strip().lower() for asset_type in inputs.asset_types.values()}
+    if "crypto" in asset_types and len(asset_types) > 1:
+        warnings.append(
+            "Calendari misti (crypto e mercati con sedute): ogni decisione considera solo gli asset con una barra "
+            "in quella data."
+        )
+    warnings.append("Universo limitato agli asset attivi oggi: possibile bias di sopravvivenza.")
+    unknown = sorted(
+        inputs.markets[asset_id].symbol
+        for asset_id, basis in inputs.adjustment_basis.items()
+        if basis == "UNKNOWN"
+    )
+    if unknown:
+        warnings.append(f"Rettifica non verificata (base UNKNOWN), dividendi assenti: {', '.join(unknown)}.")
+    if any(basis == "NOT_APPLICABLE" for basis in inputs.adjustment_basis.values()):
+        warnings.append("Storico CoinGecko di circa 365 giorni.")
+    warnings.append(
+        f"Costi di esecuzione ipotizzati: commissione {costs.commission_eur:g} EUR per ordine, costo per lato "
+        f"{costs.cost_bps_equity:g} bps (azioni, ETF, obbligazioni) e {costs.cost_bps_crypto:g} bps (crypto)."
+    )
+    return warnings
+
+
+def _json_or(text: str | None, default: Any) -> Any:
+    return default if text is None else json.loads(text)
+
+
+def _optional_round(value: float | None) -> float | None:
+    return None if value is None else _round(value)

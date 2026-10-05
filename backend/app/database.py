@@ -833,6 +833,18 @@ CREATE TABLE IF NOT EXISTS lab_jobs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS lab_trials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    family_key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('BACKTEST', 'COMPARE', 'WF_GRID')),
+    config_hash TEXT NOT NULL CHECK(length(config_hash) = 64),
+    fingerprint TEXT NOT NULL CHECK(length(fingerprint) = 64),
+    sharpe_daily REAL NOT NULL,
+    n_obs INTEGER NOT NULL CHECK(n_obs > 1),
+    job_id INTEGER,
+    created_at TEXT NOT NULL
+);
+
 """
 
 
@@ -1199,6 +1211,17 @@ CREATE INDEX IF NOT EXISTS idx_lab_jobs_status_created ON lab_jobs(status, creat
 CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_jobs_open
 ON lab_jobs(kind, params_hash)
 WHERE status IN ('QUEUED', 'RUNNING');
+CREATE INDEX IF NOT EXISTS idx_lab_trials_family ON lab_trials(family_key, config_hash, created_at);
+CREATE TRIGGER IF NOT EXISTS trg_lab_trials_no_update
+BEFORE UPDATE ON lab_trials
+BEGIN
+    SELECT RAISE(ABORT, 'lab trials are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_lab_trials_no_delete
+BEFORE DELETE ON lab_trials
+BEGIN
+    SELECT RAISE(ABORT, 'lab trials are append-only');
+END;
 """
 
 
@@ -1325,6 +1348,23 @@ MIGRATIONS = {
     "backtest_runs": [
         ("benchmark_return_percent", "ALTER TABLE backtest_runs ADD COLUMN benchmark_return_percent REAL NOT NULL DEFAULT 0"),
         ("alpha_vs_benchmark", "ALTER TABLE backtest_runs ADD COLUMN alpha_vs_benchmark REAL NOT NULL DEFAULT 0"),
+        # SP1 Task 10: i run esistenti diventano `v0` ("motore precedente"), i nuovi sono `v1`.
+        ("engine_version", "ALTER TABLE backtest_runs ADD COLUMN engine_version TEXT NOT NULL DEFAULT 'v0'"),
+        ("data_mode", "ALTER TABLE backtest_runs ADD COLUMN data_mode TEXT"),
+        ("signal_name", "ALTER TABLE backtest_runs ADD COLUMN signal_name TEXT"),
+        ("signal_timeframe", "ALTER TABLE backtest_runs ADD COLUMN signal_timeframe TEXT"),
+        ("cost_profile_json", "ALTER TABLE backtest_runs ADD COLUMN cost_profile_json TEXT"),
+        ("fingerprint", "ALTER TABLE backtest_runs ADD COLUMN fingerprint TEXT"),
+        ("warnings_json", "ALTER TABLE backtest_runs ADD COLUMN warnings_json TEXT"),
+        ("excluded_json", "ALTER TABLE backtest_runs ADD COLUMN excluded_json TEXT"),
+        ("commission_eur", "ALTER TABLE backtest_runs ADD COLUMN commission_eur REAL"),
+        ("spread_cost_eur", "ALTER TABLE backtest_runs ADD COLUMN spread_cost_eur REAL"),
+        ("turnover", "ALTER TABLE backtest_runs ADD COLUMN turnover REAL"),
+        ("exposure", "ALTER TABLE backtest_runs ADD COLUMN exposure REAL"),
+    ],
+    "backtest_trades": [
+        ("commission", "ALTER TABLE backtest_trades ADD COLUMN commission REAL"),
+        ("spread_cost", "ALTER TABLE backtest_trades ADD COLUMN spread_cost REAL"),
     ],
 }
 
