@@ -104,6 +104,8 @@ class Settings:
     tr_cost_bps_crypto: float = 50.0
     backtest_fractional_shares: bool = False
     backtest_min_trade_eur: float = 100.0
+    lab_wf_is_sessions: int = 504
+    lab_wf_oos_sessions: int = 126
 
     @property
     def database_url(self) -> str:
@@ -246,6 +248,8 @@ class Settings:
             tr_cost_bps_crypto=float(os.getenv("TR_COST_BPS_CRYPTO", "50")),
             backtest_fractional_shares=os.getenv("BACKTEST_FRACTIONAL_SHARES", "false").lower() == "true",
             backtest_min_trade_eur=float(os.getenv("BACKTEST_MIN_TRADE_EUR", "100")),
+            lab_wf_is_sessions=int(os.getenv("LAB_WF_IS_SESSIONS", "504")),
+            lab_wf_oos_sessions=int(os.getenv("LAB_WF_OOS_SESSIONS", "126")),
         )
 
 

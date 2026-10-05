@@ -1040,37 +1040,90 @@ class BacktestCompareOut(BaseModel):
 
 
 class WalkForwardIn(BacktestRunIn):
-    folds: int = Field(default=4, ge=2, le=12)
+    """Walk-forward vero (SP1 Task 11): finestre mobili in sedute del calendario dell'universo.
+
+    Default dalle impostazioni (`LAB_WF_IS_SESSIONS`, `LAB_WF_OOS_SESSIONS`); via `folds` del contratto a fold
+    (un campo legacy inviato viene ignorato).
+    """
+
+    is_sessions: int | None = Field(default=None, ge=2, le=10_000)
+    oos_sessions: int | None = Field(default=None, ge=1, le=10_000)
 
 
-class WalkForwardFoldOut(BaseModel):
-    fold: int
+class WalkForwardParamsOut(BaseModel):
+    name: str
+    buy_threshold: float
+    sell_threshold: float
+    max_asset_weight: float
+    top_n: int
+    rebalance_frequency: str
+
+
+class WalkForwardWindowOut(BaseModel):
+    index: int
+    is_start: str
+    is_end: str
+    oos_start: str
+    oos_end: str
+    chosen: WalkForwardParamsOut
+    is_sharpe: float | None = None  # annualizzato (x sqrt(252)) sui soli rendimenti in-sample della scelta
+
+
+class WalkForwardMetricsOut(BaseModel):
+    """Metriche della simulazione fuori campione, nelle unita di `BacktestSummaryOut` (importi in EUR)."""
+
     start_date: str
     end_date: str
     total_return_percent: float
     cagr: float
     max_drawdown: float
     sharpe_ratio: float
-    alpha_vs_benchmark: float
+    profit_factor: float
+    win_rate: float
     total_trades: int
+    turnover: float
+    exposure: float
+    commission_eur: float
+    spread_cost_eur: float
     final_value: float
+    benchmark_return_percent: float = 0
+    alpha_vs_benchmark: float = 0
+
+
+class DeflatedSharpeOut(BaseModel):
+    """DSR di Bailey e Lopez de Prado: Sharpe giornalieri (non annualizzati), curtosi non in eccesso."""
+
+    dsr: float
+    sr: float
+    sr0: float
+    n_trials: int
+    n_obs: int
+    skew: float
+    kurtosis: float
 
 
 class WalkForwardOut(BaseModel):
+    """Risultato del job `WALK_FORWARD` (spec SP1 §8.3-§8.5).
+
+    Sharpe di finestre, media in-sample, OOS e degrado annualizzati (x sqrt(252), come `sharpe_ratio` dei
+    backtest); `dsr` e `n_trials` (configurazioni distinte della famiglia) solo in REAL, null in DEMO.
+    """
+
     strategy_name: str
-    folds: int
-    full_period_return_percent: float
-    mean_return_percent: float
-    median_return_percent: float
-    std_return_percent: float
-    positive_folds: int
-    folds_beating_benchmark: int
-    worst_fold_return_percent: float
-    best_fold_return_percent: float
-    mean_alpha_vs_benchmark: float
-    consistency: Literal["ROBUSTA", "INCERTA", "FRAGILE"]
-    verdict: str
-    fold_results: list[WalkForwardFoldOut]
+    data_mode: DataMode
+    window_is_sessions: int
+    window_oos_sessions: int
+    windows: list[WalkForwardWindowOut]
+    grid_size: int
+    is_sharpe_mean: float | None = None
+    oos_sharpe: float | None = None
+    degradation: float | None = None
+    oos_metrics: WalkForwardMetricsOut
+    oos_sessions: int
+    dsr: DeflatedSharpeOut | None = None
+    n_trials: int | None = None
+    excluded: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ActionItemOut(BaseModel):

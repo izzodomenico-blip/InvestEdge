@@ -4,7 +4,8 @@
   richiesto o, se nullo, in quello preferito dell'asset (REAL se esiste, altrimenti DEMO); asset senza prezzi saltati.
 - `FX_BACKFILL`: `FXService.backfill_history` per ogni valuta, su una connessione senza transazione aperta
   (il budget del trasporto la rifiuta); ricontrolla `ENABLE_REAL_DATA` prima di ogni chiamata.
-- `BACKTEST`: run v1 persistito (`result_ref` = id del run); `COMPARE`: confronto non persistito (risultato inline).
+- `BACKTEST`: run v1 persistito (`result_ref` = id del run); `COMPARE`: confronto non persistito (risultato inline);
+  `WALK_FORWARD`: walk-forward vero (risultato inline `WalkForwardOut`, tentativi `WF_GRID` in REAL).
   Avanzamento e `raise_if_cancelled` fra un passo e l'altro: un job annullato non scrive run ne tentativi.
 """
 
@@ -21,7 +22,7 @@ from backend.app.lab.contracts import LabError
 from backend.app.lab.feature_store import FeatureStore
 from backend.app.lab.jobs import JobContext, JobOutcome, register_job_handler
 from backend.app.lab.series import preferred_data_mode
-from backend.app.models import BacktestCompareIn, BacktestRunIn
+from backend.app.models import BacktestCompareIn, BacktestRunIn, WalkForwardIn
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.fx_service import FXService
 
@@ -116,7 +117,20 @@ def compare_backtests(context: JobContext, params: Mapping[str, Any]) -> JobOutc
     return JobOutcome(result=result)
 
 
+def walk_forward_backtest(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
+    payload = WalkForwardIn.model_validate(dict(params))
+    connection = get_connection()
+    try:
+        result = BacktestEngine().walk_forward(
+            connection, payload, job_id=context.job_id, now=datetime.now(UTC), checkpoint=_checkpoint(context)
+        )
+    finally:
+        connection.close()
+    return JobOutcome(result=result)
+
+
 register_job_handler("FEATURE_REFRESH", refresh_features)
 register_job_handler("FX_BACKFILL", backfill_fx)
 register_job_handler("BACKTEST", run_backtest)
 register_job_handler("COMPARE", compare_backtests)
+register_job_handler("WALK_FORWARD", walk_forward_backtest)

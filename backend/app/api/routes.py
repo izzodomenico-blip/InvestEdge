@@ -91,7 +91,6 @@ from backend.app.models import (
     TradeRepublicAttestationPreviewOut,
     TradeRepublicListingStatus,
     WalkForwardIn,
-    WalkForwardOut,
 )
 from backend.app.models.schemas import (
     AssetDeleteOut,
@@ -639,7 +638,8 @@ def _enqueue_backtest_job(
     kind: JobKind,
     payload: BacktestRunIn | BacktestCompareIn,
 ) -> JobOut:
-    """Controlli prima di accodare (univocita dei simboli, serie reale in REAL), poi job asincrono (202).
+    """Controlli prima di accodare (univocita dei simboli, serie reale in REAL, sedute per il walk-forward), poi job
+    asincrono (202).
 
     Il lock di univocita viene rilasciato prima di accodare: il job usa una propria connessione.
     """
@@ -647,6 +647,8 @@ def _enqueue_backtest_job(
         with db_session() as connection:
             _ensure_unambiguous_before_provider_calls(connection, [*payload.symbols, payload.benchmark_symbol])
             backtest_engine.precheck(connection, payload.symbols, payload.data_mode)
+            if isinstance(payload, WalkForwardIn):
+                backtest_engine.precheck_walk_forward(connection, payload)
         record: JobRecord = get_job_service().enqueue(kind, payload.model_dump(mode="json"))
     except LabError as exc:
         raise _lab_conflict(exc) from None
@@ -665,17 +667,10 @@ def compare_backtests(payload: BacktestCompareIn) -> JobOut:
     return _enqueue_backtest_job("COMPARE", payload)
 
 
-@router.post("/backtests/walk-forward", response_model=WalkForwardOut)
-def walk_forward_backtest(payload: WalkForwardIn) -> WalkForwardOut:
-    # Contratto a fold sincrono sulla pipeline v1 fino al walk-forward vero (SP1 Task 11).
-    try:
-        with db_session() as connection:
-            _ensure_unambiguous_before_provider_calls(connection, [*payload.symbols, payload.benchmark_symbol])
-            return WalkForwardOut(**backtest_engine.walk_forward(connection, payload))
-    except LabError as exc:
-        raise _lab_conflict(exc) from None
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+@router.post("/backtests/walk-forward", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def walk_forward_backtest(payload: WalkForwardIn) -> JobOut:
+    """Walk-forward vero come job: il risultato (`WalkForwardOut`, con DSR e N in REAL) e nel job."""
+    return _enqueue_backtest_job("WALK_FORWARD", payload)
 
 
 @router.get("/backtests", response_model=list[BacktestSummaryOut])

@@ -7,8 +7,9 @@
   famiglia (`signal_name`, `signal_timeframe`); i run DEMO sono etichettati e mai registrati.
 - Imposte e bollo restano nell'analisi netta, in EUR (utili e perdite di cambio inclusi).
 - I run `v0` del motore precedente restano leggibili e cancellabili ("motore precedente").
-- `walk_forward` mantiene il contratto a fold del motore precedente sulla pipeline v1 fino al walk-forward vero
-  (Task 11); ogni fold e una simulazione indipendente e non e registrato come tentativo.
+- `walk_forward` (spec §8.3-§8.5): griglia simulata sull'intero periodo, parametri scelti sui soli rendimenti
+  in-sample di ogni finestra, un'unica simulazione fuori campione con il calendario dei parametri; in REAL ogni
+  configurazione della griglia e un tentativo `WF_GRID` e il DSR usa gli Sharpe della famiglia.
 """
 
 from __future__ import annotations
@@ -23,22 +24,23 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from backend.app.config import get_settings
-from backend.app.lab.contracts import PIPELINE_VERSION, SCORE_VERSION, DataMode, LabError
+from backend.app.lab.contracts import PERIODS_PER_YEAR, PIPELINE_VERSION, SCORE_VERSION, DataMode, LabError
 from backend.app.lab.costs import CostProfile
 from backend.app.lab.series import available_data_modes
 from backend.app.lab.simulator import SimulationConfig, SimulationResult, compute_metrics, simulate
+from backend.app.lab.stats import DsrResult, deflated_sharpe, sharpe_daily
 from backend.app.lab.strategies import StrategyParams
-from backend.app.lab.trials import canonical_hash, family_key, record_trial, trial_config
+from backend.app.lab.trials import canonical_hash, family_key, family_trial_sharpes, record_trial, trial_config
 from backend.app.lab.universe import (
     UniverseInputs,
     benchmark_curve,
     build_universe_inputs,
     no_real_series_error,
 )
+from backend.app.lab.walk_forward import WalkForwardRun, parameter_grid, period_too_short_error, run_walk_forward
 from backend.app.models import (
     BacktestBenchmarkComparisonOut,
     BacktestCompareEntryOut,
@@ -51,7 +53,12 @@ from backend.app.models import (
     BacktestRunIn,
     BacktestSummaryOut,
     BacktestTradeOut,
+    DeflatedSharpeOut,
     WalkForwardIn,
+    WalkForwardMetricsOut,
+    WalkForwardOut,
+    WalkForwardParamsOut,
+    WalkForwardWindowOut,
 )
 from backend.app.services.common import (
     now_local as _now,
@@ -126,6 +133,35 @@ class BacktestEngine:
             if len(rows) == 1 and "REAL" in available_data_modes(connection, int(rows[0][0])):
                 return
         raise no_real_series_error()
+
+    def precheck_walk_forward(self, connection: sqlite3.Connection, payload: WalkForwardIn) -> None:
+        """Prima di accodare: le sedute del periodo nel `data_mode` del run devono superare la finestra in-sample.
+
+        Le date distinte delle barre dei simboli richiesti sono un limite superiore del calendario dell'universo:
+        se gia queste non bastano, `LAB_PERIOD_TOO_SHORT` senza accodare (il job ricontrolla sul calendario reale).
+        """
+        is_sessions, _oos_sessions = _window_sessions(payload)
+        asset_ids: list[int] = []
+        for symbol in payload.symbols:
+            rows = connection.execute("SELECT id FROM assets WHERE UPPER(symbol) = ? ORDER BY id", (symbol,)).fetchall()
+            if len(rows) == 1:
+                asset_ids.append(int(rows[0][0]))
+        available = 0
+        if asset_ids:
+            available = int(
+                connection.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT substr(date, 1, 10))
+                    FROM price_history
+                    WHERE asset_id IN ({", ".join("?" * len(asset_ids))})
+                      AND is_real_data = ?
+                      AND substr(date, 1, 10) BETWEEN ? AND ?
+                    """,
+                    (*asset_ids, 1 if payload.data_mode == "REAL" else 0, payload.start_date, payload.end_date),
+                ).fetchone()[0]
+            )
+        if available <= is_sessions:
+            raise period_too_short_error(available, is_sessions)
 
     def run_backtest(
         self,
@@ -203,92 +239,158 @@ class BacktestEngine:
         connection: sqlite3.Connection,
         payload: WalkForwardIn,
         *,
+        job_id: int | None = None,
         now: datetime | None = None,
+        checkpoint: Checkpoint | None = None,
     ) -> dict[str, Any]:
-        """Contratto a fold del motore precedente sulla pipeline v1 (sostituito dal walk-forward vero nel Task 11).
+        """Walk-forward vero sullo stesso universo del backtest; risultato `WalkForwardOut` serializzato.
 
-        Il periodo si divide in N fold consecutivi del calendario; ogni fold e una simulazione indipendente.
+        Griglia della strategia simulata sull'intero periodo, parametri scelti sui soli rendimenti in-sample di ogni
+        finestra, un'unica simulazione fuori campione con il calendario dei parametri. In REAL ogni configurazione
+        della griglia e un tentativo `WF_GRID` (stesso `config_hash` di backtest e confronto) e il DSR usa gli Sharpe
+        della famiglia (N = configurazioni distinte); i run DEMO non registrano tentativi e non hanno DSR.
+        Tentativi e DSR si scrivono in un savepoint dopo l'ultimo punto di annullamento.
         """
-        inputs = self._universe(connection, payload, now, _no_checkpoint, share=1.0)
-        calendar = inputs.calendar
-        if len(calendar) < payload.folds * 2:
-            raise ValueError("Periodo troppo corto per il numero di fold richiesto.")
+        step = checkpoint or _no_checkpoint
+        is_sessions, oos_sessions = _window_sessions(payload)
+        inputs = self._universe(connection, payload, now, step, share=0.4)
         costs = _cost_profile(payload)
+        params = _strategy_params(payload, payload.strategy_name)
+        run = run_walk_forward(
+            inputs,
+            _simulation_config(payload, costs, params, inputs.calendar),
+            parameter_grid(payload.strategy_name, params),
+            is_sessions=is_sessions,
+            oos_sessions=oos_sessions,
+            progress=lambda value: step(0.4 + 0.5 * value),
+        )
         benchmark = benchmark_curve(
-            connection, payload.benchmark_symbol, data_mode=payload.data_mode, calendar=calendar
+            connection,
+            payload.benchmark_symbol,
+            data_mode=payload.data_mode,
+            calendar=[str(day) for day in run.oos.equity["date"]],
         )
-        full = self._period_metrics(payload, inputs, costs, benchmark, calendar)
+        step(0.95)
+        windows = (is_sessions, oos_sessions)
+        if payload.data_mode != "REAL":
+            return self._walk_forward_out(payload, costs, inputs, run, benchmark, windows, None, None, 0)
+        connection.execute("SAVEPOINT walk_forward_trials")
+        try:
+            skipped = 0
+            for grid_params, result in run.grid_results:
+                trial = _trial_config(payload, grid_params, costs)
+                recorded = self._record_trial(
+                    connection,
+                    payload,
+                    kind="WF_GRID",
+                    config_hash=canonical_hash(trial),
+                    fingerprint=_run_fingerprint(payload, trial, inputs),
+                    returns=result.daily_returns,
+                    job_id=job_id,
+                )
+                skipped += 0 if recorded else 1
+            sharpes = family_trial_sharpes(connection, family_key(payload.signal_name, payload.signal_timeframe))
+            output = self._walk_forward_out(
+                payload, costs, inputs, run, benchmark, windows,
+                deflated_sharpe(run.oos.daily_returns, sharpes), len(sharpes), skipped,
+            )
+        except Exception:
+            connection.execute("ROLLBACK TO SAVEPOINT walk_forward_trials")
+            connection.execute("RELEASE SAVEPOINT walk_forward_trials")
+            raise
+        connection.execute("RELEASE SAVEPOINT walk_forward_trials")
+        return output
 
-        fold_size = len(calendar) // payload.folds
-        fold_results: list[dict[str, Any]] = []
-        for index in range(payload.folds):
-            start_idx = index * fold_size
-            end_idx = len(calendar) if index == payload.folds - 1 else (index + 1) * fold_size
-            fold_dates = calendar[start_idx:end_idx]
-            if len(fold_dates) < 2:
-                continue
-            fold_results.append({"fold": index + 1, **self._period_metrics(payload, inputs, costs, benchmark, fold_dates)})
-
-        returns = [item["total_return_percent"] for item in fold_results]
-        alphas = [item["alpha_vs_benchmark"] for item in fold_results]
-        positive = sum(1 for value in returns if value > 0)
-        beating = sum(1 for value in alphas if value > 0)
-        count = len(fold_results)
-        mean_return = statistics.fmean(returns) if returns else 0.0
-        median_return = statistics.median(returns) if returns else 0.0
-        std_return = statistics.stdev(returns) if len(returns) > 1 else 0.0
-        mean_alpha = statistics.fmean(alphas) if alphas else 0.0
-
-        positive_ratio = positive / count if count else 0.0
-        beating_ratio = beating / count if count else 0.0
-        consistency, verdict = self._consistency_verdict(
-            positive_ratio, beating_ratio, mean_return, mean_alpha, count
-        )
-
-        return {
-            "strategy_name": payload.strategy_name,
-            "folds": count,
-            "full_period_return_percent": full["total_return_percent"],
-            "mean_return_percent": _round(mean_return, 2),
-            "median_return_percent": _round(median_return, 2),
-            "std_return_percent": _round(std_return, 2),
-            "positive_folds": positive,
-            "folds_beating_benchmark": beating,
-            "worst_fold_return_percent": _round(min(returns), 2) if returns else 0.0,
-            "best_fold_return_percent": _round(max(returns), 2) if returns else 0.0,
-            "mean_alpha_vs_benchmark": _round(mean_alpha, 2),
-            "consistency": consistency,
-            "verdict": verdict,
-            "fold_results": fold_results,
-        }
-
-    def _consistency_verdict(
+    def _walk_forward_out(
         self,
-        positive_ratio: float,
-        beating_ratio: float,
-        mean_return: float,
-        mean_alpha: float,
-        count: int,
-    ) -> tuple[str, str]:
-        if count == 0:
-            return "FRAGILE", "Nessun fold valutabile."
-        if positive_ratio >= 0.7 and mean_alpha > 0:
-            return (
-                "ROBUSTA",
-                f"Positiva in {positive_ratio * 100:.0f}% dei periodi con alpha medio {mean_alpha:+.1f}%. "
-                "Comportamento consistente, ma resta una simulazione: nessuna garanzia sul futuro.",
+        payload: WalkForwardIn,
+        costs: CostProfile,
+        inputs: UniverseInputs,
+        run: WalkForwardRun,
+        benchmark: pd.Series | None,
+        windows: tuple[int, int],
+        dsr: DsrResult | None,
+        n_trials: int | None,
+        skipped_trials: int,
+    ) -> dict[str, Any]:
+        annual = math.sqrt(PERIODS_PER_YEAR["D"])
+        oos = run.oos
+        metrics = compute_metrics(oos, float(payload.initial_cash))
+        in_sample = [window.is_sharpe for window in run.windows if window.is_sharpe is not None]
+        is_mean = statistics.fmean(in_sample) * annual if in_sample else None
+        oos_daily = sharpe_daily(oos.daily_returns)
+        oos_sharpe = oos_daily * annual if oos_daily is not None else None
+        degradation = is_mean - oos_sharpe if is_mean is not None and oos_sharpe is not None else None
+        benchmark_return = _benchmark_return(benchmark)
+        warnings = _warnings(payload, costs, inputs, oos, benchmark)
+        if payload.data_mode != "REAL":
+            warnings.append("DSR non calcolato: i run DEMO non entrano nel registro dei tentativi.")
+        elif dsr is None:
+            warnings.append("DSR non calcolabile: rendimenti fuori campione senza variazioni.")
+        if skipped_trials:
+            warnings.append(
+                f"{skipped_trials} configurazioni della griglia senza Sharpe definito (valore senza variazioni): "
+                "non registrate come tentativi."
             )
-        if positive_ratio <= 0.4 or mean_return <= 0:
-            return (
-                "FRAGILE",
-                f"Positiva solo nel {positive_ratio * 100:.0f}% dei periodi (rendimento medio {mean_return:+.1f}%). "
-                "Il risultato sull'intero periodo dipende probabilmente da poche finestre fortunate: alto rischio di overfitting.",
-            )
-        return (
-            "INCERTA",
-            f"Positiva nel {positive_ratio * 100:.0f}% dei periodi, batte il benchmark nel {beating_ratio * 100:.0f}%. "
-            "Segnali misti: non affidarti a questa strategia senza ulteriori verifiche.",
-        )
+        dates = [str(day) for day in oos.equity["date"]]
+        final_value = float(oos.equity["value_eur"].iloc[-1])
+        return WalkForwardOut(
+            strategy_name=payload.strategy_name,
+            data_mode=payload.data_mode,
+            window_is_sessions=windows[0],
+            window_oos_sessions=windows[1],
+            windows=[
+                WalkForwardWindowOut(
+                    index=window.index,
+                    is_start=window.is_start,
+                    is_end=window.is_end,
+                    oos_start=window.oos_start,
+                    oos_end=window.oos_end,
+                    chosen=WalkForwardParamsOut(**asdict(window.chosen)),
+                    is_sharpe=_optional_round(window.is_sharpe * annual if window.is_sharpe is not None else None),
+                )
+                for window in run.windows
+            ],
+            grid_size=len(run.grid_results),
+            is_sharpe_mean=_optional_round(is_mean),
+            oos_sharpe=_optional_round(oos_sharpe),
+            degradation=_optional_round(degradation),
+            oos_metrics=WalkForwardMetricsOut(
+                start_date=dates[0],
+                end_date=dates[-1],
+                total_return_percent=_round(metrics["total_return_percent"]),
+                cagr=_round(metrics["cagr"]),
+                max_drawdown=_round(metrics["max_drawdown"]),
+                sharpe_ratio=_round(metrics["sharpe_ratio"]),
+                profit_factor=_round(metrics["profit_factor"]),
+                win_rate=_round(metrics["win_rate"]),
+                total_trades=int(metrics["total_trades"]),
+                turnover=_round(metrics["turnover"]),
+                exposure=_round(metrics["exposure"]),
+                commission_eur=_round(metrics["commission_eur"]),
+                spread_cost_eur=_round(metrics["spread_cost_eur"]),
+                final_value=_round(final_value),
+                benchmark_return_percent=_round(benchmark_return),
+                alpha_vs_benchmark=_round(metrics["total_return_percent"] - benchmark_return),
+            ),
+            oos_sessions=len(dates),
+            dsr=(
+                None
+                if dsr is None
+                else DeflatedSharpeOut(
+                    dsr=_round(dsr.dsr),
+                    sr=_round(dsr.sr),
+                    sr0=_round(dsr.sr0),
+                    n_trials=dsr.n_trials,
+                    n_obs=dsr.n_obs,
+                    skew=_round(dsr.skew),
+                    kurtosis=_round(dsr.kurtosis),
+                )
+            ),
+            n_trials=n_trials,
+            excluded=dict(inputs.excluded),
+            warnings=warnings,
+        ).model_dump(mode="json")
 
     def list_backtests(self, connection: sqlite3.Connection) -> list[BacktestSummaryOut]:
         rows = connection.execute(
@@ -407,30 +509,8 @@ class BacktestEngine:
         params = _strategy_params(config, strategy_name)
         result = simulate(inputs.markets, inputs.signals, inputs.calendar, _simulation_config(config, costs, params, inputs.calendar))
         metrics = compute_metrics(result, float(config.initial_cash))
-        trial = trial_config(
-            params,
-            signal_name=config.signal_name,
-            signal_timeframe=config.signal_timeframe,
-            stop_loss_percent=config.stop_loss_percent,
-            take_profit_percent=config.take_profit_percent,
-            costs=costs,
-            initial_cash_eur=float(config.initial_cash),
-            symbols=config.symbols,
-        )
-        fingerprint = canonical_hash(
-            {
-                "config": {
-                    **trial,
-                    "start_date": config.start_date,
-                    "end_date": config.end_date,
-                    "benchmark_symbol": config.benchmark_symbol.strip().upper(),
-                    "max_pending_sessions": get_settings().lab_order_max_pending_sessions,
-                },
-                "versions": {"engine": ENGINE_VERSION, "pipeline": PIPELINE_VERSION, "score": SCORE_VERSION},
-                "data_mode": config.data_mode,
-                "inputs_hash": inputs.inputs_hash,
-            }
-        )
+        trial = _trial_config(config, params, costs)
+        fingerprint = _run_fingerprint(config, trial, inputs)
         benchmark_return = _benchmark_return(benchmark)
         total_return = metrics["total_return_percent"]
         summary = BacktestSummaryOut(
@@ -479,30 +559,6 @@ class BacktestEngine:
             config_hash=canonical_hash(trial),
         )
 
-    def _period_metrics(
-        self,
-        config: WalkForwardIn,
-        inputs: UniverseInputs,
-        costs: CostProfile,
-        benchmark: pd.Series | None,
-        dates: list[str],
-    ) -> dict[str, Any]:
-        params = _strategy_params(config, config.strategy_name)
-        result = simulate(inputs.markets, inputs.signals, dates, _simulation_config(config, costs, params, dates))
-        metrics = compute_metrics(result, float(config.initial_cash))
-        benchmark_return = _benchmark_return(benchmark.reindex(dates) if benchmark is not None else None)
-        return {
-            "start_date": dates[0],
-            "end_date": dates[-1],
-            "total_return_percent": _round(metrics["total_return_percent"]),
-            "cagr": _round(metrics["cagr"]),
-            "max_drawdown": _round(metrics["max_drawdown"]),
-            "sharpe_ratio": _round(metrics["sharpe_ratio"]),
-            "alpha_vs_benchmark": _round(metrics["total_return_percent"] - benchmark_return),
-            "total_trades": int(metrics["total_trades"]),
-            "final_value": _round(float(result.equity["value_eur"].iloc[-1])),
-        }
-
     def _record_trials(
         self,
         connection: sqlite3.Connection,
@@ -516,7 +572,15 @@ class BacktestEngine:
         connection.execute("SAVEPOINT backtest_trials")
         try:
             for outcome in outcomes:
-                self._record_trial(connection, config, outcome, kind, job_id)
+                self._record_trial(
+                    connection,
+                    config,
+                    kind=kind,
+                    config_hash=outcome.config_hash,
+                    fingerprint=str(outcome.summary.fingerprint),
+                    returns=outcome.result.daily_returns,
+                    job_id=job_id,
+                )
         except Exception:
             connection.execute("ROLLBACK TO SAVEPOINT backtest_trials")
             connection.execute("RELEASE SAVEPOINT backtest_trials")
@@ -527,19 +591,23 @@ class BacktestEngine:
         self,
         connection: sqlite3.Connection,
         config: BacktestSettings,
-        outcome: _Outcome,
+        *,
         kind: str,
+        config_hash: str,
+        fingerprint: str,
+        returns: pd.Series,
         job_id: int | None,
     ) -> bool:
-        returns = outcome.result.daily_returns
+        """Tentativo nella famiglia del run con lo Sharpe giornaliero (`stats.sharpe_daily`; non definito -> nessuna riga)."""
+        sharpe = sharpe_daily(returns)
         return record_trial(
             connection,
             data_mode=config.data_mode,
             family=family_key(config.signal_name, config.signal_timeframe),
             kind=kind,  # type: ignore[arg-type]
-            config_hash=outcome.config_hash,
-            fingerprint=str(outcome.summary.fingerprint),
-            sharpe_daily=_daily_sharpe(returns),
+            config_hash=config_hash,
+            fingerprint=fingerprint,
+            sharpe_daily=math.nan if sharpe is None else sharpe,
             n_obs=len(returns),
             job_id=job_id,
         )
@@ -614,7 +682,15 @@ class BacktestEngine:
                 """,
                 [(backtest_id, *position, created_at) for position in _final_positions(outcome.result, inputs)],
             )
-            self._record_trial(connection, config, outcome, "BACKTEST", job_id)
+            self._record_trial(
+                connection,
+                config,
+                kind="BACKTEST",
+                config_hash=outcome.config_hash,
+                fingerprint=str(summary.fingerprint),
+                returns=outcome.result.daily_returns,
+                job_id=job_id,
+            )
         except Exception:
             connection.execute("ROLLBACK TO SAVEPOINT backtest_persist")
             connection.execute("RELEASE SAVEPOINT backtest_persist")
@@ -866,15 +942,45 @@ def _simulation_config(
     )
 
 
-def _daily_sharpe(returns: pd.Series) -> float:
-    """Sharpe giornaliero (non annualizzato, tasso privo di rischio 0) del tentativo; NaN se non definito."""
-    values = returns.to_numpy(dtype=float)
-    if values.shape[0] < 2:
-        return math.nan
-    deviation = float(np.std(values, ddof=1))
-    if not math.isfinite(deviation) or deviation <= 0:
-        return math.nan
-    return float(np.mean(values)) / deviation
+def _trial_config(config: BacktestSettings, params: StrategyParams, costs: CostProfile) -> dict[str, Any]:
+    """Configurazione normalizzata del tentativo: stessa base del `config_hash` in backtest, confronto e griglia."""
+    return trial_config(
+        params,
+        signal_name=config.signal_name,
+        signal_timeframe=config.signal_timeframe,
+        stop_loss_percent=config.stop_loss_percent,
+        take_profit_percent=config.take_profit_percent,
+        costs=costs,
+        initial_cash_eur=float(config.initial_cash),
+        symbols=config.symbols,
+    )
+
+
+def _run_fingerprint(config: BacktestSettings, trial: dict[str, Any], inputs: UniverseInputs) -> str:
+    """Impronta canonica di configurazione, periodo, versioni, `data_mode` e input dell'universo."""
+    return canonical_hash(
+        {
+            "config": {
+                **trial,
+                "start_date": config.start_date,
+                "end_date": config.end_date,
+                "benchmark_symbol": config.benchmark_symbol.strip().upper(),
+                "max_pending_sessions": get_settings().lab_order_max_pending_sessions,
+            },
+            "versions": {"engine": ENGINE_VERSION, "pipeline": PIPELINE_VERSION, "score": SCORE_VERSION},
+            "data_mode": config.data_mode,
+            "inputs_hash": inputs.inputs_hash,
+        }
+    )
+
+
+def _window_sessions(payload: WalkForwardIn) -> tuple[int, int]:
+    """Sedute delle finestre in-sample e fuori campione: quelle del run o, se nulle, le impostazioni."""
+    settings = get_settings()
+    return (
+        payload.is_sessions or settings.lab_wf_is_sessions,
+        payload.oos_sessions or settings.lab_wf_oos_sessions,
+    )
 
 
 def _benchmark_return(curve: pd.Series | None) -> float:

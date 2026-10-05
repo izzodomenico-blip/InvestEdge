@@ -1026,7 +1026,7 @@ def simulate_oos(inputs: UniverseInputs, base: SimulationConfig, windows: Sequen
 
 `BacktestEngine.walk_forward(connection, payload, *, job_id, now)`: universo → griglia → `record_trial` per ogni configurazione REAL (`WF_GRID`, config_hash della configurazione) → selezione → OOS → `deflated_sharpe(oos.daily_returns, family_trial_sharpes(family))`. `WalkForwardIn` = `BacktestRunIn` + `is_sessions: int | None`, `oos_sessions: int | None` (via `folds`). `WalkForwardOut`: `strategy_name`, `data_mode`, `windows`, `grid_size`, `is_sharpe_mean`, `oos_sharpe`, `degradation` (= `is_sharpe_mean − oos_sharpe`), `oos_metrics`, `oos_sessions`, `dsr` (`DsrResult` serializzato o null), `n_trials`, `excluded`, `warnings`. Periodo troppo corto per una finestra → `LabError("LAB_PERIOD_TOO_SHORT")`.
 
-- [ ] **Step 1: Test RED** in `tests/test_lab_stats.py`:
+- [x] **Step 1: Test RED** in `tests/test_lab_stats.py`:
 
 ```python
 from statistics import NormalDist
@@ -1080,8 +1080,8 @@ def test_dsr_decreases_when_more_trials_are_counted() -> None:
 ```
 
   In `tests/test_lab_walk_forward.py`: `test_build_windows_rolls_by_oos_length`; `test_grid_sizes` (12, 6, 1); `test_selection_ignores_oos_perturbation` (si perturbano i prezzi dopo `is_end` della finestra 0: parametro scelto della finestra 0 invariato); `test_tie_breaks_on_grid_order`; `test_oos_is_one_simulation_with_parameter_schedule` (nessuna `SEGMENT_EXIT` né vendita forzata al cambio di finestra); `test_walk_forward_records_one_trial_per_grid_config_and_reports_dsr`; `test_period_too_short_raises`. In `tests/test_api.py`: `POST /backtests/walk-forward` → 202, risultato del job con `windows`, `dsr`, `n_trials`.
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_stats.py`, `tests\test_lab_walk_forward.py`, suite completa, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_stats.py`, `tests\test_lab_walk_forward.py`, suite completa, Ruff).
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: add true walk-forward with deflated Sharpe`
 

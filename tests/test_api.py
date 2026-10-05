@@ -2503,34 +2503,92 @@ def test_compare_strategies_requires_two(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def _walk_forward_job(client: TestClient, payload: dict[str, object]) -> dict[str, object]:
+    job = _backtest_job(client, "/backtests/walk-forward", payload)
+    assert (job["kind"], job["result_ref"]) == ("WALK_FORWARD", None)
+    polled = client.get(f"/lab/jobs/{job['id']}").json()
+    assert polled["status"] == "SUCCEEDED"
+    return polled
+
+
 def test_walk_forward_endpoint(backtest_client: TestClient) -> None:
-    # Fino al Task 11 il walk-forward resta sincrono con il contratto a fold, sulla pipeline v1.
-    payload = _backtest_payload("SCORE_THRESHOLD")
-    payload["folds"] = 4
+    # Walk-forward vero come job (SP1 Task 11): finestre IS/OOS, griglia e un'unica simulazione OOS. Il seed e DEMO:
+    # nessun tentativo registrato e nessun DSR.
+    payload = {**_backtest_payload("SCORE_THRESHOLD"), "is_sessions": 120, "oos_sessions": 60}
 
-    response = backtest_client.post("/backtests/walk-forward", json=payload)
+    job = _walk_forward_job(backtest_client, payload)
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["folds"] == 4
-    assert len(data["fold_results"]) == 4
-    assert data["consistency"] in {"ROBUSTA", "INCERTA", "FRAGILE"}
-    assert data["positive_folds"] <= data["folds"]
-    assert data["verdict"]
-    folds_seen = [fold["fold"] for fold in data["fold_results"]]
-    assert folds_seen == [1, 2, 3, 4]
+    data = job["result"]
+    assert (data["strategy_name"], data["data_mode"], data["grid_size"]) == ("SCORE_THRESHOLD", "DEMO", 12)
+    assert (data["window_is_sessions"], data["window_oos_sessions"]) == (120, 60)
+    windows = data["windows"]
+    assert windows
+    assert [window["index"] for window in windows] == list(range(len(windows)))
+    assert all(window["oos_start"] > window["is_end"] for window in windows)
+    assert data["oos_sessions"] > 0
+    assert data["oos_metrics"]["start_date"] == windows[0]["oos_start"]
+    assert (data["dsr"], data["n_trials"]) == (None, None)
+    assert data["warnings"][0].startswith("Run DEMO")
+    from backend.app.database import db_session
+
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM lab_trials").fetchone()[0] == 0
+        closes = dict(
+            connection.execute(
+                "SELECT substr(ph.date, 1, 10), ph.close FROM price_history ph JOIN assets a ON a.id = ph.asset_id "
+                "WHERE a.symbol = 'SPY' AND ph.is_real_data = 0"
+            ).fetchall()
+        )
+    # Benchmark DEMO sul solo periodo fuori campione (cambio USD costante: il rapporto dei close non cambia).
+    metrics = data["oos_metrics"]
+    expected = (closes[metrics["end_date"]] / closes[metrics["start_date"]] - 1) * 100
+    assert metrics["benchmark_return_percent"] == pytest.approx(expected, abs=1e-4)
+
+
+def test_walk_forward_real_job_reports_dsr_and_trials(backtest_client: TestClient) -> None:
+    from backend.app.database import db_session
+    from tests.lab_fixtures import insert_asset, insert_bars, synthetic_bars
+
+    symbols = ["WFRA", "WFRB", "WFRC"]
+    with db_session() as connection:
+        for seed, symbol in enumerate(symbols, start=7):
+            bars = synthetic_bars(700, seed)
+            insert_bars(connection, insert_asset(connection, symbol), bars, real=True, provider="stooq")
+    payload = {
+        **_backtest_payload("TOP_N_SCORE"),
+        "symbols": symbols,
+        "data_mode": "REAL",
+        "start_date": str(bars["date"].iloc[260]),
+        "end_date": str(bars["date"].iloc[-1]),
+        "is_sessions": 120,
+        "oos_sessions": 60,
+    }
+
+    job = _walk_forward_job(backtest_client, payload)
+
+    data = job["result"]
+    assert (data["data_mode"], data["grid_size"], data["n_trials"]) == ("REAL", 6, 6)
+    assert data["windows"]
+    assert data["dsr"]["n_trials"] == 6
+    assert 0 <= data["dsr"]["dsr"] <= 1
+    with db_session() as connection:
+        trials = connection.execute("SELECT kind, job_id FROM lab_trials ORDER BY id").fetchall()
+    assert [tuple(row) for row in trials] == [("WF_GRID", job["id"])] * 6
 
 
 def test_walk_forward_period_too_short(backtest_client: TestClient) -> None:
     payload = _backtest_payload("BUY_AND_HOLD")
     payload["start_date"] = "2026-05-10"
     payload["end_date"] = "2026-05-15"
-    payload["folds"] = 12
 
     response = backtest_client.post("/backtests/walk-forward", json=payload)
 
-    assert response.status_code == 400
-    assert "fold" in response.json()["detail"].lower()
+    # Controllo prima di accodare: le sedute disponibili non bastano per una finestra in-sample (default 504).
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "LAB_PERIOD_TOO_SHORT"
+    assert "504" in detail["message"]
+    assert backtest_client.get("/lab/jobs").json() == []
 
 
 def _allocation_payload(method: str = "RISK_PARITY", **overrides: object) -> dict[str, object]:
