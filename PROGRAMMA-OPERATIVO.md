@@ -2,18 +2,18 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (SP1 Task 13 chiuso; prossimo passo Task 14; R1–R4 e Task 12 chiusi).
+Ultimo aggiornamento: 2026-10-10 (SP1 Task 14 chiuso; prossimo passo Task 15; R1–R4 e Task 12–13 chiusi).
 
 ## Prossimo passo
 
-**SP1 Task 14 — Pagina Backtest su job, costi TR ed EUR.**
+**SP1 Task 15 — Evidenza, badge del verdetto e pagina ML.**
 
-- Task 14 NON INIZIATO. Branch previsto `investedge/sp1-task-14` da `origin/investedge/sp1-task-13`, dopo verifica SHA remoto e working tree pulito. Registrare lo SHA finale Task 13 nel commit successivo; checkpoint Task 13 `2f34a431ba930470d182f9897c61c9050b5cf6d4` già documentato.
-- Ingressi Task 13: ML su 31 feature condivise, target rettificati per segmento, modelli/bundle versionati, REAL/DEMO isolati, job `ML_TRAIN` e 409 per modello incompatibile. Verifiche offline: **70 mirati, 1003 backend passati, 0 falliti/errori/xfail**; Ruff, pip check e diff check verdi; due review indipendenti PASS.
-- Task 14 completa form costi/segnale/timeframe, risultati EUR, costi per voce, avvisi/esclusi, storico v0 e dettaglio finestre/DSR. Riusa polling e annullamento condivisi già verificati in R3.
-- **Limite previsto:** la pagina ML usa ancora il contratto di training sincrono; adeguamento a `202 JobOut` e messaggio di riaddestramento nel Task 15. Il flusso frontend ML resta da completare.
-- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P, R1–R4 e Task 12–13 FATTI. Frontend non modificato né riverificato nel Task 13; il gate audit R4 resta evidenza storica distinta.
-- Checkout originale Task 6 preservato. Nessun merge o trading attivato: report daily e fixture sintetiche verificano il software; validazione intraday 15–30 minuti e Alpaca paper senza leva restano ai gate successivi.
+- Task 15 NON INIZIATO. Branch previsto `investedge/sp1-task-15` da `origin/investedge/sp1-task-14`, dopo verifica SHA remoto e working tree pulito. Registrare lo SHA finale Task 14 nel commit successivo.
+- Task 14 FATTO: pagina Backtest con catalogo segnali D/W/M, REAL/DEMO, profilo TR configurabile, importi EUR con centesimi, costi per voce, avvisi/esclusi, storico v0 e dettaglio finestre/DSR/N. Polling e annullamento R3 riusati; costi di esecuzione v1 distinti dalle imposte stimate.
+- Verifiche Task 14: **39 test pagina, 90 frontend e 1003 backend verdi**, zero falliti/errori/skip. Build, Ruff, pip check e diff check verdi; audit **0 high/critical**, 1 low transitivo `@babel/core`. Due review indipendenti PASS e smoke browser offline desktop/mobile senza overflow o valori troncati.
+- Task 15 completa modalità Evidenza, badge e marcatori nelle viste previste, training ML via `202 JobOut` e guida al riaddestramento per modelli incompatibili. Il flusso frontend ML resta il limite previsto da completare.
+- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P, R1–R4 e Task 12–14 FATTI.
+- Checkout originale Task 6 preservato. Nessun merge o trading attivato: i test sintetici verificano il software; validazione intraday 15–30 minuti e Alpaca paper senza leva restano ai gate successivi.
 
 ## Legenda
 
@@ -276,8 +276,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | R3 | Contratti asincroni frontend e indicatori Analisi | FATTO | `75cef429023e9badfe239e9895c6f7fa31a16816`; evidenza/deroga audit sotto | 2026-10-10 | Codex |
 | R4 | Correzione dipendenze frontend e gate audit | FATTO | `4f8f28052d3e3323a83f9f2bab3a06d1d35bebe1`; branch `investedge/sp1-remediation-4`; 68 frontend, 897 backend + 1 xfail, audit 0 high/critical | 2026-10-10 | Codex |
 | 12 | Harness di valutazione, report di evidenza e verdetto | FATTO | `23d9b86503e6a98ec096d84b9ad31b6ca26b4fd2`; pytest 56 mirati, 955 backend + 1 xfail; Ruff/pip check; review PASS | 2026-10-10 | Codex |
-| 13 | ML sulla pipeline condivisa | FATTO | branch `investedge/sp1-task-13`; pytest 70 mirati, 1003 backend; Ruff/pip check; review PASS | 2026-10-10 | Codex |
-| 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
+| 13 | ML sulla pipeline condivisa | FATTO | `835e83d7454a6a2abf38f54c730446127d0fc052`; branch `investedge/sp1-task-13`; pytest 70 mirati, 1003 backend; Ruff/pip check; review PASS | 2026-10-10 | Codex |
+| 14 | Pagina Backtest su job, costi TR ed EUR | FATTO | branch `investedge/sp1-task-14`; 39 pagina/90 frontend, 1003 backend; build/Ruff/audit 0 high-critical; review PASS | 2026-10-10 | Codex |
 | 15 | Evidenza, badge del verdetto e pagina ML | NON INIZIATO | — | — | — |
 | 16 | Prestazioni, documentazione e verifica finale SP1 | NON INIZIATO | — | — | — |
 
@@ -757,10 +757,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | SP1 R4: autorizzati correzione dipendenze, conservazione stili, test/build offline, review, commit e push nella stessa chat. Tailwind/PostCSS 4.3.3 con compatibilità CSS verificata, audit zero high/critical; prossimo passo Task 12 dalla remediation-4. | utente (esecuzione), Codex (correzione verificata) |
 | 2026-10-10 | SP1 Task 12: autorizzati harness/evidenza/verdetto, test offline, review, commit e push nella stessa chat. Report REAL append-only, famiglia DSR unica per tutti gli orizzonti, causalità R1 e barre FX mancanti preservate. Verifiche 56 mirate, 955 backend + 1 xfail; prossimo passo Task 13. | utente (esecuzione), Codex (implementazione verificata) |
 | 2026-10-10 | SP1 Task 13: autorizzati pipeline ML condivisa REAL/DEMO, verifiche offline, review, commit e push nella stessa chat. Estensione esplicita al solo test storico news: preservare sentiment REAL/DEMO e verificare l'assenza di feature news. Chiusura con 70 test mirati e 1003 backend verdi; prossimo passo Task 14. | utente (esecuzione e perimetro), Codex (implementazione verificata) |
+| 2026-10-10 | SP1 Task 14: autorizzati pagina Backtest con job, costi TR, EUR, test/build offline, review, commit, push e programma nella stessa chat. Root unico writer; reviewer in sola lettura. | utente |
 
 ## Note di ripresa
 
-- Riprendere dal solo `origin/investedge/sp1-task-13` per SP1 Task 14, verificando SHA remoto e working tree pulito; registrare lo SHA finale Task 13 nel commit successivo. Task 13 FATTO: 70 regressioni mirate e 1003 backend verdi, nessun xfail, Ruff/pip check e review PASS. Checkpoint `2f34a431ba930470d182f9897c61c9050b5cf6d4` registrato; Task 14–16 NON INIZIATI. Checkout originale Task 6 preservato.
+- Riprendere dal solo `origin/investedge/sp1-task-14` per SP1 Task 15, verificando SHA remoto e working tree pulito; registrare lo SHA finale Task 14 nel commit successivo. Task 14 FATTO: 39 regressioni pagina, 90 frontend e 1003 backend verdi, build/audit 0 high-critical/Ruff/pip check/diff check e review PASS; smoke desktop/mobile verde. Task 15–16 NON INIZIATI. Checkout originale Task 6 preservato.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
@@ -785,3 +786,17 @@ Evidenza SP1 Task 13 chiuso (2026-10-10, Codex):
 - `ruff check backend scripts tests`, `pip check` e `git diff --check` verdi. Due review indipendenti PASS sul codice e sul delta autorizzato; nessun Critical/Important aperto. Test esterni bloccati dalle fixture, DB temporanei, dati/news/alert live disattivati; database reale mai aperto;
 - JUnit/log/controlli nello scratch `C:/Users/izzod/.codex/visualizations/2026/10/10/01a12426-1877-7ea2-86f8-9a7c6a04e505/task13-verification` (`targeted-delivery.xml`, `full-suite-delivery.xml`). Frontend non modificato, nessuna nuova dipendenza; adeguamento della pagina ML ai job previsto dal Task 15. Task 14–16 NON INIZIATI;
 - chiusura sul solo branch `investedge/sp1-task-13` con commit del piano, push e confronto SHA remoto; working tree pulito richiesto al gate. SHA finale da registrare nel Task 14; nessun merge su main né attivazione Alpaca. Prossimo passo Task 14.
+
+Evidenza SP1 Task 14 chiuso (2026-10-10, Codex):
+
+- richiesta utente: pagina Backtest con job, costi TR, EUR, test/build offline, review, commit, push e programma; stessa chat autorizzata. Base Task 13 `835e83d7454a6a2abf38f54c730446127d0fc052` verificata e registrata; branch `investedge/sp1-task-14` pubblicato subito come lock. Root unico writer, due reviewer in sola lettura;
+- TDD iniziale `npm --prefix frontend run test:run -- BacktestPage.test.tsx`: **17 falliti / 17 passati** (34), sui nuovi campi, costi, catalogo, guida errori e storico v0. GREEN iniziale 34; aggiunte regressioni exposure, N con DSR nullo, benchmark indisponibile e fuso Europe/Rome. Rilievo review sulla guida residua dello storico riprodotto con **1 fallito / 38 saltati** prima della correzione;
+- client `getLabSignals` sul catalogo backend, condiviso nei tre modi. Form REAL di default, DEMO esplicito, D/W/M e cinque override del profilo TR; campi vuoti/default → null, zero e false conservati, limiti omologhi al backend. Catalogo fallito blocca nuovi invii e lascia consultabile lo storico; nessun fallback inventato. Nessuna nuova dipendenza;
+- helper job R3 riusato senza seconda implementazione di polling/cancel; `FAILED` conserva il reason code per le guide `LAB_NO_REAL_SERIES` e `LAB_PERIOD_TOO_SHORT`. Guida precedente azzerata passando allo storico. Regressioni R3 su terminali, doppio invio, smontaggio, annullamento cooperativo e risposta cancel tardiva restano verdi;
+- risultati v1 in EUR con centesimi, nota di fill alla barra seguente; profilo effettivo dal risultato salvato, commissioni/spread totali e per trade, turnover come multiplo ed exposure in percentuale. Costi già inclusi nel rendimento separati dalle ulteriori deduzioni fiscali; v0 mantiene unità legacy e costi non registrati, con badge “motore precedente”. Nessuna conversione implicita degli storici;
+- avvisi ed esclusi esposti nel singolo, per strategia nel confronto e in OOS. Confronto dichiarato senza correzione per tentativi; benchmark `UNAVAILABLE` non mostra il suo alpha di fallback come misura. WFO: date IS/OOS, tutti i parametri scelti incluso peso massimo, Sharpe IS per finestra, IS medio/OOS/degrado annualizzati, DSR percentuale e N distinto da griglia e numero di finestre, disponibile anche con DSR nullo;
+- `npm --prefix frontend run test:run` sul codice finale = **90 passati**, di cui **39 BacktestPage**, zero failure/error/skip (JUnit `frontend-full-final.xml`). `npm --prefix frontend run build` verde; resta il warning Vite preesistente per chunk >500 kB. `npm --prefix frontend audit --audit-level=high` PASS: **0 high/critical**, un low transitivo `@babel/core`, nessuna dipendenza modificata;
+- `pytest -o addopts= -q -p no:cacheprovider --junitxml=<scratch>/backend-full.xml` = **1003 passati, 0 falliti/errori/skip/xfail**, 250,84 s. Due deprecazioni Starlette preesistenti. `ruff check backend scripts tests`, `pip check` e `git diff --check` verdi. Nessun file backend modificato;
+- smoke Chrome headless sul build con API sintetiche e rete esterna bloccata, nessun backend o DB aperto: 375/1440 px × singolo/confronto/WFO. Primo giro riproduce overflow mobile e metriche troncate desktop; un solo passaggio correttivo locale (grid minmax/min-width e valori adattivi), conferma finale **6 casi, 0 errori JS, 0 overflow di pagina, 0 metriche troncate**. Tabelle scrollabili nel proprio contenitore; font esterni bloccati. Detector Impeccable eseguito una volta, risultato vuoto;
+- due review indipendenti PASS sul codice e sul delta, nessun Critical/Important aperto; root ha controllato diff, conteggi JUnit e screenshot. Evidenze in `C:/Users/izzod/.codex/visualizations/2026/10/10/01a12426-1877-7ea2-86f8-9a7c6a04e505/task14-verification` (`frontend-red.xml`, `review-red.log`, `frontend-full-final.xml`, `backend-full.xml`, `build-final.log`, `audit-final.json`, `browser-evidence.json` e screenshot);
+- consegna sul solo branch Task 14 con commit del piano, push e confronto SHA remoto; working tree pulito richiesto al gate. Lo SHA finale viene registrato dal Task 15; nessun merge su main, accesso al database reale, credenziale, ordine o attivazione Alpaca. Prossimo passo Task 15; Task 15–16 NON INIZIATI.

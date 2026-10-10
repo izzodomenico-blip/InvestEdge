@@ -20,6 +20,11 @@ import {
   apiDelete,
   apiGet,
   apiPost,
+  apiReasonCode,
+  getLabSignals,
+  type BacktestCostProfile,
+  type DataMode,
+  type SignalTimeframe,
   type Asset,
   type BacktestCompareInput,
   type BacktestCompareResult,
@@ -33,7 +38,7 @@ import {
   type WalkForwardResult,
 } from "../lib/api";
 import { cancelJob, getBacktestJobResult, getInlineJobResult, waitForJob } from "../lib/jobs";
-import { formatCurrency, formatPercent } from "../lib/format";
+import { formatPercent } from "../lib/format";
 import { Activity, BarChart3, BadgeDollarSign, Receipt, ShieldAlert } from "lucide-react";
 
 type BacktestMode = "single" | "compare" | "walkforward";
@@ -47,13 +52,80 @@ const jobLabels: Record<JobOut["status"], string> = {
 };
 
 function formatBacktestCurrency(value: number, engineVersion: string) {
-  if (engineVersion === "v1") return formatCurrency(value, "EUR");
+  if (engineVersion === "v1") return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
   return value.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
     " (unita legacy)";
 }
 
 function optionalNumber(value: number | null) {
   return value === null ? "N/D" : value.toFixed(2);
+}
+
+
+const errorGuides: Record<string, string> = {
+  LAB_NO_REAL_SERIES: "Carica dati reali per gli asset selezionati, oppure scegli DEMO per una simulazione separata.",
+  LAB_PERIOD_TOO_SHORT: "Estendi il periodo o riduci le finestre IS/OOS, includendo lo storico necessario al warm-up.",
+};
+
+type ExecutionCostsProps = {
+  title: string;
+  metrics: Pick<BacktestSummary, "commission_eur" | "spread_cost_eur" | "turnover" | "exposure">;
+  engineVersion?: string;
+  dataMode: DataMode | null;
+  signalName?: string | null;
+  signalTimeframe?: SignalTimeframe | null;
+  costProfile?: BacktestCostProfile | null;
+  warnings: string[];
+  excluded: Record<string, string>;
+};
+
+function ExecutionCosts({ title, metrics, engineVersion = "v1", dataMode, signalName,
+  signalTimeframe, costProfile, warnings, excluded }: ExecutionCostsProps) {
+  const money = (value: number | null) => value === null ? "N/D" : formatBacktestCurrency(value, engineVersion);
+  return (
+    <Panel title={title}>
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className={dataMode === "DEMO" ? "font-semibold text-amber-200" : "text-slate-300"}>
+          {dataMode === "DEMO" ? "DEMO · simulazione" : dataMode === "REAL" ? "REAL · dati reali" : "motore precedente"}
+        </span>
+        {signalName && <span className="text-slate-300">{signalName} · {signalTimeframe ?? "N/D"}</span>}
+      </div>
+      {engineVersion === "v1" ? (
+        <>
+          <p className="mt-3 text-sm text-slate-300">Esecuzione all'apertura della barra successiva</p>
+          <p className="mt-1 text-sm text-slate-400">Commissioni e spread/slippage sono già inclusi nei rendimenti, prima delle imposte stimate.</p>
+          <dl className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2">
+            {[["Commissioni eseguite", money(metrics.commission_eur)],
+              ["Spread / slippage eseguito", money(metrics.spread_cost_eur)],
+              ["Turnover", metrics.turnover === null ? "N/D" : metrics.turnover.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "×"],
+              ["Esposizione media", metrics.exposure === null ? "N/D" : formatPercent(metrics.exposure * 100)]].map(([label, value]) => (
+              <div key={label}><dt className="text-sm text-slate-400">{label}</dt><dd className="num mt-1 text-white">{value}</dd></div>
+            ))}
+          </dl>
+          <p className="mt-3 text-sm text-slate-400">Turnover = valore scambiato / equity media; esposizione = quota media investita.</p>
+          {costProfile && (
+            <p className="mt-3 text-sm text-slate-300">
+              Profilo salvato: {money(costProfile.commission_eur)} per ordine; azioni/ETF {costProfile.cost_bps_equity} bps,
+              crypto {costProfile.cost_bps_crypto} bps per lato; minimo {money(costProfile.min_trade_eur)};
+              azioni/ETF {costProfile.fractional_shares ? "frazionari" : "a quote intere"}.
+            </p>
+          )}
+        </>
+      ) : <p className="mt-3 text-sm text-slate-400">Costi per voce non registrati dal motore precedente.</p>}
+      {warnings.length > 0 && (
+        <div className="mt-4"><h3 className="font-medium text-amber-200">Avvisi</h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-200">{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+        </div>
+      )}
+      {Object.keys(excluded).length > 0 && (
+        <div className="mt-4"><h3 className="font-medium text-slate-200">Asset esclusi</h3>
+          <dl className="mt-2 space-y-2 text-sm">{Object.entries(excluded).map(([symbol, reason]) => (
+            <div key={symbol} className="flex flex-wrap gap-x-3"><dt className="font-semibold text-white">{symbol}</dt><dd className="break-all text-slate-300">{reason}</dd></div>
+          ))}</dl>
+        </div>
+      )}
+    </Panel>
+  );
 }
 
 type FormState = {
@@ -71,6 +143,14 @@ type FormState = {
   take_profit_percent: string;
   rebalance_frequency: RebalanceFrequency;
   top_n: string;
+  data_mode: DataMode;
+  signal_name: string;
+  signal_timeframe: SignalTimeframe;
+  commission_eur: string;
+  cost_bps_equity: string;
+  cost_bps_crypto: string;
+  min_trade_eur: string;
+  fractional_shares: "" | "true" | "false";
 };
 
 const defaultForm: FormState = {
@@ -88,6 +168,14 @@ const defaultForm: FormState = {
   take_profit_percent: "25",
   rebalance_frequency: "WEEKLY",
   top_n: "5",
+  data_mode: "REAL",
+  signal_name: "score",
+  signal_timeframe: "D",
+  commission_eur: "",
+  cost_bps_equity: "",
+  cost_bps_crypto: "",
+  min_trade_eur: "",
+  fractional_shares: "",
 };
 
 const strategyLabels: Record<BacktestStrategy, string> = {
@@ -109,6 +197,9 @@ function numberOrNull(value: string) {
 
 export function BacktestPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [signals, setSignals] = useState<string[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [history, setHistory] = useState<BacktestSummary[]>([]);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [form, setForm] = useState<FormState>(defaultForm);
@@ -145,12 +236,20 @@ export function BacktestPage() {
   async function loadData(signal: AbortSignal) {
     setLoading(true);
     setError(null);
+    setErrorCode(null);
     try {
-      const [assetData, historyData] = await Promise.all([
+      const [assetData, historyData, signalData] = await Promise.all([
         apiGet<Asset[]>("/assets", { signal }),
         apiGet<BacktestSummary[]>("/backtests", { signal }),
+        getLabSignals(signal).catch((err: unknown) => {
+          signal.throwIfAborted();
+          setCatalogError(err instanceof Error ? err.message : "Catalogo segnali non disponibile. Ricarica la pagina.");
+          return [];
+        }),
       ]);
       signal.throwIfAborted();
+      setSignals(signalData);
+      if (signalData.length === 0) setCatalogError((current) => current ?? "Catalogo segnali vuoto. Ricarica la pagina.");
       setAssets(assetData);
       setHistory(historyData);
       if (historyData[0]?.id) {
@@ -195,6 +294,13 @@ export function BacktestPage() {
   }
 
   function validate(): string | null {
+    if (!signals.includes(form.signal_name)) return "Seleziona un segnale disponibile nel catalogo.";
+    for (const [value, max] of [[form.commission_eur, 100], [form.cost_bps_equity, 1000],
+      [form.cost_bps_crypto, 1000], [form.min_trade_eur, 1000000]] as const) {
+      if (value.trim() !== "" && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > max)) {
+        return "Profilo costi non valido: rispetta i limiti dei campi o lascia il valore vuoto per il default.";
+      }
+    }
     if (!form.name.trim()) {
       return "Inserisci un nome backtest.";
     }
@@ -217,6 +323,7 @@ export function BacktestPage() {
     event.preventDefault();
     if (backtestOperationInFlight.current) return;
     setError(null);
+    setErrorCode(null);
     const validation = validate();
     if (validation) {
       setError(validation);
@@ -248,6 +355,10 @@ export function BacktestPage() {
     if (mode === "compare") setCompareResult(null);
     if (mode === "walkforward") setWalkResult(null);
     const input: BacktestRunInput = {
+      data_mode: form.data_mode, signal_name: form.signal_name, signal_timeframe: form.signal_timeframe,
+      commission_eur: numberOrNull(form.commission_eur), cost_bps_equity: numberOrNull(form.cost_bps_equity),
+      cost_bps_crypto: numberOrNull(form.cost_bps_crypto), min_trade_eur: numberOrNull(form.min_trade_eur),
+      fractional_shares: form.fractional_shares === "" ? null : form.fractional_shares === "true",
       name: form.name, strategy_name: form.strategy_name, symbols: form.symbols,
       initial_cash: Number(form.initial_cash), start_date: form.start_date, end_date: form.end_date,
       benchmark_symbol: form.benchmark_symbol, buy_threshold: Number(form.buy_threshold),
@@ -286,6 +397,7 @@ export function BacktestPage() {
     } catch (err) {
       if (!signal.aborted) {
         setError(err instanceof Error ? err.message : "Errore durante l'elaborazione.");
+        setErrorCode(apiReasonCode(err));
       }
     } finally {
       backtestOperationInFlight.current = false;
@@ -321,6 +433,8 @@ export function BacktestPage() {
     }
     backtestOperationInFlight.current = true;
     setHistoryBusy(true);
+    setError(null);
+    setErrorCode(null);
     const requestId = ++resultRequestId.current;
     try {
       const nextResult = await apiGet<BacktestResult>(`/backtests/${id}`);
@@ -346,6 +460,7 @@ export function BacktestPage() {
     setHistoryBusy(true);
     setDeleting(true);
     setError(null);
+    setErrorCode(null);
     try {
       await apiDelete(`/backtests/${target.id}?confirmation=${encodeURIComponent(deleteConfirmation)}`);
       setHistory((current) => current.filter((item) => item.id !== target.id));
@@ -416,7 +531,7 @@ export function BacktestPage() {
         eyebrow="Strategie simulate"
         index="07"
         title="Backtest"
-        subtitle="Valida strategie su dati locali con rolling indicators, stop loss/take profit e benchmark. Simulazione storica, nessuna garanzia di rendimenti futuri."
+        subtitle="Valuta strategie sui dati locali con segnali condivisi, costi di esecuzione in EUR e risultati fuori campione."
         actions={
           <div className="inline-flex rounded-lg border border-slate-800/80 bg-slate-950/60 p-1">
             <button
@@ -462,7 +577,11 @@ export function BacktestPage() {
         }
       />
 
-      {error && <div className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-200">{error}</div>}
+      {(error || catalogError) && <div role="alert" className="space-y-2 rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-200">
+        {error && <p>{error}</p>}
+        {errorCode && errorGuides[errorCode] && <p>{errorGuides[errorCode]}</p>}
+        {catalogError && <p>{catalogError} Ricarica la pagina per riprovare il catalogo.</p>}
+      </div>}
 
       {job && (running || comparing || walking) && (
         <Panel title="Elaborazione">
@@ -479,7 +598,7 @@ export function BacktestPage() {
         </Panel>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.35fr]">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)]">
         <Panel title="Configurazione">
           <form
             onSubmit={(event) => void runOperation(event)}
@@ -617,19 +736,67 @@ export function BacktestPage() {
               )}
             </div>
 
-            <p className="text-xs text-slate-400">Profilo costi Trade Republic; importi e rendimenti del backtest in EUR.</p>
+
+            <fieldset disabled={historyBusy} className="space-y-4">
+              <legend className="mb-3 font-medium text-slate-200">Dati e segnale</legend>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-400">Modalità dati</span>
+                  <select value={form.data_mode} onChange={(event) => updateField("data_mode", event.target.value as DataMode)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white">
+                    <option value="REAL">REAL · dati reali</option><option value="DEMO">DEMO · simulazione</option>
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-400">Segnale</span>
+                  <select value={form.signal_name} disabled={signals.length === 0} onChange={(event) => updateField("signal_name", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white disabled:opacity-60">
+                    {signals.length === 0 && <option value="">Catalogo indisponibile</option>}
+                    {signals.map((signalName) => <option key={signalName} value={signalName}>{signalName}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-400">Timeframe del segnale</span>
+                  <select value={form.signal_timeframe} onChange={(event) => updateField("signal_timeframe", event.target.value as SignalTimeframe)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white">
+                    <option value="D">D · giornaliero</option><option value="W">W · settimanale</option><option value="M">M · mensile</option>
+                  </select>
+                </label>
+              </div>
+              <p className="text-sm text-slate-400">REAL e DEMO restano separati. D/W/M descrivono il segnale; frequenza e finestre si riferiscono alle sedute.</p>
+            </fieldset>
+            <fieldset disabled={historyBusy} className="space-y-4">
+              <legend className="mb-3 font-medium text-slate-200">Costi Trade Republic</legend>
+              <p className="text-sm text-slate-400">Lascia vuoti i valori per usare le impostazioni configurate. Zero disattiva quel costo. 1 bps = 0,01%; spread e slippage si applicano a ogni lato.</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {([["commission_eur", "Commissione per ordine (€)", 100],
+                  ["cost_bps_equity", "Costo azioni / ETF (bps per lato)", 1000],
+                  ["cost_bps_crypto", "Costo crypto (bps per lato)", 1000],
+                  ["min_trade_eur", "Ordine minimo (€)", 1000000]] as const).map(([key, label, max]) => (
+                  <label key={key} className="space-y-2">
+                    <span className="text-sm text-slate-400">{label}</span>
+                    <input type="number" min="0" max={max} step="any" value={form[key]} onChange={(event) => updateField(key, event.target.value)} placeholder="Default configurato" className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white" />
+                  </label>
+                ))}
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-400">Quote azioni / ETF</span>
+                  <select value={form.fractional_shares} onChange={(event) => updateField("fractional_shares", event.target.value as FormState["fractional_shares"])} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white">
+                    <option value="">Default configurato</option><option value="false">Quote intere</option><option value="true">Quote frazionarie</option>
+                  </select>
+                </label>
+              </div>
+              <p className="text-sm text-slate-400">Le crypto ammettono sempre quote frazionarie. Il profilo effettivo viene salvato nel risultato.</p>
+            </fieldset>
+
             {mode === "compare" ? (
-              <button disabled={comparing || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
+              <button disabled={comparing || historyBusy || signals.length === 0} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
                 <GitCompareArrows className={`h-4 w-4 ${comparing ? "animate-pulse" : ""}`} aria-hidden="true" />
                 {comparing ? "Confronto in corso..." : "Confronta strategie"}
               </button>
             ) : mode === "walkforward" ? (
-              <button disabled={walking || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-60">
+              <button disabled={walking || historyBusy || signals.length === 0} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-60">
                 <ShieldCheck className={`h-4 w-4 ${walking ? "animate-pulse" : ""}`} aria-hidden="true" />
                 {walking ? "Validazione in corso..." : "Valida robustezza"}
               </button>
             ) : (
-              <button disabled={running || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60">
+              <button disabled={running || historyBusy || signals.length === 0} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60">
                 <RotateCcw className={`h-4 w-4 ${running ? "animate-spin" : ""}`} aria-hidden="true" />
                 {running ? "Esecuzione..." : "Esegui backtest"}
               </button>
@@ -637,7 +804,7 @@ export function BacktestPage() {
           </form>
         </Panel>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {mode === "compare" ? (
             compareResult ? (
               <>
@@ -652,6 +819,7 @@ export function BacktestPage() {
                   }
                 >
                   <div className="overflow-x-auto">
+                    <p className="mb-4 text-sm text-slate-300">Confronto senza correzione per i tentativi: per l'evidenza usa il walk-forward</p>
                     <table className="w-full min-w-[640px] border-collapse">
                       <thead>
                         <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
@@ -686,7 +854,7 @@ export function BacktestPage() {
                               <td className="px-3 py-3 text-right text-slate-300">{formatPercent(entry.summary.cagr)}</td>
                               <td className="px-3 py-3 text-right text-rose-300">{formatPercent(entry.summary.max_drawdown)}</td>
                               <td className="px-3 py-3 text-right text-slate-300">{entry.summary.sharpe_ratio.toFixed(2)}</td>
-                              <td className={entry.summary.alpha_vs_benchmark >= 0 ? "px-3 py-3 text-right font-semibold text-emerald-300" : "px-3 py-3 text-right font-semibold text-rose-300"}>{formatPercent(entry.summary.alpha_vs_benchmark)}</td>
+                              <td className={entry.summary.alpha_vs_benchmark >= 0 ? "px-3 py-3 text-right font-semibold text-emerald-300" : "px-3 py-3 text-right font-semibold text-rose-300"}>{entry.summary.benchmark_snapshot_status === "UNAVAILABLE" ? "N/D" : formatPercent(entry.summary.alpha_vs_benchmark)}</td>
                               <td className="px-3 py-3 pr-0 text-right text-slate-300">{entry.summary.total_trades}</td>
                             </tr>
                           ))}
@@ -697,7 +865,7 @@ export function BacktestPage() {
                             </span>
                           </td>
                           <td className="px-3 py-3 font-semibold text-slate-400">Benchmark ({compareResult.benchmark_symbol ?? "N/D"})</td>
-                          <td className="px-3 py-3 text-right text-slate-400">{formatPercent(compareResult.benchmark_return_percent)}</td>
+                          <td className="px-3 py-3 text-right text-slate-400">{compareResult.entries.every((entry) => entry.summary.benchmark_snapshot_status === "UNAVAILABLE") ? "N/D" : formatPercent(compareResult.benchmark_return_percent)}</td>
                           <td className="px-3 py-3 text-right text-slate-600">-</td>
                           <td className="px-3 py-3 text-right text-slate-600">-</td>
                           <td className="px-3 py-3 text-right text-slate-600">-</td>
@@ -709,6 +877,12 @@ export function BacktestPage() {
                   </div>
                 </Panel>
 
+                {compareResult.entries.map((entry) => (
+                  <ExecutionCosts key={entry.strategy_name} title={"Costi ed esclusioni · " + entry.label}
+                    metrics={entry.summary} engineVersion={entry.summary.engine_version} dataMode={entry.summary.data_mode}
+                    signalName={entry.summary.signal_name} signalTimeframe={entry.summary.signal_timeframe}
+                    costProfile={entry.summary.cost_profile} warnings={entry.summary.warnings} excluded={entry.summary.excluded} />
+                ))}
                 <Panel eyebrow="Equity curve sovrapposte" title="Andamento confronto">
                   <div className="h-96">
                     <ResponsiveContainer width="100%" height="100%">
@@ -716,7 +890,7 @@ export function BacktestPage() {
                         <CartesianGrid stroke="#1E293B" vertical={false} />
                         <XAxis dataKey="date" stroke="#64748B" axisLine={false} tickLine={false} minTickGap={40} />
                         <YAxis stroke="#64748B" axisLine={false} tickLine={false} width={80} />
-                        <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => formatCurrency(Number(value), "EUR")} />
+                        <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => formatBacktestCurrency(Number(value), "v1")} />
                         <Legend wrapperStyle={{ fontSize: "12px" }} />
                         {compareResult.entries.map((entry, index) => (
                           <Line
@@ -743,10 +917,10 @@ export function BacktestPage() {
             walkResult ? (
               <>
                 <Panel title="Risultati fuori campione" eyebrow={walkResult.data_mode + " · " + walkResult.oos_sessions + " sedute OOS"}>
-                  <div className="grid gap-4 md:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2 [&_.number-xl]:text-2xl [&_.number-xl]:whitespace-normal [&_.number-xl]:break-words [&_.eyebrow-muted]:whitespace-normal">
                     <MetricCard label="Rendimento OOS" value={formatPercent(walkResult.oos_metrics.total_return_percent)} delta="Rendimento netto" tone={metricTone(walkResult.oos_metrics.total_return_percent)} icon={Activity} />
                     <MetricCard label="Max drawdown OOS" value={formatPercent(walkResult.oos_metrics.max_drawdown)} delta="Serie OOS continua" tone="rose" icon={ShieldAlert} />
-                    <MetricCard label="Valore finale OOS" value={formatCurrency(walkResult.oos_metrics.final_value, "EUR")} delta="Valore finale" tone="cyan" icon={BadgeDollarSign} />
+                    <MetricCard label="Valore finale OOS" value={formatBacktestCurrency(walkResult.oos_metrics.final_value, "v1")} delta="Valore finale" tone="cyan" icon={BadgeDollarSign} />
                   </div>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                     {[["Sharpe IS medio", optionalNumber(walkResult.is_sharpe_mean)],
@@ -763,8 +937,10 @@ export function BacktestPage() {
                     Finestre: {walkResult.window_is_sessions} sedute IS / {walkResult.window_oos_sessions} OOS.
                     Sharpe annualizzati; DSR e N non disponibili per i run DEMO.
                   </p>
-                  {walkResult.warnings.map((warning) => <p key={warning} className="mt-2 text-sm text-amber-200">{warning}</p>)}
+                  <p className="mt-2 text-sm text-slate-400">N conta le configurazioni distinte già provate nella famiglia segnale/timeframe, non le finestre. DSR è una probabilità corretta per i tentativi.</p>
                 </Panel>
+                <ExecutionCosts title="Costi ed esclusioni OOS" metrics={walkResult.oos_metrics}
+                  dataMode={walkResult.data_mode} warnings={walkResult.warnings} excluded={walkResult.excluded} />
                 <Panel title="Finestre walk-forward">
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[620px]">
@@ -776,7 +952,7 @@ export function BacktestPage() {
                           <td className="py-3">{window.index + 1}</td>
                           <td>{window.is_start} → {window.is_end}</td>
                           <td>{window.oos_start} → {window.oos_end}</td>
-                          <td>{window.chosen.name}; buy {window.chosen.buy_threshold} / sell {window.chosen.sell_threshold}; N {window.chosen.top_n}; {window.chosen.rebalance_frequency}</td>
+                          <td>{window.chosen.name}; buy {window.chosen.buy_threshold} / sell {window.chosen.sell_threshold}; Top N {window.chosen.top_n}; peso max {formatPercent(window.chosen.max_asset_weight * 100)}; {window.chosen.rebalance_frequency}</td>
                           <td>{optionalNumber(window.is_sharpe)}</td>
                         </tr>
                       ))}</tbody>
@@ -799,19 +975,24 @@ export function BacktestPage() {
                   Run storico v0: unita monetaria non dichiarata; importi salvati senza conversione.
                 </p>
               )}
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-4 sm:grid-cols-2 [&_.number-xl]:text-2xl [&_.number-xl]:whitespace-normal [&_.number-xl]:break-words [&_.eyebrow-muted]:whitespace-normal">
                 <MetricCard label="Rendimento" value={formatPercent(result.summary.total_return_percent)} delta="Totale periodo" tone={metricTone(result.summary.total_return_percent)} icon={Activity} />
                 <MetricCard label="CAGR" value={formatPercent(result.summary.cagr)} delta="Annualizzato" tone={metricTone(result.summary.cagr)} icon={BarChart3} />
                 <MetricCard label="Max drawdown" value={formatPercent(result.summary.max_drawdown)} delta="Peggior discesa" tone="rose" icon={ShieldAlert} />
                 <MetricCard label="Valore finale" value={formatBacktestCurrency(result.summary.final_value, result.summary.engine_version)} delta={`${result.summary.total_trades} trade`} tone="cyan" icon={BadgeDollarSign} />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-4 sm:grid-cols-2 [&_.number-xl]:text-2xl [&_.number-xl]:whitespace-normal [&_.number-xl]:break-words [&_.eyebrow-muted]:whitespace-normal">
                 <MetricCard label="Sharpe" value={result.summary.sharpe_ratio.toFixed(2)} delta="Rischio/rendimento" tone="cyan" icon={BarChart3} />
                 <MetricCard label="Win rate" value={formatPercent(result.summary.win_rate)} delta="Trade SELL vincenti" tone="green" icon={Activity} />
                 <MetricCard label="Profit factor" value={result.summary.profit_factor.toFixed(2)} delta="Profitti / perdite" tone="amber" icon={BarChart3} />
-                <MetricCard label="Alpha benchmark" value={formatPercent(result.benchmark_comparison.alpha_vs_benchmark)} delta={result.benchmark_comparison.benchmark_symbol ?? "Benchmark"} tone={metricTone(result.benchmark_comparison.alpha_vs_benchmark)} icon={Activity} />
+                <MetricCard label="Alpha benchmark" value={result.summary.benchmark_snapshot_status === "UNAVAILABLE" ? "N/D" : formatPercent(result.benchmark_comparison.alpha_vs_benchmark)} delta={result.benchmark_comparison.benchmark_symbol ?? "Benchmark"} tone={metricTone(result.benchmark_comparison.alpha_vs_benchmark)} icon={Activity} />
               </div>
+
+              <ExecutionCosts title="Costi ed esclusioni" metrics={result.summary}
+                engineVersion={result.summary.engine_version} dataMode={result.summary.data_mode}
+                signalName={result.summary.signal_name} signalTimeframe={result.summary.signal_timeframe}
+                costProfile={result.summary.cost_profile} warnings={result.summary.warnings} excluded={result.summary.excluded} />
 
               {result.net_analysis && (
                 <Panel
@@ -828,7 +1009,7 @@ export function BacktestPage() {
                     <div className="space-y-3">
                       <div className="flex items-end justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                         <div>
-                          <p className="text-xs uppercase text-slate-500">Rendimento lordo</p>
+                          <p className="text-xs uppercase text-slate-500">{result.summary.engine_version === "v1" ? "Rendimento prima delle imposte" : "Rendimento lordo"}</p>
                           <p className={`num mt-1 text-2xl font-semibold ${result.net_analysis.gross_return_percent >= 0 ? "text-slate-200" : "text-rose-300"}`}>
                             {formatPercent(result.net_analysis.gross_return_percent)}
                           </p>
@@ -864,19 +1045,19 @@ export function BacktestPage() {
                             <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.capital_gains_tax, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
-                            <td className="px-4 py-2.5 text-slate-400">Slippage / spread stimato</td>
-                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.slippage_costs, result.summary.engine_version)}</td>
+                            <td className="px-4 py-2.5 text-slate-400">{result.summary.engine_version === "v1" ? "Spread / slippage (già incluso)" : "Slippage / spread stimato"}</td>
+                            <td className="num px-4 py-2.5 text-right text-rose-300">{result.summary.engine_version !== "v1" && "- "}{formatBacktestCurrency(result.net_analysis.slippage_costs, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
                             <td className="px-4 py-2.5 text-slate-400">Imposta di bollo (0,2% annuo)</td>
                             <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.stamp_duty, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
-                            <td className="px-4 py-2.5 text-slate-500">Commissioni (gia nel lordo)</td>
+                            <td className="px-4 py-2.5 text-slate-500">Commissioni (già incluse)</td>
                             <td className="num px-4 py-2.5 text-right text-slate-500">{formatBacktestCurrency(result.net_analysis.commission_costs, result.summary.engine_version)}</td>
                           </tr>
                           <tr className="bg-slate-900/40">
-                            <td className="px-4 py-2.5 font-semibold text-amber-100">Totale costi e tasse</td>
+                            <td className="px-4 py-2.5 font-semibold text-amber-100">{result.summary.engine_version === "v1" ? "Totale imposte stimate" : "Totale costi e tasse"}</td>
                             <td className="num px-4 py-2.5 text-right font-semibold text-amber-200">- {formatBacktestCurrency(result.net_analysis.total_costs_and_taxes, result.summary.engine_version)}</td>
                           </tr>
                         </tbody>
@@ -954,6 +1135,8 @@ export function BacktestPage() {
                     <th className="px-3 pb-3 font-medium">Tipo</th>
                     <th className="px-3 pb-3 text-right font-medium">Qty</th>
                     <th className="px-3 pb-3 text-right font-medium">Prezzo</th>
+                    <th className="px-3 pb-3 text-right font-medium">Commissione</th>
+                    <th className="px-3 pb-3 text-right font-medium">Spread / slippage</th>
                     <th className="px-3 pb-3 text-right font-medium">P/L</th>
                     <th className="px-3 pb-3 pr-0 font-medium">Reason</th>
                   </tr>
@@ -966,6 +1149,8 @@ export function BacktestPage() {
                       <td className={trade.order_type === "BUY" ? "px-3 py-3 font-semibold text-emerald-300" : "px-3 py-3 font-semibold text-rose-300"}>{trade.order_type}</td>
                       <td className="px-3 py-3 text-right text-slate-300">{trade.quantity.toLocaleString("it-IT")}</td>
                       <td className="px-3 py-3 text-right text-slate-300">{formatBacktestCurrency(trade.price, result.summary.engine_version)}</td>
+                      <td className="px-3 py-3 text-right text-slate-300">{trade.commission === null ? "N/D" : formatBacktestCurrency(trade.commission, result.summary.engine_version)}</td>
+                      <td className="px-3 py-3 text-right text-slate-300">{trade.spread_cost === null ? "N/D" : formatBacktestCurrency(trade.spread_cost, result.summary.engine_version)}</td>
                       <td className={trade.pnl >= 0 ? "px-3 py-3 text-right font-semibold text-emerald-300" : "px-3 py-3 text-right font-semibold text-rose-300"}>{formatBacktestCurrency(trade.pnl, result.summary.engine_version)}</td>
                       <td className="max-w-72 px-3 py-3 pr-0 text-slate-500">{trade.reason ?? "-"}</td>
                     </tr>
@@ -1033,12 +1218,14 @@ export function BacktestPage() {
                     >
                       {item.name}
                     </button>
+                    {item.engine_version === "v0" && <span className="ml-2 text-xs text-amber-200">motore precedente</span>}
+                    {item.data_mode === "DEMO" && <span className="ml-2 text-xs text-amber-200">DEMO</span>}
                     <p className="mt-1 text-xs text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString("it-IT") : "-"}</p>
                   </td>
                   <td className="px-3 py-4 text-slate-300">{strategyLabels[item.strategy_name as BacktestStrategy] ?? item.strategy_name}</td>
                   <td className={item.total_return_percent >= 0 ? "px-3 py-4 text-right font-semibold text-emerald-300" : "px-3 py-4 text-right font-semibold text-rose-300"}>{formatPercent(item.total_return_percent)}</td>
                   <td className="px-3 py-4 text-right font-semibold text-rose-300">{formatPercent(item.max_drawdown)}</td>
-                  <td className={item.alpha_vs_benchmark >= 0 ? "px-3 py-4 text-right font-semibold text-emerald-300" : "px-3 py-4 text-right font-semibold text-rose-300"}>{formatPercent(item.alpha_vs_benchmark)}</td>
+                  <td className={item.alpha_vs_benchmark >= 0 ? "px-3 py-4 text-right font-semibold text-emerald-300" : "px-3 py-4 text-right font-semibold text-rose-300"}>{item.benchmark_snapshot_status === "UNAVAILABLE" ? "N/D" : formatPercent(item.alpha_vs_benchmark)}</td>
                   <td className="px-3 py-4 text-right text-slate-300">{item.total_trades}</td>
                   <td className="px-3 py-4 pr-0">
                     <button
@@ -1049,6 +1236,7 @@ export function BacktestPage() {
                         setDeleteTarget(item);
                         setDeleteConfirmation("");
                         setError(null);
+                        setErrorCode(null);
                       }}
                       disabled={historyBusy || deleteTarget !== null}
                       className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-700 text-slate-400 transition hover:border-rose-300/40 hover:text-rose-200"

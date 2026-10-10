@@ -1334,12 +1334,14 @@ export async function waitForJob(id: number, options: { signal: AbortSignal; int
 
 UI: form con profilo costi (commissione €, bps azioni/ETF, bps crypto, ordine minimo €, quote frazionarie), `data_mode` (REAL predefinito, DEMO etichettato), segnale (da `GET /lab/signals`) e timeframe; stop/take profit invariati; campo `fee_percent` rimosso. Esecuzione: stato del job con progresso, pulsante "Annulla" (`cancelJob`), errori 409 spiegati via `apiReasonCode` (`LAB_NO_REAL_SERIES`, `LAB_PERIOD_TOO_SHORT`, `JOB_NOT_CANCELLABLE`); polling interrotto allo smontaggio. Risultati: importi in EUR, nota "Esecuzione all'apertura della barra successiva", costi per voce, turnover, esclusi e avvisi; nel confronto la nota "Confronto senza correzione per i tentativi: per l'evidenza usa il walk-forward"; storico con etichetta "motore precedente" per `engine_version == "v0"`. Walk-forward: tabella per finestra (IS, OOS, parametri scelti, Sharpe IS), Sharpe OOS, degrado, DSR con *N* tentativi.
 
-- [ ] **Step 1: Test RED** in `BacktestPage.test.tsx` (fetch mockato, fuso fissato con `vi.stubEnv("TZ", "Europe/Rome")`): invio run → `POST /backtests/run` con il nuovo payload senza `fee_percent`; polling fino a `SUCCEEDED` e risultato mostrato in EUR; annullamento chiama `POST /lab/jobs/{id}/cancel`; 409 `LAB_NO_REAL_SERIES` mostra il messaggio guida; run `v0` etichettato; walk-forward mostra DSR e *N*; `waitForJob` si ferma con `AbortSignal`.
-- [ ] **Step 2: RED** `npm --prefix frontend run test:run -- BacktestPage.test.tsx` → FAIL.
-- [ ] **Step 3: Implementare**, **Step 4: GREEN** con test frontend completi, `npm --prefix frontend run build`, `npm --prefix frontend audit --audit-level=high`.
-- [ ] **Step 5: Chiusura**
+- [x] **Step 1: Test RED** in `BacktestPage.test.tsx` (fetch mockato, fuso fissato con `vi.stubEnv("TZ", "Europe/Rome")`): invio run → `POST /backtests/run` con il nuovo payload senza `fee_percent`; polling fino a `SUCCEEDED` e risultato mostrato in EUR; annullamento chiama `POST /lab/jobs/{id}/cancel`; 409 `LAB_NO_REAL_SERIES` mostra il messaggio guida; run `v0` etichettato; walk-forward mostra DSR e *N*; `waitForJob` si ferma con `AbortSignal`.
+- [x] **Step 2: RED** `npm --prefix frontend run test:run -- BacktestPage.test.tsx` → FAIL.
+- [x] **Step 3: Implementare**, **Step 4: GREEN** con test frontend completi, `npm --prefix frontend run build`, `npm --prefix frontend audit --audit-level=high`.
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: adapt the backtest page to lab jobs and costs`
+
+**Evidenza di chiusura (2026-10-10, Codex):** RED iniziale 17 falliti/17 passati; GREEN finale 39 test pagina e 90 frontend. Test offline su payload REAL/DEMO, segnali D/W/M, default null/zero/false, costi per trade e totali, exposure/turnover, v0, guide reason code, WFO/DSR/N e benchmark assente; regressioni polling/cancel R3 conservate. Rilievo review sulla guida residua: RED 1 fallito/38 saltati, poi GREEN. Suite backend 1003 passati, Ruff/pip check/diff check verdi. Build verde (warning chunk preesistente); audit 0 high/critical, 1 low transitivo `@babel/core`. Smoke sul build a 375/1440 px nei tre modi con API sintetiche: overflow mobile e metriche troncate riprodotti, corretti nei soli layout locali della pagina; conferma 6 casi senza errori/overflow/troncamenti. Due review indipendenti PASS; nessun backend, componente condiviso, manifest o CSS modificato. Il commit include piano e programma; consegna sul solo branch Task 14, SHA registrato dal Task 15.
 
 ---
 

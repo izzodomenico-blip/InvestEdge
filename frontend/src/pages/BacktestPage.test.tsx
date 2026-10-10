@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BacktestPage } from "./BacktestPage";
 
@@ -58,9 +58,11 @@ function response(data: unknown, status = 200) {
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (path: string, init?: RequestInit) => Response | Promise<Response>;
 beforeEach(() => {
+  vi.stubEnv("TZ", "Europe/Rome");
   fetchMock.mockReset();
   handler = (path) => {
     if (path === "/assets") return response([{ id: 1, symbol: "AAPL", name: "Apple", asset_type: "stock" }]);
+    if (path === "/lab/signals") return response(["score", "rsi_14"]);
     if (path === "/backtests") return response([]);
     if (path === "/backtests/7") return response(detail);
     throw new Error("UNEXPECTED_OFFLINE_REQUEST " + path);
@@ -69,7 +71,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(console, "error").mockImplementation(() => undefined); // Boundary rende visibile ogni crash.
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 async function mount() {
   const view = render(<Boundary><BacktestPage /></Boundary>);
   await screen.findByRole("button", { name: "Esegui backtest" });
@@ -306,4 +308,241 @@ describe("Backtest: contratti asincroni offline", () => {
       expect(screen.getAllByText(/100.*€/).length).toBe(2);
     }
   });
+});
+
+describe("Backtest: laboratorio, costi ed evidenza delle finestre", () => {
+  it("invia REAL e i default configurati senza inventare il profilo costi", async () => {
+    route(() => response(job("SUCCEEDED", { result_ref: "7" }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    const sent = JSON.parse(String(fetchMock.mock.calls.find(([, init]) => init?.method === "POST")![1]!.body));
+    expect(sent).toMatchObject({ data_mode: "REAL", signal_name: "score", signal_timeframe: "D",
+      commission_eur: null, cost_bps_equity: null, cost_bps_crypto: null,
+      min_trade_eur: null, fractional_shares: null });
+    expect(screen.getByText("Esecuzione all'apertura della barra successiva")).toBeInTheDocument();
+    expect(screen.getByText(/11.234,00.*€/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Singolo", "Esegui backtest", "BACKTEST", null],
+    ["Confronto", "Confronta strategie", "COMPARE", comparison],
+    ["Robustezza", "Valida robustezza", "WALK_FORWARD", walk],
+  ])("invia lo stesso profilo esplicito e segnale del catalogo in %s", async (tab, action, kind, inline) => {
+    route(() => response(job("SUCCEEDED", { kind, result_ref: inline ? null : "7", result: inline }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: String(tab) }));
+    fireEvent.change(screen.getByLabelText("Modalità dati"), { target: { value: "DEMO" } });
+    fireEvent.change(screen.getByLabelText("Segnale"), { target: { value: "rsi_14" } });
+    fireEvent.change(screen.getByLabelText("Timeframe del segnale"), { target: { value: tab === "Robustezza" ? "M" : "W" } });
+    for (const [label, value] of [["Commissione per ordine (€)", "0"], ["Costo azioni / ETF (bps per lato)", "12"],
+      ["Costo crypto (bps per lato)", "60"], ["Ordine minimo (€)", "25"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.change(screen.getByLabelText("Quote azioni / ETF"), { target: { value: tab === "Confronto" ? "false" : "true" } });
+    fireEvent.click(screen.getByRole("button", { name: String(action) }));
+    await flush();
+    const sent = JSON.parse(String(fetchMock.mock.calls.find(([, init]) => init?.method === "POST")![1]!.body));
+    expect(sent).toMatchObject({ data_mode: "DEMO", signal_name: "rsi_14", signal_timeframe: tab === "Robustezza" ? "M" : "W",
+      commission_eur: 0, cost_bps_equity: 12, cost_bps_crypto: 60, min_trade_eur: 25, fractional_shares: tab !== "Confronto" });
+    expect(sent).not.toHaveProperty("fee_percent");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/lab/signals"))).toHaveLength(1);
+    expect(screen.queryByText("PAGE_CRASHED")).not.toBeInTheDocument();
+  });
+
+  it.each([["Commissione per ordine (€)", "-1"], ["Commissione per ordine (€)", "101"],
+    ["Costo crypto (bps per lato)", "1001"], ["Ordine minimo (€)", "1000001"]])(
+    "blocca %s fuori contratto (%s) anche se il form viene inviato direttamente", async (label, value) => {
+      await mount();
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      fireEvent.submit(screen.getByRole("button", { name: "Esegui backtest" }).closest("form")!);
+      await flush();
+      expect(screen.getByRole("alert")).toHaveTextContent(/Profilo costi non valido/);
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    });
+
+  it("rende storico e errori visibili se il catalogo segnali è indisponibile", async () => {
+    const base = handler;
+    handler = (path, init) => path === "/lab/signals" ? response({ detail: "Catalogo non disponibile" }, 503)
+      : path === "/backtests" ? response([summary]) : base(path, init);
+    await mount();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Catalogo non disponibile/);
+    expect(screen.getByRole("button", { name: "Esegui backtest" })).toBeDisabled();
+    expect(screen.getByText("Run salvato")).toBeInTheDocument();
+    expect(screen.getByText(/11.234,00.*€/)).toBeInTheDocument();
+  });
+
+  it("mostra costi registrati, profilo, turnover, esclusi e DEMO dal risultato salvato", async () => {
+    const recorded = { ...detail, summary: { ...summary, data_mode: "DEMO", signal_name: "rsi_14",
+      signal_timeframe: "M", commission_eur: 2, spread_cost_eur: 13.5, turnover: 1.25,
+      warnings: ["Cambio mancante: barra esclusa."], excluded: { XYZ: "NO_FEATURES" },
+      cost_profile: { commission_eur: 1, cost_bps_equity: 10, cost_bps_crypto: 50,
+        min_trade_eur: 25, fractional_shares: false } },
+      trades: [{ id: 1, date: "2025-01-02", symbol: "AAPL", order_type: "BUY", quantity: 1,
+        price: 100, gross_amount: 100, fees: 1, net_amount: 101, pnl: 0, reason: "SIGNAL",
+        commission: 1, spread_cost: 0.1 }] };
+    const base = handler;
+    handler = (path, init) => path === "/backtests/7" ? response(recorded) : base(path, init);
+    route(() => response(job("SUCCEEDED", { result_ref: "7" }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    expect(within(screen.getByText("Costi ed esclusioni").closest("section")!).getByText("DEMO · simulazione")).toBeInTheDocument();
+    expect(screen.getByText("rsi_14 · M")).toBeInTheDocument();
+    expect(screen.getByText("1,25×")).toBeInTheDocument();
+    expect(screen.getByText(/13,50.*€/)).toBeInTheDocument();
+    expect(screen.getByText(/0,10.*€/)).toBeInTheDocument();
+    expect(screen.getByText("Cambio mancante: barra esclusa.")).toBeInTheDocument();
+    expect(screen.getByText("XYZ")).toBeInTheDocument();
+    expect(screen.getByText("NO_FEATURES")).toBeInTheDocument();
+    expect(screen.getByText(/10 bps.*50 bps/)).toBeInTheDocument();
+  });
+
+  it("distingue le deduzioni fiscali dai costi di esecuzione v1 già inclusi", async () => {
+    const taxed = { ...detail, net_analysis: { gross_return_percent: 12.34, gross_profit: 1234,
+      commission_costs: 2, slippage_costs: 13.5, realized_gains_taxable: 100,
+      capital_gains_tax: 26, stamp_duty: 20, total_costs_and_taxes: 46, net_final_value: 11188,
+      net_return_percent: 11.88, effective_tax_rate_percent: 26, notes: [] } };
+    const base = handler;
+    handler = (path, init) => path === "/backtests/7" ? response(taxed) : base(path, init);
+    route(() => response(job("SUCCEEDED", { result_ref: "7" }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    const spreadRow = screen.getByText("Spread / slippage (già incluso)").closest("tr")!;
+    expect(spreadRow).toHaveTextContent(/13,50.*€/);
+    expect(spreadRow).not.toHaveTextContent("- ");
+    expect(screen.getByText("Totale imposte stimate").closest("tr")).toHaveTextContent(/46,00.*€/);
+    expect(screen.getByText("Rendimento prima delle imposte")).toBeInTheDocument();
+  });
+
+  it("etichetta lo storico v0 e non presenta costi assenti come zero", async () => {
+    const legacy = { ...summary, engine_version: "v0", data_mode: null, cost_profile: null,
+      commission_eur: null, spread_cost_eur: null, turnover: null };
+    const base = handler;
+    handler = (path, init) => path === "/backtests" ? response([legacy])
+      : path === "/backtests/7" ? response({ ...detail, summary: legacy }) : base(path, init);
+    await mount();
+    expect(screen.getAllByText("motore precedente").length).toBeGreaterThan(0);
+    expect(screen.getByText("Costi per voce non registrati dal motore precedente.")).toBeInTheDocument();
+    expect(screen.queryByText("0,00 €")).not.toBeInTheDocument();
+  });
+
+  it("mostra costi e limiti separati per strategia nel confronto", async () => {
+    const compared = { ...comparison, entries: [{ ...comparison.entries[0], summary: { ...summary,
+      warnings: ["Benchmark non disponibile."], excluded: { XYZ: "NO_FX" } } }] };
+    route(() => response(job("SUCCEEDED", { kind: "COMPARE", result: compared }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Confronto" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confronta strategie" }));
+    await flush();
+    expect(screen.getByText("Confronto senza correzione per i tentativi: per l'evidenza usa il walk-forward")).toBeInTheDocument();
+    expect(screen.getByText("Benchmark non disponibile.")).toBeInTheDocument();
+    expect(screen.getByText("NO_FX")).toBeInTheDocument();
+    expect(screen.getByText("Costi ed esclusioni · Buy & hold")).toBeInTheDocument();
+  });
+
+  it("completa WFO con peso scelto, DSR/N, costi OOS e asset esclusi", async () => {
+    const real = { ...walk, data_mode: "REAL", is_sharpe_mean: 1.5, oos_sharpe: 1.1,
+      degradation: 0.4, dsr: { dsr: 0.956, n_trials: 4 }, n_trials: 4,
+      windows: [{ ...walk.windows[0], is_sharpe: 1.75,
+        chosen: { ...walk.windows[0].chosen, max_asset_weight: 0.25 } }],
+      excluded: { ABC: "SEGMENT_TOO_SHORT" }, warnings: ["Calendari misti."],
+      oos_metrics: { ...walk.oos_metrics, commission_eur: 12, spread_cost_eur: 3.5, turnover: 2.5 } };
+    route(() => response(job("SUCCEEDED", { kind: "WALK_FORWARD", result: real }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Robustezza" }));
+    fireEvent.click(screen.getByRole("button", { name: "Valida robustezza" }));
+    await flush();
+    expect(screen.getByText(/peso max \+25/)).toBeInTheDocument();
+    expect(screen.getByText("95.6%")).toBeInTheDocument();
+    expect(screen.getByText("1.75")).toBeInTheDocument();
+    expect(screen.getByText("N configurazioni").nextElementSibling).toHaveTextContent("4");
+    expect(screen.getByText(/12,00.*€/)).toBeInTheDocument();
+    expect(screen.getByText("2,50×")).toBeInTheDocument();
+    expect(screen.getByText("SEGMENT_TOO_SHORT")).toBeInTheDocument();
+    expect(screen.getByText("Calendari misti.")).toBeInTheDocument();
+  });
+
+  it.each(["precheck", "job"])("guida LAB_NO_REAL_SERIES da %s conservando il messaggio", async (source) => {
+    route(() => source === "precheck"
+      ? response({ detail: { reason_code: "LAB_NO_REAL_SERIES", message: "Nessuna serie REAL." } }, 409)
+      : response(job("FAILED", { error_code: "LAB_NO_REAL_SERIES", error_message: "Nessuna serie REAL." }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Nessuna serie REAL/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/dati reali.*DEMO/i);
+  });
+
+  it("guida l'estensione del periodo per LAB_PERIOD_TOO_SHORT", async () => {
+    route(() => response({ detail: { reason_code: "LAB_PERIOD_TOO_SHORT", message: "Periodo corto." } }, 409));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Robustezza" }));
+    fireEvent.click(screen.getByRole("button", { name: "Valida robustezza" }));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Estendi il periodo.*finestre/i);
+  });
+});
+
+describe("Backtest: unità e disponibilità delle misure", () => {
+  it("mostra exposure come percentuale e costo zero distinto da N/D", async () => {
+    const base = handler;
+    handler = (path, init) => path === "/backtests/7" ? response({ ...detail,
+      summary: { ...summary, exposure: 0.4, commission_eur: 0, spread_cost_eur: null } }) : base(path, init);
+    route(() => response(job("SUCCEEDED", { result_ref: "7" }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    expect(screen.getByText("Esposizione media").nextElementSibling).toHaveTextContent("+40.00%");
+    expect(screen.getByText("Commissioni eseguite").nextElementSibling).toHaveTextContent(/0,00.*€/);
+    expect(screen.getByText("Spread / slippage eseguito").nextElementSibling).toHaveTextContent("N/D");
+  });
+
+  it.each([0, 27])("mantiene N=%s disponibile anche senza DSR, indipendente dalla griglia", async (n) => {
+    const real = { ...walk, data_mode: "REAL", dsr: null, n_trials: n, grid_size: 6,
+      is_sharpe_mean: 1.1, oos_sharpe: 1.5, degradation: -0.4, windows: [walk.windows[0], { ...walk.windows[0], index: 1,
+        is_start: "2025-02-03", is_sharpe: 1.23, chosen: { ...walk.windows[0].chosen, top_n: 8 } }] };
+    route(() => response(job("SUCCEEDED", { kind: "WALK_FORWARD", result: real }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Robustezza" }));
+    fireEvent.click(screen.getByRole("button", { name: "Valida robustezza" }));
+    await flush();
+    expect(screen.getByText("DSR").nextElementSibling).toHaveTextContent("N/D");
+    expect(screen.getByText("N configurazioni").nextElementSibling).toHaveTextContent(String(n));
+    expect(screen.getByText("Degrado IS − OOS").nextElementSibling).toHaveTextContent(/^-0\.40$/);
+    expect(screen.getByText(/Top N 8/)).toBeInTheDocument();
+    expect(screen.getByText("1.23")).toBeInTheDocument();
+  });
+
+  it("non spaccia l'alpha di fallback per misura quando manca il benchmark", async () => {
+    const unavailable = { ...summary, benchmark_snapshot_status: "UNAVAILABLE", alpha_vs_benchmark: 0,
+      warnings: ["Benchmark non disponibile."] };
+    const base = handler;
+    handler = (path, init) => path === "/backtests/7" ? response({ ...detail, summary: unavailable,
+      benchmark_comparison: { ...detail.benchmark_comparison, alpha_vs_benchmark: 0 } }) : base(path, init);
+    route(() => response(job("SUCCEEDED", { result_ref: "7" }), 202));
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+    await flush();
+    expect(screen.getByText("Alpha benchmark").closest("div")!.parentElement).toHaveTextContent("N/D");
+    expect(screen.getByText("Benchmark non disponibile.")).toBeInTheDocument();
+  });
+});
+
+it("non conserva la guida REAL/DEMO quando fallisce una successiva apertura dello storico", async () => {
+  let reads = 0;
+  const base = handler;
+  handler = (path, init) => path === "/backtests" ? response([summary])
+    : path === "/backtests/7" ? ++reads === 1 ? response(detail) : response({ detail: "Storico non disponibile." }, 500)
+      : path === "/backtests/run" ? response(job("FAILED", { error_code: "LAB_NO_REAL_SERIES", error_message: "Nessuna serie REAL." }), 202)
+        : base(path, init);
+  await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Esegui backtest" }));
+  await flush();
+  expect(screen.getByRole("alert")).toHaveTextContent(/Carica dati reali/);
+  fireEvent.click(screen.getByRole("button", { name: "Run salvato" }));
+  await flush();
+  expect(screen.getByRole("alert")).toHaveTextContent("Storico non disponibile.");
+  expect(screen.getByRole("alert")).not.toHaveTextContent(/Carica dati reali/);
 });

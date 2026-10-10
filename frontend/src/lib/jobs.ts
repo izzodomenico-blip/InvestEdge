@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiReasonCode, type BacktestResult, type JobOut } from "./api";
+import { ApiError, apiGet, apiPost, apiReasonCode, type BacktestResult, type JobOut } from "./api";
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -31,7 +31,8 @@ export async function waitForJob(
       case "SUCCEEDED":
         return job;
       case "FAILED":
-        throw new Error(job.error_message ?? "Elaborazione non riuscita. Avvia un nuovo calcolo.");
+        throw new ApiError(job.error_message ?? "Elaborazione non riuscita. Avvia un nuovo calcolo.",
+          0, { reason_code: job.error_code });
       case "CANCELLED":
         throw new Error("Elaborazione annullata.");
       case "INTERRUPTED":

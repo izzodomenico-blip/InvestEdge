@@ -409,6 +409,18 @@ export type TechnicalAnalysis = {
 };
 
 export type BacktestStrategy = "SCORE_THRESHOLD" | "BUY_AND_HOLD" | "TOP_N_SCORE";
+export type BacktestCostProfile = {
+  commission_eur: number;
+  cost_bps_equity: number;
+  cost_bps_crypto: number;
+  fractional_shares: boolean;
+  min_trade_eur: number;
+};
+
+export function getLabSignals(signal?: AbortSignal): Promise<string[]> {
+  return apiGet<string[]>("/lab/signals", { signal });
+}
+
 export type RebalanceFrequency = "DAILY" | "WEEKLY" | "MONTHLY";
 
 export type BacktestSettingsInput = {
@@ -487,7 +499,7 @@ export type BacktestSummary = {
   data_mode: DataMode | null;
   signal_name: string | null;
   signal_timeframe: SignalTimeframe | null;
-  cost_profile: Record<string, unknown> | null;
+  cost_profile: BacktestCostProfile | null;
   warnings: string[];
   excluded: Record<string, string>;
   commission_eur: number | null;
