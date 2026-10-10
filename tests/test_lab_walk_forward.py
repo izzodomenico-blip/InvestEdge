@@ -790,3 +790,28 @@ def test_walk_forward_job_cancel_and_sanitized_failure(
 
     assert cancelled.status == "CANCELLED"
     assert len(_trials(lab_connection)) == 6
+
+@pytest.mark.parametrize("change", ["replace", "append"])
+def test_engine_is_selection_ignores_future_provider(lab_connection, change) -> None:
+    bars = synthetic_bars(701, seed=137, start="2020-01-01", freq="D")
+    previous = bars.loc[299, "close"]
+    bars.loc[300, ["open", "high", "low", "close"]] = [previous, previous*1.01, previous*0.99, previous]
+    bars.loc[300:, ["open", "high", "low", "close", "adjusted_close"]] *= 0.5
+    bars["adjusted_close"] = bars["close"]
+    asset_id = insert_asset(lab_connection, "PROVIDER", asset_type="crypto")
+    insert_bars(lab_connection, asset_id, bars.iloc[:700], real=True, provider="coingecko")
+    lab_connection.commit()
+    payload = WalkForwardIn(**_payload_data(bars.iloc[:700], symbols=["PROVIDER"], benchmark_symbol="PROVIDER"))
+    engine = BacktestEngine()
+    before = engine.walk_forward(lab_connection, payload, now=NOW)
+    assert all(w["is_sharpe"] is not None for w in before["windows"])
+    if change == "replace":
+        lab_connection.execute("UPDATE price_history SET provider='manual' WHERE asset_id=? AND date=?",
+                               (asset_id, bars.iloc[699]["date"]))
+    else:
+        insert_bars(lab_connection, asset_id, bars.iloc[700:], real=True, provider="manual")
+    lab_connection.commit()
+    after = engine.walk_forward(lab_connection, payload, now=NOW)
+    assert [(w["is_start"], w["is_end"], w["is_sharpe"], w["chosen"]) for w in before["windows"]] == [
+        (w["is_start"], w["is_end"], w["is_sharpe"], w["chosen"]) for w in after["windows"]
+    ]

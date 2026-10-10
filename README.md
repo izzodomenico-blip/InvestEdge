@@ -2,7 +2,7 @@
 
 InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto e bond/ETF obbligazionari.
 
-La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, confronto multi-strategia, pianificatore di allocazione capitale, integrazione dati reali opzionale con cache e modulo news/sentiment. Non include collegamenti reali a broker, ordini reali, machine learning, scraping non autorizzato o trading automatico.
+La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, confronto multi-strategia, pianificatore di allocazione capitale, integrazione dati reali opzionale con cache e modulo news/sentiment. Include un modulo ML sperimentale sulla pipeline condivisa; collegamenti a broker e trading automatico restano nei sottoprogetti successivi.
 
 ## Avvio rapido (one-click)
 
@@ -58,7 +58,7 @@ Lo script:
 
 ## Analisi tecnica
 
-Il motore in `backend/app/services/technical_analysis.py` usa solo pandas e numpy. Gli indicatori disponibili includono:
+Le sovrapposizioni dei grafici in `backend/app/services/technical_analysis.py` usano pandas e numpy. L'Analisi e lo score usano la pipeline causale SP1 descritta sotto. Le sovrapposizioni disponibili includono:
 
 - medie SMA 10/20/50/100/200 ed EMA 12/26/50/200
 - momentum: RSI 14, MACD, histogram, Stochastic, CCI 20, ROC 12
@@ -78,7 +78,7 @@ Lo scoring e spiegabile e combina:
 
 Ogni segnale salva score, confidence, risk_level, motivazioni, sotto-score e indicatori usati.
 
-Lo score tecnico resta separato da quello news. Quando sono presenti news recenti, `final_score` puo includere una variazione leggera pari al massimo a `NEWS_SENTIMENT_WEIGHT` punti in positivo o negativo. Se non ci sono news recenti, `news_score = 0` e `final_score = technical_score`.
+Lo score v1 è esclusivamente tecnico: `final_score = score = technical_score`. News e sentiment sono informativi e non modificano il punteggio; la loro validazione come segnali appartiene a SP3.
 
 ## Paper trading e portafoglio
 
@@ -116,38 +116,73 @@ Il motore in `backend/app/services/risk_engine.py` valuta concentrazione e risch
 
 Il segnale tecnico e la lettura dell'asset isolato. La raccomandazione finale considera anche il portafoglio: un asset con segnale BUY puo diventare HOLD o BLOCK_BUY_TOO_CONCENTRATED se pesa gia troppo.
 
-## Backtest Engine
+## Laboratorio di verità (SP1)
 
-Il motore in `backend/app/services/backtest_engine.py` valida strategie su dati locali SQLite. Non usa broker, API reali, news reali o machine learning.
+La pipeline `features-v1` / `score-v1` alimenta Analisi, segnali, Backtest e ML. Le feature sono causali e a finestra limitata; lo score D e i sottopunteggi sono quelli salvati in `features_daily`. Le barre W/M entrano solo a periodo di calendario chiuso. Lo score richiede 252 barre del proprio timeframe: prima si mostra storico insufficiente. I grafici possono mantenere sovrapposizioni diverse, incluso Ichimoku, senza usarle nei calcoli del laboratorio.
 
-Le strategie disponibili sono:
+**REAL e DEMO:** REAL usa esclusivamente prezzi marcati reali; DEMO usa esclusivamente seed. Un asset con una serie REAL corta non ripiega sui prezzi demo. Backtest e training scelgono esplicitamente la modalità; l'Evidenza accetta solo REAL. DEMO non produce tentativi, DSR o verdetti. Il simulatore locale del portafoglio e il futuro Alpaca paper sono contesti distinti: prezzi REAL con esecuzioni PAPER non equivalgono a dati DEMO.
 
-- `SCORE_THRESHOLD`: compra asset con score rolling sopra la soglia BUY e vende/riduce sotto la soglia SELL.
-- `BUY_AND_HOLD`: compra all'inizio del periodo e mantiene fino alla fine.
-- `TOP_N_SCORE`: a ogni ribilanciamento mantiene i migliori N asset per score rolling.
+Alla migrazione i soli segnali derivati del vecchio `scoring_engine` senza `data_mode` sono invalidati: potevano contenere la vecchia correzione news. Tornano con un ricalcolo, refresh o seed esplicito; la migrazione non inventa l'origine dei dati e non ricalcola automaticamente gli asset.
 
-Il backtest calcola gli indicatori in modalita rolling usando solo i dati disponibili fino alla data simulata. Questo riduce il look-ahead bias: i segnali di una data passata non usano prezzi futuri.
+### Job e pagina Backtest
 
-Metriche prodotte:
+`POST /backtests/run`, `/backtests/compare`, `/backtests/walk-forward`, `/lab/evidence` e `/ml/train` restituiscono **202 con JobOut**. L'identificativo è `id`: seguire `GET /lab/jobs/{id}` fino a `SUCCEEDED`, `FAILED`, `CANCELLED` o `INTERRUPTED`; `POST /lab/jobs/{id}/cancel` chiede un annullamento cooperativo. Un job interrotto richiede un nuovo avvio esplicito. La coda ha un worker; il riavvio nello stesso processo conserva un worker ancora vivo senza duplicarlo o segnalarlo come interrotto.
 
-- total return, CAGR, max drawdown, Sharpe ratio
-- win rate, profit factor, numero trade, valore finale
-- benchmark return e alpha vs benchmark
-- equity curve, drawdown curve, trade list e posizioni finali
+La pagina Backtest ha modalità Singolo, Confronto, Robustezza ed Evidenza. Singolo legge il dettaglio tramite `result_ref`; Confronto e Robustezza leggono `result`; Evidenza carica tutti gli ID in `result.report_ids`. Stati, avanzamento, errori e annullamento sono visibili nella pagina. Un 409 dichiara dati REAL assenti, periodo insufficiente o altri input non utilizzabili.
 
-Sono supportati stop loss, take profit, commissioni, cash residuo, peso massimo per asset e frequenza di ribilanciamento `DAILY`, `WEEKLY` o `MONTHLY`.
+### Backtest in EUR e walk-forward
 
-Attenzione: il backtest e una simulazione su dati storici generati localmente. Non garantisce rendimenti futuri e puo favorire overfitting se si ottimizzano troppe soglie sullo stesso periodo.
+Le strategie sono `SCORE_THRESHOLD`, `TOP_N_SCORE` e `BUY_AND_HOLD`. La decisione usa la chiusura di t; il fill avviene all'apertura della barra successiva del listing. Stop e target usano high/low, con priorità allo stop se entrambi sono toccati. Gap e split sospetti separano segmenti, ognuno con il proprio warm-up.
 
-## Confronto multi-strategia
+I nuovi run v1 sono in EUR, con FX BCE as-of e costi salvati: default commissione 1 € per ordine e costo per lato 10 bps equity / 50 bps crypto, quote intere equity e ordine minimo 100 €. Il profilo è configurabile per run. Commissioni e spread/slippage sono già nella curva e non vengono sottratti due volte; imposte e bollo appartengono all'analisi netta. I vecchi run v0 mantengono i propri importi e unità legacy.
 
-L'endpoint `POST /backtests/compare` esegue 2 o 3 strategie sullo stesso periodo, universo e benchmark, caricando i dati di mercato una sola volta e senza persistere i singoli run. Restituisce per ogni strategia il riepilogo metriche e la equity curve, piu un ranking per rendimento totale e l'indicazione della strategia migliore. Nel frontend la pagina Backtest ha un toggle Singolo/Confronto con tabella metriche affiancate ed equity curve sovrapposte.
+Il benchmark e i suoi prezzi/FX effettivi sono congelati nel run e nell'impronta: revisioni successive non cambiano risultati già salvati. Gli storici senza snapshot mostrano `NOT_RECORDED`, avviso e curva benchmark assente; non vengono completati con dati correnti.
 
-## Validazione walk-forward (robustezza)
+Confronto ordina per Sharpe netto. Robustezza applica finestre IS/OOS in sedute, seleziona una piccola griglia solo sui rendimenti IS e prosegue con un'unica simulazione OOS. Ogni selezione usa un prefisso al cutoff, anche per segmenti ed eleggibilità. Sharpe IS/OOS e degrado del WFO sono annualizzati; SR/SR0 del DSR sono giornalieri. N conta configurazioni distinte con Sharpe definito nella famiglia segnale/timeframe, non il numero di esecuzioni.
 
-L'endpoint `POST /backtests/walk-forward` divide il periodo in N fold consecutivi e indipendenti, eseguendo la strategia su ciascun sottoperiodo separatamente. Restituisce metriche per fold, statistiche aggregate (rendimento medio/mediano, dispersione, periodi positivi, fold che battono il benchmark) e un verdetto di consistenza: `ROBUSTA`, `INCERTA` o `FRAGILE`.
+### Evidenza e badge
 
-Serve a smascherare l'overfitting: una strategia il cui rendimento sull'intero periodo dipende da poche finestre fortunate risulta FRAGILE, anche se il backtest singolo sembra ottimo. Nel frontend la pagina Backtest ha il terzo mode "Robustezza" con tabella per fold e badge del verdetto. Resta una simulazione su dati storici: non garantisce risultati futuri.
+Esempio di richiesta, su storico REAL locale sufficiente:
+
+```json
+{
+  "signal_name": "score",
+  "timeframe": "D",
+  "horizons": [1, 5, 21],
+  "start_date": "2019-01-01",
+  "end_date": "2024-01-01"
+}
+```
+
+L'harness misura IC Spearman, t di Newey-West, bucket e spread netto con turnover, poi walk-forward long-only e DSR. Default: almeno 10 nomi, 252 date IC e 252 sedute OOS. `VALIDATO` richiede IC medio positivo, t ≥ 2, spread netto positivo e DSR ≥ 0,95; altrimenti `NON_VALIDATO` o `INSUFFICIENTE`. Senza report: `NON_MISURATO`.
+
+Report e tentativi sono append-only. `GET /lab/evidence`, `/lab/evidence/{id}` e `/lab/evidence/latest?signal_name=score&timeframe=D` leggono snapshot immutabili. I badge accanto allo score sono evidenza globale sul segnale/timeframe, non certificazioni del singolo asset; tooltip e report dichiarano periodo, universo e orizzonte. SP1 misura e mostra il verdetto: non lo applica ancora come blocco agli ordini.
+
+### Cambi BCE storici
+
+Il backfill è esplicito, nel provider governato esistente: `POST /data/fx/backfill` con `currencies` e `start_date`, oppure `python -m backend.scripts.backfill_fx_history --currency USD --start 2015-01-01`. La CLI è in anteprima senza `--apply`; applicare richiede configurazione utente `ENABLE_REAL_DATA=true`. Con dati reali disattivati il job rifiuta prima di chiamare la rete.
+
+I cambi seed sono esclusi anche dai run DEMO. Per asset non EUR servono osservazioni storiche BCE valide; senza cambio as-of entro `ECB_FX_MAX_AGE_DAYS` (default 7) la barra è esclusa e conteggiata. EUR usa fattore 1.
+
+### Limiti e verifica offline
+
+L'universo attuale introduce survivorship bias; Stooq ha base di rettifica UNKNOWN e dividendi non verificati; split sospetti sono euristici. Un cambio di base del provider apre un segmento da quel punto, senza riscrivere il passato. Storico corto, FX mancanti, calendari misti e costi ipotizzati sono dichiarati nei risultati. Lo spread long-short dell'harness è diagnostico; il WFO è long-only. ML resta sperimentale e la revisione di target/metriche/split appartiene a SP4.
+
+Le prove sintetiche verificano il software. Evidenza D/W/M e orizzonti 1/5/21 sedute non validano posizioni intraday di 15–30 minuti; i gate dati/news e strategie SP2b/SP3 precedono Alpaca paper senza leva, mentre reale e leva richiedono validazione e azioni esplicite successive.
+
+Smoke riproducibile, con file nuovo nello scratch, rete bloccata e nessun provider live:
+
+```powershell
+$sp1PreviousDbPath = $env:INVESTEDGE_DB_PATH
+try {
+    $env:INVESTEDGE_DB_PATH = Join-Path $env:TEMP ("lab-perf-" + [guid]::NewGuid() + ".sqlite3")
+    & '.\backend\.venv\Scripts\python.exe' -m backend.scripts.lab_perf_smoke
+} finally {
+    $env:INVESTEDGE_DB_PATH = $sp1PreviousDbPath
+}
+```
+
+Lo smoke usa 50 asset sintetici marcati REAL × 1500 daily, calcola D/W/M, aggiunge una barra a un asset e avvia Evidenza su cinque anni. Rifiuta un file già esistente o chiamato `investedge.db`. Conserva il DB sintetico nello scratch per ispezione. Obiettivi indicativi, non gate bloccanti: 60 / 5 / 120 secondi. Risultati finali, audit e limiti in [report SP1](docs/reports/2026-10-10-sp1-truth-lab-verification.md).
 
 ## Import posizioni reali da Google Sheets
 
@@ -463,7 +498,9 @@ POST /backtests/run
   "buy_threshold": 70,
   "sell_threshold": 40,
   "max_asset_weight": 0.15,
-  "fee_percent": 0.10,
+  "data_mode": "REAL",
+  "signal_name": "score",
+  "signal_timeframe": "D",
   "stop_loss_percent": 8,
   "take_profit_percent": 25,
   "rebalance_frequency": "WEEKLY",
@@ -529,16 +566,16 @@ Il database SQLite viene creato automaticamente in `data/investedge.db` al primo
 
 ## Machine Learning (AI Lab)
 
-Modulo ML sperimentale basato su scikit-learn. Endpoint: `GET /ml/status`, `POST /ml/train`, `GET /ml/models`, `POST /ml/predict/{symbol}`, `POST /ml/predict-all`, `GET /ml/predictions/{symbol}`.
+Modulo ML sperimentale basato su scikit-learn. Training su job 202; modelli con versione della pipeline, modelli legacy da riaddestrare (409). Endpoint: `GET /ml/status`, `POST /ml/train`, `GET /ml/models`, `POST /ml/predict/{symbol}`, `POST /ml/predict-all`, `GET /ml/predictions/{symbol}`.
 
 - **Modelli**: regressione logistica, random forest, **gradient boosting** (HistGradientBoosting, consigliato).
 - **Target**: rendimento positivo, batte il benchmark, rischio forte ribasso, su un orizzonte configurabile.
-- **28 feature**: tecniche (trend/momentum/volatilità/volume), sotto-score, sentiment news, peso in portafoglio.
+- **31 feature**: tecniche adimensionali della pipeline `features-v1`, score e sottopunteggi; news e portafoglio esclusi. Training e previsione usano la modalità REAL/DEMO registrata nel modello.
 - **No look-ahead**: i target usano solo rendimenti futuri via shift; `validate_no_lookahead` blocca eventuali bias.
 - **Validazione walk-forward**: oltre allo split temporale, la metrica viene mediata su N fold a finestra espansiva — se è debole il modello non generalizza.
 - **Explainability**: feature importance (nativa o permutation importance) e probabilità con livello di confidenza.
 
-È uno strumento di supporto: fornisce probabilità, non certezze. Su dati simulati l'accuratezza è vicina al caso (~50%); diventa più informativo con dati reali, ma non garantisce rendimenti. I modelli serializzati vivono in `data/ml_models/` (non committati).
+È uno strumento di supporto: fornisce probabilità, non certezze. Le metriche sintetiche non provano generalizzazione o rendimento sui mercati; la validazione economica resta separata. I modelli serializzati vivono in `data/ml_models/` (non committati).
 
 ## Sviluppo: lint, test, CI
 

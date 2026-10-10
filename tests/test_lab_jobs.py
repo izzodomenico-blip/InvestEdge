@@ -318,3 +318,86 @@ def test_fx_backfill_route_enqueues_job_with_real_data(client: TestClient, monke
     assert calls == [("USD", date(2024, 1, 2)), ("GBP", date(2024, 1, 2))]
     expected = {"inserted": 10, "existing": 2, "first_observed_at": "2024-01-02", "last_observed_at": "2024-01-15"}
     assert job["result"] == {"currencies": {"USD": expected, "GBP": expected}}
+
+
+def test_stop_start_keeps_one_worker_and_does_not_interrupt_live_job(
+    lab_connection: sqlite3.Connection, handlers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def handler(context, params):
+        calls.append(context.job_id)
+        if params["block"]:
+            entered.set()
+            assert release.wait(5)
+        return JobOutcome(result={"done": True})
+
+    register_job_handler("EVIDENCE", handler)
+    monkeypatch.setattr(jobs, "_STOP_TIMEOUT_SECONDS", 0.01)
+    service = JobService("thread")
+    first = service.enqueue("EVIDENCE", {"block": True})
+    second = service.enqueue("EVIDENCE", {"block": False})
+    service.start()
+    assert entered.wait(5)
+    worker = service._thread
+    try:
+        service.stop()
+        assert worker is not None and worker.is_alive()
+        assert service._thread is worker
+        assert service.recover_interrupted() == 0
+        assert service.get(first.id).status == "RUNNING"
+        service.start()
+        assert service._thread is worker
+        release.set()
+        assert _wait_for(service, second.id, {"SUCCEEDED"}).status == "SUCCEEDED"
+        assert calls == [first.id, second.id]
+    finally:
+        release.set()
+        service.stop()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+def test_restart_after_worker_observes_stop_drains_queue(lab_connection, handlers, monkeypatch) -> None:
+    entered, release, observed, allow_exit, restarted = (threading.Event() for _ in range(5))
+    service = JobService("thread")
+    original_is_set = service._stopping.is_set
+
+    def paused_is_set():
+        value = original_is_set()
+        if value:
+            observed.set()
+            assert allow_exit.wait(5)
+        return value
+
+    def handler(context, params):
+        if params["block"]:
+            entered.set()
+            assert release.wait(5)
+        return JobOutcome()
+
+    monkeypatch.setattr(service._stopping, "is_set", paused_is_set)
+    monkeypatch.setattr(jobs, "_STOP_TIMEOUT_SECONDS", 0.01)
+    register_job_handler("EVIDENCE", handler)
+    service.enqueue("EVIDENCE", {"block": True})
+    second = service.enqueue("EVIDENCE", {"block": False})
+    service.start()
+    assert entered.wait(5)
+    old_worker = service._thread
+    starter = threading.Thread(target=lambda: (service.start(), restarted.set()), daemon=True)
+    try:
+        service.stop()
+        release.set()
+        assert observed.wait(5)
+        starter.start()
+        # start cannot reuse a worker whose exit has already been decided.
+        assert not restarted.wait(0.05)
+        allow_exit.set()
+        assert restarted.wait(5)
+        assert _wait_for(service, second.id, {"SUCCEEDED"}).status == "SUCCEEDED"
+    finally:
+        release.set()
+        allow_exit.set()
+        starter.join(timeout=5)
+        service.stop()
+        old_worker.join(timeout=5)

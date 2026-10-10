@@ -91,6 +91,7 @@ def split_into_segments(
     basis: AdjustmentBasis,
     max_gap_sessions: int,
     split_tolerance: float,
+    bar_bases: Sequence[AdjustmentBasis] | None = None,
 ) -> tuple[list[pd.DataFrame], list[SplitEvent], list[str]]:
     """Segmenti, split sospetti e date di inizio dopo un buco. Precondizione: date ordinate e uniche."""
     if bars.empty:
@@ -101,13 +102,18 @@ def split_into_segments(
     else:
         missing = np.busday_count(days[:-1] + np.timedelta64(1, "D"), days[1:])
     gap = np.r_[False, missing > max_gap_sessions]
-    if basis == "UNKNOWN":
-        ratio, direction = _suspected_splits(bars, split_tolerance)
-    else:
-        ratio, direction = np.full(len(bars), np.nan), np.full(len(bars), None, dtype=object)
+    bases = np.asarray(bar_bases if bar_bases is not None else [basis] * len(bars), dtype=object)
+    if len(bases) != len(bars):
+        raise ValueError("Una base di rettifica per barra.")
+    basis_change = np.r_[False, bases[1:] != bases[:-1]]
+    ratio, direction = _suspected_splits(bars, split_tolerance)
+    # Only comparable UNKNOWN bars can imply a split. A basis change opens a new segment.
+    guarded = (bases == "UNKNOWN") & ~basis_change
+    ratio[~guarded] = np.nan
+    direction[~guarded] = None
     split = ~np.isnan(ratio)
 
-    starts = np.flatnonzero(np.r_[True, (gap | split)[1:]])
+    starts = np.flatnonzero(np.r_[True, (gap | split | basis_change)[1:]])
     ends = np.r_[starts[1:], len(bars)]
     segments = [bars.iloc[start:end].reset_index(drop=True) for start, end in zip(starts, ends, strict=True)]
     events = [
@@ -173,10 +179,10 @@ def load_series(connection: sqlite3.Connection, asset_id: int, data_mode: DataMo
     bars = pd.DataFrame({"date": frame["date"].astype(str)})
     for column in _BAR_COLUMNS[1:]:
         bars[column] = frame[column].astype(float)
-    if basis in _UNIT_FACTOR_BASES:
-        bars["adjusted_close"] = bars["close"]
-    else:
-        bars["adjusted_close"] = bars["adjusted_close"].fillna(bars["close"])
+    bar_bases = [PROVIDER_ADJUSTMENT_BASIS.get(provider, "UNKNOWN") for provider in frame["provider"]]
+    bars["adjusted_close"] = bars["adjusted_close"].fillna(bars["close"])
+    unit_factor = np.asarray([value in _UNIT_FACTOR_BASES for value in bar_bases])
+    bars.loc[unit_factor, "adjusted_close"] = bars.loc[unit_factor, "close"]
 
     settings = get_settings()
     asset_key, symbol, asset_type, currency, risk_level = tuple(asset)
@@ -186,6 +192,7 @@ def load_series(connection: sqlite3.Connection, asset_id: int, data_mode: DataMo
         basis=basis,
         max_gap_sessions=settings.lab_segment_max_gap_sessions,
         split_tolerance=settings.lab_split_tolerance,
+        bar_bases=bar_bases,
     )
     return LabSeries(
         asset_id=int(asset_key),

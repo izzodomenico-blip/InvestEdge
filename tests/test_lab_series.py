@@ -244,3 +244,23 @@ def test_eur_converter_ignores_seed_rates(lab_connection) -> None:
     # Il cambio seed e' un dato demo: mai nella conversione (vincolo REAL/DEMO).
     assert converter.rate_on("USD", "2024-01-08") == 0.9
     assert converter.rate_on("GBP", "2024-01-08") is None
+
+
+def test_future_provider_change_cannot_rewrite_past_features(lab_connection) -> None:
+    from backend.app.lab.feature_store import FeatureStore
+
+    bars = _with_split(synthetic_bars(451, seed=137, start="2020-01-01", freq="D"), 300, 0.5)
+    asset_id = insert_asset(lab_connection, "CAUSAL", asset_type="crypto")
+    insert_bars(lab_connection, asset_id, bars.iloc[:450], real=True, provider="coingecko")
+    lab_connection.commit()
+    cutoff = pd.Timestamp(bars.iloc[449]["date"]).date()
+    store = FeatureStore()
+    before = store.compute_rows(load_series(lab_connection, asset_id, "REAL"), cutoff)
+    insert_bars(lab_connection, asset_id, bars.iloc[450:], real=True, provider="manual")
+    lab_connection.commit()
+    after = store.compute_rows(load_series(lab_connection, asset_id, "REAL"), cutoff)
+    pd.testing.assert_frame_equal(before, after, check_exact=True)
+    series = load_series(lab_connection, asset_id, "REAL")
+    assert not series.split_events
+    assert len(series.segments) == 2
+    assert series.segments[-1].bars["date"].tolist() == bars.iloc[450:]["date"].tolist()

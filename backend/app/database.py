@@ -1245,6 +1245,11 @@ BEGIN
     SELECT RAISE(ABORT, 'lab evidence reports are append-only');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_lab_trials_no_replace
+BEFORE INSERT ON lab_trials WHEN EXISTS (SELECT 1 FROM lab_trials WHERE id=NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'lab trials are append-only');
+END;
 CREATE INDEX IF NOT EXISTS idx_lab_trials_family ON lab_trials(family_key, config_hash, created_at);
 CREATE TRIGGER IF NOT EXISTS trg_lab_trials_no_update
 BEFORE UPDATE ON lab_trials
@@ -1540,6 +1545,9 @@ def migrate_db(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if signal_schema and "STRONG_BUY" not in signal_schema["sql"]:
         connection.executescript(SIGNALS_REBUILD_SQL)
+    # Legacy scoring rows have no origin and may contain the obsolete news correction.
+    # They are a derived cache: only an explicit v1 recalculation can classify them.
+    connection.execute("DELETE FROM signals WHERE source = 'scoring_engine' AND data_mode IS NULL")
     if tax_category_added:
         connection.execute(
             "UPDATE assets SET tax_category = 'crypto' WHERE LOWER(asset_type) = 'crypto'"

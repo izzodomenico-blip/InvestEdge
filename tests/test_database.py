@@ -1049,6 +1049,8 @@ def test_init_db_migrates_legacy_tables_before_creating_indexes(tmp_path, monkey
             VALUES (1, 'LEGACY', 'Legacy sentinel', 'stock', 'EUR');
             INSERT INTO signals (asset_id, signal, score, rationale)
             VALUES (1, 'BUY', 75, 'legacy-signal');
+            INSERT INTO signals (asset_id, signal, score, rationale, source)
+            VALUES (1, 'HOLD', 60, 'manual-sentinel', 'manual');
             INSERT INTO simulated_orders (asset_id, side, quantity, price, notes)
             VALUES (1, 'BUY', 2, 10, 'legacy-order');
             INSERT INTO news_items (asset_id, title, url)
@@ -1070,7 +1072,11 @@ def test_init_db_migrates_legacy_tables_before_creating_indexes(tmp_path, monkey
         assert "order_date" in table_columns(connection, "simulated_orders")
         assert "updated_at" in table_columns(connection, "news_items")
         assert "symbol" in table_columns(connection, "api_cache")
+        # Unclassified scoring cache is invalidated; independent user records below survive.
         assert connection.execute("SELECT COUNT(*) FROM signals").fetchone()[0] == 1
+        assert connection.execute("SELECT score, rationale, source FROM signals").fetchall() == [
+            (60, "manual-sentinel", "manual")
+        ]
         assert connection.execute("SELECT COUNT(*) FROM simulated_orders").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM news_items").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM api_cache").fetchone()[0] == 1

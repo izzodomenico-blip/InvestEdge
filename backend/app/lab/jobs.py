@@ -239,18 +239,24 @@ class JobService:
 
     def recover_interrupted(self) -> int:
         """Job RUNNING rimasti da un'esecuzione precedente -> INTERRUPTED."""
-        with _connection() as connection, _immediate(connection):
-            cursor = connection.execute(
-                "UPDATE lab_jobs SET status = 'INTERRUPTED', finished_at = ? WHERE status = 'RUNNING'",
-                (now_utc(),),
-            )
-        return int(cursor.rowcount)
+        with self._lock:
+            # A timed-out stop can leave this process's worker finishing a live job.
+            if self._thread is not None and self._thread.is_alive():
+                return 0
+            with _connection() as connection, _immediate(connection):
+                cursor = connection.execute(
+                    "UPDATE lab_jobs SET status = 'INTERRUPTED', finished_at = ? WHERE status = 'RUNNING'",
+                    (now_utc(),),
+                )
+            return int(cursor.rowcount)
 
     def start(self) -> None:
         if self.executor == "inline":
             return
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
+                self._stopping.clear()
+                self._wake.set()
                 return
             self._stopping.clear()
             self._thread = threading.Thread(target=self._worker, name="investedge-lab-jobs", daemon=True)
@@ -258,15 +264,24 @@ class JobService:
 
     def stop(self) -> None:
         with self._lock:
-            thread, self._thread = self._thread, None
-        if thread is None:
-            return
-        self._stopping.set()
-        self._wake.set()
+            thread = self._thread
+            if thread is None:
+                return
+            self._stopping.set()
+            self._wake.set()
         thread.join(timeout=_STOP_TIMEOUT_SECONDS)
+        with self._lock:
+            if self._thread is thread and not thread.is_alive():
+                self._thread = None
 
     def _worker(self) -> None:
-        while not self._stopping.is_set():
+        while True:
+            # Exit and start share the lock: start either resumes us or sees no worker.
+            with self._lock:
+                if self._stopping.is_set():
+                    if self._thread is threading.current_thread():
+                        self._thread = None
+                    return
             try:
                 job_id = self._claim_next()
                 if job_id is not None:

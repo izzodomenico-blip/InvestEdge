@@ -253,6 +253,23 @@ def test_ml_row_equals_features_daily_row(lab_connection):
     features = service.build_features_for_symbol(lab_connection, "MLX", "REAL", as_of_date=day)
     assert features["score"] == saved.loc[day, "score"]
     assert features["rsi_14"] == saved.loc[day, "rsi_14"]
+    from datetime import UTC, datetime
+
+    from backend.app.lab.universe import build_universe_inputs
+    from backend.app.services.signals_service import recalculate_signal
+
+    moment = datetime(2024, 1, 1, tzinfo=UTC)
+    inputs = build_universe_inputs(
+        lab_connection, ["MLX"], data_mode="REAL", signal_name="score", signal_timeframe="D",
+        start=str(dataset["date"].min()), end=str(saved.index.max()), now=moment,
+    )
+    for row in dataset.itertuples():
+        assert inputs.signals.loc[row.date, asset_id] == row.score == saved.loc[row.date, "score"]
+    recalculate_signal(lab_connection, asset_id, now=moment)
+    latest = str(saved.index.max())
+    ui_score = lab_connection.execute("SELECT score FROM signals WHERE asset_id=?", (asset_id,)).fetchone()[0]
+    ml_latest = service.build_features_for_symbol(lab_connection, "MLX", "REAL", as_of_date=latest)
+    assert ui_score == inputs.signals.loc[latest, asset_id] == saved.loc[latest, "score"] == ml_latest["score"]
 
 
 @pytest.mark.parametrize("target_type", ["POSITIVE_RETURN", "DRAWDOWN_RISK", "OUTPERFORM_BENCHMARK"])

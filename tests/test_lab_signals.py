@@ -318,7 +318,7 @@ def test_signals_data_mode_migration_is_additive(
 
     connection = sqlite3.connect(database_path)
     try:
-        assert connection.execute("SELECT rationale, data_mode FROM signals").fetchall() == [("legacy-signal", None)]
+        assert connection.execute("SELECT rationale, data_mode FROM signals").fetchall() == []
         connection.execute("INSERT INTO signals (asset_id, signal, score, data_mode) VALUES (1, 'HOLD', 60, 'REAL')")
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("INSERT INTO signals (asset_id, signal, score, data_mode) VALUES (1, 'HOLD', 60, 'SEED')")
@@ -335,3 +335,32 @@ def test_fresh_schema_has_checked_signals_data_mode(lab_connection: sqlite3.Conn
         lab_connection.execute(
             "INSERT INTO signals (asset_id, signal, score, data_mode) VALUES (?, 'HOLD', 60, 'MIXED')", (asset_id,)
         )
+
+@pytest.mark.parametrize("bars_count", [100, 320])
+def test_migration_invalidates_unclassified_legacy_score(lab_connection, bars_count) -> None:
+    from backend.app.database import migrate_db
+    from backend.app.services.assets_service import list_assets
+    from backend.app.services.signals_service import list_signals
+
+    asset_id = _asset_with_bars(lab_connection, "OLD", real_bars=bars_count, demo_bars=400)
+    lab_connection.execute(
+        "INSERT INTO signals (asset_id, symbol, signal, score, technical_score, news_score, final_score) "
+        "VALUES (?, 'OLD', 'BUY', 95, 75, 20, 95)", (asset_id,)
+    )
+    lab_connection.commit()
+    migrate_db(lab_connection)
+    migrate_db(lab_connection)
+    [asset] = list_assets(lab_connection)
+    assert asset.score is None and asset.final_score is None and asset.signal_data_mode is None
+    assert list_signals(lab_connection) == []
+    recalculate_signal(lab_connection, asset_id, now=NOW)
+    lab_connection.commit()
+    [asset] = list_assets(lab_connection)
+    if bars_count < 252:
+        assert asset.score is None
+        assert asset.score_unavailable_reason == "Storico reale insufficiente (100 barre, servono 252)."
+    else:
+        assert asset.score == asset.final_score == _latest_complete_d_row(lab_connection, asset_id, "REAL")["score"]
+        assert asset.signal_data_mode == "REAL"
+        migrate_db(lab_connection)
+        assert list_assets(lab_connection)[0].score == asset.score

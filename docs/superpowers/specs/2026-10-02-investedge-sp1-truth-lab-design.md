@@ -1,6 +1,6 @@
 # InvestEdge — SP1 "Laboratorio di verità"
 
-**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1 e R2 implementate e verificate il 10 ottobre 2026; R3 ancora da eseguire.
+**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1–R4 e Task 12–15 implementati e verificati il 10 ottobre 2026; Task 16 ha superato il gate finale; merge su main da confermare.
 
 **Relazione:** attua SP1 della spec di programma `2026-09-30-investedge-profit-engine-program-design.md` (§4, principi §5, difetti §7). Dove questa spec è più precisa, prevale per SP1.
 
@@ -201,6 +201,7 @@ Vincolo univoco: `(asset_id, timeframe, date, pipeline_version, data_mode)`.
 - Un run usa una sola modalità. Default: `REAL`.
 - In modalità REAL gli asset senza serie reale vengono esclusi ed elencati; se non ne resta nessuno → 409 `LAB_NO_REAL_SERIES`.
 - I run DEMO sono possibili ed etichettati, non producono verdetto e non vengono registrati come tentativi.
+- Migrazione Task 16: invalidare soltanto la cache `signals` di `scoring_engine` con `data_mode IS NULL`, che può contenere il vecchio score/news. Nessuna classificazione inventata; ricalcolo/refresh/seed esplicito la ripopola. Segnali v1 classificati e dati indipendenti restano conservati.
 - **Score in interfaccia:** serie REAL se l'asset ne ha una, altrimenti DEMO. La scelta viene salvata nel segnale (`signals.data_mode`). Una serie REAL troppo corta per il warm-up dello score (§5.5) produce "Storico reale insufficiente (N barre, servono 252).", senza ripiegare sul seed.
 
 ### 6.2 Segmenti
@@ -220,7 +221,7 @@ Ogni segmento ha il proprio warm-up. Rendimenti futuri ed etichette non attraver
 | `UNKNOWN` | rettifica non verificata | `stooq`, righe reali senza provider noto |
 | `SPLIT` / `SPLIT_DIVIDEND` | rettifica dichiarata dalla fonte | provider futuri (SP2b) |
 
-La base è una costante nel codice per provider; la cambia solo un commit dopo una verifica documentata della fonte.
+La base è una costante nel codice per provider; la cambia solo un commit dopo una verifica documentata della fonte. La rettifica si applica per barra secondo il provider noto a quella data; un cambio di base apre un nuovo segmento. La guardia split confronta soltanto coppie UNKNOWN della stessa base. La base aggregata della serie è metadata per i limiti e non modifica retroattivamente barre o segmenti (correzione review Task 16).
 
 **Guardia split** (solo base `UNKNOWN`). Alla barra *t* c'è uno split sospetto se, per un rapporto *k* ∈ {2, 3, 4, 5, 10, 3/2}:
 

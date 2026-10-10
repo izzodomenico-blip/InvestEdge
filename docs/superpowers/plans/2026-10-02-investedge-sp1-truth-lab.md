@@ -1393,10 +1393,10 @@ Commit: `feat: show evidence reports and verdict badges`
 
 **Interfaces:** nessuna nuova interfaccia pubblica.
 
-- [ ] **Step 1: Smoke prestazioni** `python -m backend.scripts.lab_perf_smoke` su DB temporaneo (`INVESTEDGE_DB_PATH` nello scratchpad), 50 asset sintetici REAL × 1500 barre, rete bloccata: tempi di calcolo completo di `features_daily`, incrementale di una barra, job di evidenza su 5 anni. Obiettivi indicativi (non bloccanti): ≤ 60 s, ≤ 5 s, ≤ 120 s. Registrare i tempi nel report.
-- [ ] **Step 2: Audit cumulativo**: elenco commit `origin/investedge/sp1-task-0..HEAD`, file fuori elenco per task, secret scan come in Fase 2 (classificazione riga per riga), verifica dei 10 criteri di successo della spec §15 con il test che li copre.
-- [ ] **Step 3: Review indipendente** (sola lettura, `superpowers:requesting-code-review`) dell'intero SP1; correggere con TDD ogni Critical e Important nei file di SP1, ripetere la review sul delta.
-- [ ] **Step 4: Gate finale**
+- [x] **Step 1: Smoke prestazioni** `python -m backend.scripts.lab_perf_smoke` su DB temporaneo (`INVESTEDGE_DB_PATH` nello scratchpad), 50 asset sintetici REAL × 1500 barre, rete bloccata: tempi di calcolo completo di `features_daily`, incrementale di una barra, job di evidenza su 5 anni. Obiettivi indicativi (non bloccanti): ≤ 60 s, ≤ 5 s, ≤ 120 s. Registrare i tempi nel report.
+- [x] **Step 2: Audit cumulativo**: elenco commit `origin/investedge/sp1-task-0..HEAD`, file fuori elenco per task, secret scan come in Fase 2 (classificazione riga per riga), verifica dei 10 criteri di successo della spec §15 con il test che li copre.
+- [x] **Step 3: Review indipendente** (sola lettura, `superpowers:requesting-code-review`) dell'intero SP1; correggere con TDD ogni Critical e Important nei file di SP1, ripetere la review sul delta.
+- [x] **Step 4: Gate finale**
 
 ```powershell
 & '.\backend\.venv\Scripts\python.exe' -m pytest -p no:cacheprovider --junitxml=$env:TEMP\sp1-final.xml
@@ -1409,7 +1409,7 @@ git diff --check
 ```
 
 Expected: tutto verde; 0 tentativi di rete (guardia del Task 1); conteggi dal JUnit XML nel report.
-- [ ] **Step 5: Report e chiusura**: report di verifica (scope, catena dei commit, criteri §15, prestazioni, review, rischi residui della spec §18 aggiornati); `PROGRAMMA-OPERATIVO.md` con SP1 `FATTO` e *Prossimo passo* = merge fast-forward su `main` previa conferma dell'utente, poi SP2b.
+- [x] **Step 5: Report e chiusura**: report di verifica (scope, catena dei commit, criteri §15, prestazioni, review, rischi residui della spec §18 aggiornati); `PROGRAMMA-OPERATIVO.md` con SP1 `FATTO` e *Prossimo passo* = merge fast-forward su `main` previa conferma dell'utente, poi SP2b.
 
 Commit: `chore: verify SP1 truth lab`
 

@@ -742,6 +742,10 @@ def test_lab_trials_are_append_only(lab_connection: sqlite3.Connection) -> None:
         lab_connection.execute("UPDATE lab_trials SET sharpe_daily = 1.0")
     with pytest.raises(sqlite3.IntegrityError):
         lab_connection.execute("DELETE FROM lab_trials")
+    before = tuple(lab_connection.execute("SELECT * FROM lab_trials").fetchone())
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        lab_connection.execute("INSERT OR REPLACE INTO lab_trials SELECT * FROM lab_trials")
+    assert tuple(lab_connection.execute("SELECT * FROM lab_trials").fetchone()) == before
     insert = (
         "INSERT INTO lab_trials (family_key, kind, config_hash, fingerprint, sharpe_daily, n_obs, created_at) "
         "VALUES ('score|D', ?, ?, ?, 0.1, ?, '2024-01-10T12:00:00')"
