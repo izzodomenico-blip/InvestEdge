@@ -2,17 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (R1–R3 verificate e chiuse; R3 con deroga audit esplicita; prossimo passo R4 dipendenze frontend).
+Ultimo aggiornamento: 2026-10-10 (R1–R4 verificate e chiuse; audit frontend zero high/critical; prossimo passo SP1 Task 12).
 
 ## Prossimo passo
 
-**SP1 R4 — Correggere le dipendenze frontend segnalate dall'audit, prima del Task 12.**
+**SP1 Task 12 — Harness di valutazione, report di evidenza e verdetto.**
 
-- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer. R4 è registrato come prossimo lavoro, non eseguito in R3.
-- Branch previsto: `investedge/sp1-remediation-4` da `origin/investedge/sp1-remediation-3`, dopo verifica del gate remoto R3. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
-- Ingressi: audit R3 completo = 6 high, 3 moderate, 1 low nelle dipendenze dev; audit `--omit=dev` = 0 vulnerabilità. `braces@3.0.3` non ha patch pubblicata; npm propone Tailwind 4. `source-map-js@1.2.1` ha aggiornamento disponibile. Non usare `--force` né ignorare advisory.
-- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P e R1–R3 FATTI. Il Task 12 parte solo dopo R4 e relativo gate audit.
-- Deroga esplicita dell'utente del 2026-10-10: chiudere/pubblicare R3 pur con audit completo fallito, registrando la correzione dipendenze prima del Task 12. Test e build R3 verdi; nessuna modifica a manifest/lockfile in R3. Intraday e Alpaca richiedono i gate successivi.
+- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer. Task 12 NON INIZIATO, da prendere in carico secondo spec e piano SP1.
+- Branch previsto: `investedge/sp1-task-12` da `origin/investedge/sp1-remediation-4`, dopo verifica del gate remoto R4 e del working tree pulito. Registrare lo SHA R4 nel commit Task 12. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; checkout locale Task 6 e `origin/main` Task 10 non sono la base.
+- Ingressi R4: `npm --prefix frontend audit --audit-level=high` exit 0 = **0 high, 0 critical, 0 moderate, 1 low** (Babel dev); runtime `--omit=dev` = 0 vulnerabilità. Installazione `npm ci --offline --no-audit --no-fund`, **68 test frontend**, build, **897 backend passati + 1 xfail strict atteso Task 13**, Ruff e pip check verdi.
+- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P e R1–R4 FATTI. R3 conserva la sua deroga audit come evidenza storica; il gate high/critical è risolto in R4.
+- R4 mantiene la resa v3 tramite compatibilità CSS, verificata su fixture e pagine Backtest/Analisi offline. Tailwind 4 richiede browser moderni: Chrome 111+, Safari 16.4+, Firefox 128+ ([guida ufficiale](https://tailwindcss.com/docs/upgrade-guide)). Nessuna validazione su browser precedenti. Intraday e Alpaca richiedono i gate successivi.
 
 ## Legenda
 
@@ -272,8 +272,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | `1ae5a9e` | 2026-10-10 | Codex |
 | R1 | Causalità della selezione walk-forward | FATTO | `7f0a790`; evidenza sotto | 2026-10-10 | Codex |
 | R2 | Benchmark congelato e impronta completa | FATTO | `caf388c`; evidenza sotto | 2026-10-10 | Codex |
-| R3 | Contratti asincroni frontend e indicatori Analisi | FATTO | branch `investedge/sp1-remediation-3`; evidenza/deroga audit sotto | 2026-10-10 | Codex |
-| R4 | Correzione dipendenze frontend e gate audit | NON INIZIATO | — | — | — |
+| R3 | Contratti asincroni frontend e indicatori Analisi | FATTO | `75cef429023e9badfe239e9895c6f7fa31a16816`; evidenza/deroga audit sotto | 2026-10-10 | Codex |
+| R4 | Correzione dipendenze frontend e gate audit | FATTO | branch `investedge/sp1-remediation-4`; 68 frontend, 897 backend + 1 xfail, audit 0 high/critical | 2026-10-10 | Codex |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
 | 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
 | 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
@@ -329,6 +329,21 @@ Evidenza R3 (2026-10-10, Codex):
 - due review indipendenti read-only: esecuzione/contratti e indicatori/metodologia. Corretto il rilievo P2 sulle unità v0; nessun rilievo Critical/Important del diff R3 aperto. Task 12–16 restano NON INIZIATI; selector segnali/form completo/Evidenza/ML non anticipati;
 - **Audit non verde, deroga esplicita utente:** `npm --prefix frontend audit --audit-level=high --json` exit 1 = **6 high, 3 moderate, 1 low** preesistenti; nessuna dipendenza cambiata in R3. High: braces, chokidar, fast-glob, micromatch, source-map-js, tailwindcss (più voci dalla stessa causa transitive). `npm --prefix frontend audit --omit=dev --audit-level=high --json` exit 0 = **0 vulnerabilità runtime**. Advisory [braces senza patch](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) e [source-map-js <1.2.2](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) verificati; `npm view braces version` = 3.0.3, Tailwind 3 massimo 3.4.19; npm propone Tailwind 4.3.3. Utente autorizza chiusura/pubblicazione R3 e inserimento **R4 prima del Task 12**, senza dichiarare audit PASS;
 - chiusura sul solo branch R3 con commit del piano, push e confronto SHA remoto; working tree pulito al gate. Nessun merge su `main` né attivazione Alpaca. Prossimo passo R4; il suo commit registrerà lo SHA R3.
+
+Evidenza R4 (2026-10-10, Codex):
+
+- richiesta esplicita utente: correggere dipendenze, zero high/critical, preservare stili, test/build offline, review, commit e push; esecuzione nella stessa chat autorizzata;
+- base remota R3 `75cef429023e9badfe239e9895c6f7fa31a16816` verificata, SHA registrato nella sua riga; `investedge/sp1-remediation-4` pubblicato subito come lock. SHA R4 sarà registrato dal Task 12;
+- **RED audit:** exit 1, 6 high/3 moderate/1 low. Verifica primaria: braces 3.0.3 senza patch, Tailwind 3.4.19 conserva la catena vulnerabile; source-map-js 1.2.1 corretto dalla patch 1.2.2. Baseline 61 test frontend/build verdi, CSS e catture Chrome offline;
+- soluzione: Tailwind + `@tailwindcss/postcss` **4.3.3**, pipeline PostCSS e config legacy JS caricata esplicitamente; rimosso autoprefixer ridondante, patch Vitest **4.1.11**, source-map-js **1.2.2** nel lock. `@types/node` dev per i test della pipeline CSS; config TS/JS e dipendenze runtime coerenti e immutati. Optional native oxide/lightningcss presenti nel lock;
+- compatibilità CSS: 36 colori v3, font/scale/blur/radius, default border/placeholder/cursor, spazi e divisori con elementi hidden, focus anche forced-colors, gradienti sRGB, line-height responsive, padding nativo campi data. `bg-violet-400/8` resta non generata come in v3: v4 la attivava creando un nuovo alone nel PageHeader;
+- **TDD stili:** migrazione minima riproduce 4 fallimenti su 5 test; ulteriori RED dedicati per campi data e alone. GREEN finale `npm --prefix frontend run test:run` = **68 passati, 0 falliti** (7 regressioni CSS compilano la pipeline reale, solo file/pacchetti locali). `npm --prefix frontend ci --offline --no-audit --no-fund` e `npm --prefix frontend run build` exit 0; warning chunk >500 kB preesistente;
+- **rendering offline:** Chrome, CSS produzione, **452 utility a 375/1440 px**, fixture controlli/font/spazi/bordi/placeholder e focus/forced-colors, 0 richieste di rete. Pagine reali Backtest e Analisi con API sintetiche locali: **12 catture baseline/candidato**, 0 errori JS e 0 differenze di geometria/tipografia/bordi, incluso hover Backtest. Google Fonts bloccati, stessi fallback. Quattro screenshot delle pagine: uguali dimensioni; scarto raster massimo **1–2 livelli RGB su 255**, per arrotondamento color-mix; equivalenze di radius pieno/ombre trasparenti e serializzazione CSS dichiarate;
+- **audit finale:** `npm --prefix frontend audit --audit-level=high --json` exit 0 = **0 high, 0 critical, 0 moderate, 1 low** (`@babel/core` dev). `--omit=dev` exit 0 = **0 vulnerabilità runtime**. Nessun `--force`, override di advisory o esclusione dal gate; nessuna deroga richiesta per R4;
+- `backend/.venv/Scripts/python.exe -m pytest -p no:cacheprovider --junitxml=<scratch>/backend-junit.xml`: **897 passati, 1 xfail strict atteso Task 13, 0 falliti/errori**, 155,62 s; database temporanei e guardia rete. `ruff check backend scripts tests`, `pip check` e `git diff --check` verdi;
+- due review indipendenti read-only (dipendenze/esecuzione e CSS/regressioni), nessun rilievo Critical/Important aperto. Prove locali in `C:/Users/izzod/.codex/visualizations/2026/10/10/01a12426-1877-7ea2-86f8-9a7c6a04e505/r4-verification`: audit, JSON frontend, JUnit, log build/install e `styles-final-comparison.json`/`pages-final.json`;
+- chiusura sul solo branch R4 con commit del piano, push e confronto SHA remoto; working tree pulito richiesto al gate. Nessun merge su `main`, credenziale o attivazione Alpaca. Prossimo passo Task 12; 12–16 restano NON INIZIATI.
+
 
 Evidenza Task 0 (2026-10-01/02, Claude):
 
@@ -722,10 +737,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | SP1 R1: selezione su prefissi dal primo giorno al cutoff con rendimento terminale incluso; eleggibilità sulle barre EUR proprie e calendario prima di NO_FEATURES. Griglia globale distinta, OOS continuo, validazione globale invariata. Autorizzati review, commit, push e aggiornamento del programma; R2 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
 | 2026-10-10 | SP1 R2: congelare benchmark/FX e impronta, preservare risultati salvati e compatibilità storica esplicita; autorizzati review, commit, push e aggiornamento del programma nella stessa chat. Migrazione nullable, snapshot BACKTEST e output/digest dei job; R3 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
 | 2026-10-10 | SP1 R3: contratti/frontend/indicatori verificati; autorizzati review, commit, push e chiusura. Deroga esplicita all'audit completo fallito su dipendenze preesistenti; registrare R4 dipendenze prima del Task 12, senza migrazione in R3. Audit runtime pulito. | utente |
+| 2026-10-10 | SP1 R4: autorizzati correzione dipendenze, conservazione stili, test/build offline, review, commit e push nella stessa chat. Tailwind/PostCSS 4.3.3 con compatibilità CSS verificata, audit zero high/critical; prossimo passo Task 12 dalla remediation-4. | utente (esecuzione), Codex (correzione verificata) |
 
 ## Note di ripresa
 
-- Riprendere da `origin/investedge/sp1-remediation-3` per R4 dipendenze, verificando SHA remoto e working tree pulito; registrare lo SHA R3 nel commit R4. R1–R3 chiuse; R3 = 61 frontend verdi, build verde, 897 backend passati + 1 xfail atteso; audit completo fallito con deroga utente, audit runtime pulito. R4 è NON INIZIATO e precede Task 12 (base prevista `origin/investedge/sp1-remediation-4`). P = `1ae5a9e`, R1 = `7f0a790`, R2 = `caf388c` già registrati.
+- Riprendere dal solo `origin/investedge/sp1-remediation-4` per SP1 Task 12, verificando SHA remoto e working tree pulito; registrare lo SHA R4 nel commit successivo. R1–R4 chiuse; R4 = 68 frontend verdi, build/install offline verdi, 897 backend + 1 xfail atteso, audit 0 high/critical/moderate + 1 low dev, runtime pulito. Task 12–16 NON INIZIATI. P = `1ae5a9e`, R1 = `7f0a790`, R2 = `caf388c`, R3 = `75cef429023e9badfe239e9895c6f7fa31a16816` registrati; originale checkout Task 6 preservato.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.

@@ -127,17 +127,19 @@ Commit: `fix: restore frontend contracts for asynchronous lab results`
 
 ### R4: Dipendenze frontend e gate audit
 
-**Inserito su decisione esplicita dell'utente del 2026-10-10 durante la chiusura R3. Stato:** NON INIZIATO; prossimo lavoro, da prendere in carico prima del Task 12.
+**Inserito su decisione esplicita dell'utente del 2026-10-10 durante la chiusura R3. Stato:** FATTO il 2026-10-10; esecuzione nella stessa chat, review/commit/push autorizzati esplicitamente dall’utente.
 **Branch:** `investedge/sp1-remediation-4` — **Base:** `origin/investedge/sp1-remediation-3`.
 **Files:** `frontend/package.json`, `frontend/package-lock.json`; se necessari alla migrazione `frontend/postcss.config.*`, `frontend/tailwind.config.*`, `frontend/vite.config.*`, CSS d'ingresso e test frontend pertinenti; piano e programma. Limitare le modifiche a dipendenze e compatibilità della build/stili esistenti.
 
 **Contratto:** eliminare tutte le high/critical del gate audit senza `--force` o esclusioni di advisory. Diagnosticare le dipendenze transitive e preferire aggiornamenti compatibili; `braces@3.0.3` non ha patch al gate R3, npm propone Tailwind 4. Verificare fonti/versioni correnti prima delle modifiche. Se la migrazione Tailwind è necessaria, preservare il comportamento e la resa delle pagine; nessuna espansione dei contratti o dell'intraday.
 
-- [ ] Raccogliere audit/risoluzione dipendenze e baseline offline test/build/stili; riprodurre il gate fallito e definire regressioni osservabili della migrazione.
-- [ ] Correzione minima di dipendenze/configurazione; test frontend completi e build, controllo stili/rendering offline, `npm --prefix frontend audit --audit-level=high` exit 0. Moderate/low residue dichiarate; verifiche backend/Ruff del protocollo.
-- [ ] Review indipendente, chiusura nel programma e piano; registrare SHA R3, commit/push del solo branch e gate remoto. Poi Task 12 da `origin/investedge/sp1-remediation-4`.
+- [x] Raccogliere audit/risoluzione dipendenze e baseline offline test/build/stili; riprodurre il gate fallito e definire regressioni osservabili della migrazione.
+- [x] Correzione minima di dipendenze/configurazione; test frontend completi e build, controllo stili/rendering offline, `npm --prefix frontend audit --audit-level=high` exit 0. Moderate/low residue dichiarate; verifiche backend/Ruff del protocollo.
+- [x] Review indipendente, chiusura nel programma e piano; registrare SHA R3, commit/push del solo branch e gate remoto. Poi Task 12 da `origin/investedge/sp1-remediation-4`.
 
 Commit: `chore: resolve frontend dependency audit findings`
+
+**Evidenza:** baseline audit RED 6 high/3 moderate/1 low; migrazione CSS RED 4 fallimenti e regressioni data/alone. GREEN **7 regressioni CSS, 68 test frontend**, `npm ci --offline --no-audit --no-fund` e build verdi. Chrome offline: 452 utility su 2 viewport, focus/forced-colors e 12 catture Backtest/Analisi (incl. hover) con geometria/tipografia identiche; screenshot massimo scarto 1–2/255 RGB. Audit completo **0 high/critical/moderate, 1 low dev Babel**, runtime 0 vulnerabilità. Backend **897 passati + 1 xfail strict Task 13**, Ruff/pip check verdi, due review read-only senza rilievi bloccanti. Tailwind/PostCSS 4.3.3, source-map-js 1.2.2, Vitest 4.1.11; token/config legacy e aspetto v3 preservati. Browser minimi v4: Chrome 111+, Safari 16.4+, Firefox 128+. SHA R3 registrato; Task 12 da remediation-4. Dettagli, comandi e limiti in `PROGRAMMA-OPERATIVO.md`, evidenza R4.
 
 ## Mappa della baseline e confini
 
