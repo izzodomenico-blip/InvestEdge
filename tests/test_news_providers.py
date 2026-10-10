@@ -389,19 +389,23 @@ def _insert_news(connection: sqlite3.Connection, provider: str, score: float, ur
 
 
 def test_demo_news_never_enter_sentiment_market_summary_or_ml_features() -> None:
+    from tests.lab_fixtures import insert_bars, synthetic_bars
+
     connection = _initialize()
     _insert_news(connection, "mock_news", 0.9, "https://example.com/demo")
     _insert_news(connection, "finnhub_news", -0.4, "https://example.com/real")
 
     summary = aggregate_news_sentiment(connection, "AAPL", lookback_days=7)
     market = NewsEngine().get_market_sentiment_summary(connection, lookback_days=7)
-    features = MLDatasetService()._news_features(connection, "AAPL", datetime.now(UTC).date().isoformat())
+    asset_id = int(connection.execute("SELECT id FROM assets WHERE symbol='AAPL'").fetchone()[0])
+    insert_bars(connection, asset_id, synthetic_bars(320, seed=17), real=True, provider=None)
+    dataset = MLDatasetService().build_ml_dataset(connection, ["AAPL"], 5, "POSITIVE_RETURN", data_mode="REAL")
 
     assert summary["news_count"] == 1
     assert summary["average_sentiment_score"] == -0.4
     assert market["news_count"] == 1
-    assert features["news_sentiment_score_7d"] == -0.4
-    assert features["news_positive_count_7d"] == 0
+    assert not dataset.empty
+    assert not any(column.startswith("news_") for column in dataset.columns)
 
 
 def test_provider_failure_fallback_to_demo_does_not_change_final_score(monkeypatch: pytest.MonkeyPatch) -> None:

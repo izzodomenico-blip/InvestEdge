@@ -1272,6 +1272,7 @@ Evidenza di chiusura (2026-10-10, Codex): RED per moduli assenti; due rilievi di
 **Files:**
 - Modify: `backend/app/services/ml_dataset_service.py`, `backend/app/services/ml_engine.py`, `backend/app/database.py` (`ml_models.pipeline_version`, `ml_models.data_mode`), `backend/app/models/schemas.py` (`MLTrainIn.data_mode`, `pipeline_version`/`data_mode` nei modelli in uscita), `backend/app/lab/handlers.py` (`ML_TRAIN`), `backend/app/api/routes.py` (`/ml/train` → 202; 409 `MODEL_PIPELINE_MISMATCH` su predict)
 - Modify: `tests/test_ml_dataset.py`, `tests/test_api.py` (test ML), `tests/test_lab_boundaries.py` (rimuovere `ml_dataset_service.py` da `PENDING_BOUNDARY`)
+- Modify: `tests/test_news_providers.py` (solo `test_demo_news_never_enter_sentiment_market_summary_or_ml_features`; estensione esplicitamente autorizzata dall'utente il 2026-10-10: preservare sentiment REAL/DEMO, verificare l'assenza delle feature news).
 - Modify: piano, `PROGRAMMA-OPERATIVO.md`
 
 **Interfaces — Produces:**
@@ -1294,10 +1295,10 @@ MLEngine.predict_for_symbol(...)  # modello senza pipeline_version o con version
 Il bundle `joblib` salva `pipeline_version`, `data_mode` e `features`; la previsione usa le feature dell'asset nel `data_mode` del modello (asset senza righe in quel modo → avviso per asset in `predict-all`). Nessuna feature news o di portafoglio.
 
 - [x] **Step 1: Test RED**: `test_dataset_columns_are_pipeline_v1_only` (nessuna colonna `news_*`, `portfolio_weight`, `current_recommendation_encoded`); `test_ml_row_equals_features_daily_row` (score e `rsi_14` alla data *t* uguali alla riga di `features_daily`); `test_targets_do_not_cross_segments`; `test_model_without_pipeline_version_is_rejected` (409 `MODEL_PIPELINE_MISMATCH`); `test_demo_model_predicts_only_demo_features`; API `POST /ml/train` → 202 e job `SUCCEEDED` con `model_id`; i test esistenti di look-ahead e walk-forward ML restano verdi.
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_ml_dataset.py`, `tests\test_lab_boundaries.py`, suite completa, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_ml_dataset.py`, `tests\test_lab_boundaries.py`, suite completa, Ruff).
+- [x] **Step 5: Chiusura**
 
-**Stato 2026-10-10:** implementazione e review pronte; 69 test mirati verdi, 1002 backend passati e un test storico news fallito per metodo ML rimosso. Richiesta estensione al solo test in `tests/test_news_providers.py`, candidato offline verificato in memoria ma non applicato. Task IN CORSO fino al gate completo verde.
+**Stato 2026-10-10:** FATTO: 70 test mirati, 1003 backend passati, nessun xfail, Ruff/pip check e due review indipendenti PASS. Estensione al solo test news autorizzata dall’utente e verificata. Checkpoint `2f34a431ba930470d182f9897c61c9050b5cf6d4` documentato nel programma; SHA finale registrato dal Task 14.
 
 Commit: `feat: train ML on the shared feature pipeline`
 
