@@ -936,6 +936,7 @@ class BacktestSummaryOut(BaseModel):
     turnover: float | None = None
     exposure: float | None = None
     fingerprint: str | None = None
+    benchmark_snapshot_status: Literal["FROZEN", "UNAVAILABLE", "NOT_RECORDED"] = "NOT_RECORDED"
 
 
 class BacktestEquityPointOut(BaseModel):

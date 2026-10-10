@@ -1,6 +1,6 @@
 # InvestEdge — SP1 "Laboratorio di verità"
 
-**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1 implementata e verificata il 10 ottobre 2026; R2 e R3 ancora da eseguire.
+**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1 e R2 implementate e verificate il 10 ottobre 2026; R3 ancora da eseguire.
 
 **Relazione:** attua SP1 della spec di programma `2026-09-30-investedge-profit-engine-program-design.md` (§4, principi §5, difetti §7). Dove questa spec è più precisa, prevale per SP1.
 
@@ -240,7 +240,13 @@ L'evento apre un nuovo segmento e compare nel report con data e rapporto. Un cro
 
 In modalità REAL il benchmark è una serie reale convertita in EUR; altrimenti "benchmark non disponibile". Mai seed in un run REAL.
 
-R2: per ogni nuovo run congelare gli input benchmark e FX effettivamente usati, anche se il benchmark è esterno all'universo tradato. Curva, rendimento e alpha letti devono riferirsi allo stesso snapshot del calcolo. Se uno storico v0/v1 non ha snapshot, dichiarare la non riproducibilità e la fonte di eventuali valori ricalcolati; non presentare curva nuova e summary vecchio come coerenti né modificare in silenzio il run.
+R2 implementata: una sola cattura produce barre native effettive (OHLC/close rettificato e segmento), valuta/base di rettifica, cambi EUR as-of effettivamente usati per barra (null se mancanti o scaduti), soglia di età FX, calendario e curva normalizzata. Questi input entrano nell'impronta anche se il benchmark è esterno all'universo. La cattura mantiene separati REAL/DEMO, esclude FX seed e barre oltre il calendario; nessun rendimento attraversa un segmento. Il valore normalizzato usa l'ultimo valore noto e non anticipa dati futuri.
+
+Per un nuovo BACKTEST lo snapshot versionato è salvato nella stessa transazione di summary, curva del portafoglio e tentativo. Curva benchmark, rendimento e alpha derivano da quel calcolo; le letture non interrogano prezzi o cambi correnti. Anche l'indisponibilità è congelata: dati aggiunti dopo non completano un vecchio run. Le revisioni di input cambiano l'impronta del nuovo run, comprese scale uniformi che lasciano invariato il rendimento.
+
+COMPARE e WFO usano una cattura condivisa per il risultato e le impronte dei tentativi; i job conservano il risultato immutabile e i tentativi il digest, senza persistere il payload completo degli input. Nel WFO la curva OOS è ritagliata e rinormalizzata dalla cattura sul calendario delle finestre, senza una seconda lettura delle fonti.
+
+Storici v0/v1 senza snapshot: stato `NOT_RECORDED`, avviso esplicito di non riproducibilità del benchmark e punti della curva benchmark nulli. Rendimento, alpha e impronta già salvati restano invariati; nessun backfill inventato né ricalcolo dalle fonti correnti. Stato `FROZEN` se la cattura contiene una curva, `UNAVAILABLE` se ha congelato l'assenza del benchmark.
 
 ### 6.6 Limiti dichiarati in ogni report
 
@@ -300,7 +306,7 @@ In EUR, con valutazione giornaliera al close rettificato × cambio:
 ### 7.6 Persistenza, API e storico
 
 - `BacktestRunIn`: via `fee_percent`; aggiunti profilo costi, `data_mode`, `signal_name`, `signal_timeframe`.
-- `backtest_runs`: colonne additive `engine_version` (`v0` per i run esistenti, `v1` per i nuovi), `data_mode`, `signal_name`, `signal_timeframe`, `cost_profile_json`, `fingerprint`, `warnings_json`. I run `v0` restano e sono mostrati come "motore precedente".
+- `backtest_runs`: colonne additive `engine_version` (`v0` per i run esistenti, `v1` per i nuovi), `data_mode`, `signal_name`, `signal_timeframe`, `cost_profile_json`, `fingerprint`, `warnings_json` e `benchmark_snapshot_json` nullable (R2). La migrazione lascia NULL sugli storici; `BacktestSummaryOut.benchmark_snapshot_status` è additivo (`FROZEN` / `UNAVAILABLE` / `NOT_RECORDED`). I run `v0` restano e sono mostrati come "motore precedente".
 - **Impronta:** SHA-256 canonico di config, versioni, `data_mode`, universo e hash di tutti gli input effettivi, inclusi barre/FX del benchmark separato (§6.5). Stessi input → stesso risultato; una revisione del benchmark cambia l'impronta di un nuovo run (test R2). Risultati salvati letti dal proprio snapshot.
 
 ## 8. Harness, walk-forward, DSR e verdetto

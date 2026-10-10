@@ -142,40 +142,89 @@ def build_universe_inputs(
     )
 
 
-def benchmark_curve(
+@dataclass(frozen=True)
+class BenchmarkSnapshot:
+    """Input effettivi e crescita EUR dello stesso calcolo, serializzabili senza rileggere le fonti."""
+
+    payload: dict[str, object]
+
+    @property
+    def inputs_hash(self) -> str:
+        return canonical_hash(self.payload)
+
+    @property
+    def curve(self) -> pd.Series | None:
+        if self.payload["status"] != "AVAILABLE":
+            return None
+        points = self.payload["curve"]
+        return pd.Series(
+            [value for _day, value in points], index=[day for day, _value in points], dtype=float
+        )
+
+
+def benchmark_snapshot(
     connection: sqlite3.Connection,
     symbol: str,
     *,
     data_mode: DataMode,
     calendar: Sequence[str],
-) -> pd.Series | None:
-    """Crescita del benchmark sul calendario (1 alla prima data con un valore), dal close rettificato in EUR.
+) -> BenchmarkSnapshot:
+    """Congela barre native, segmenti, cambi as-of usati e curva normalizzata nel solo data_mode richiesto.
 
-    Serie nel solo `data_mode` del run (mai seed in un run REAL); a ogni data l'ultimo valore noto con data <= data;
-    nessun rendimento attraverso il confine di un segmento (dopo uno split sospetto il salto non conta).
-    None se il simbolo manca o e ambiguo, senza serie nel `data_mode` o senza barre convertibili in EUR.
+    La crescita concatena i rendimenti del close rettificato EUR dentro lo stesso segmento, poi allinea
+    l'ultimo valore noto al calendario. L'assenza di dati/cambi e anch'essa parte dell'impronta.
     """
     days = [str(day) for day in calendar]
+    payload: dict[str, object] = {
+        "version": 1, "symbol": symbol.strip().upper(), "data_mode": data_mode, "calendar": days,
+        "status": "UNAVAILABLE", "reason": "NO_CALENDAR", "inputs": {}, "curve": [],
+    }
     if not days:
-        return None
+        return BenchmarkSnapshot(payload)
     rows = connection.execute(
-        "SELECT id FROM assets WHERE UPPER(symbol) = ? ORDER BY id", (symbol.strip().upper(),)
+        "SELECT id FROM assets WHERE UPPER(symbol) = ? ORDER BY id", (payload["symbol"],)
     ).fetchall()
     if len(rows) != 1:
-        return None
-    series = load_series(connection, int(rows[0][0]), data_mode)
+        payload["reason"] = "NOT_FOUND" if not rows else "AMBIGUOUS_SYMBOL"
+        return BenchmarkSnapshot(payload)
+    asset_id = int(rows[0][0])
+    payload["inputs"] = {"asset_id": asset_id}
+    series = load_series(connection, asset_id, data_mode)
     if series is None:
-        return None
+        payload["reason"] = f"NO_{data_mode}_SERIES"
+        return BenchmarkSnapshot(payload)
     bars = _all_bars(series)
     bars = bars[bars["date"] <= days[-1]].reset_index(drop=True)
-    if bars.empty:
-        return None
-    converter = EurConverter(connection, max_age_days=get_settings().ecb_fx_max_age_days)
+    max_age_days = get_settings().ecb_fx_max_age_days
+    converter = EurConverter(connection, max_age_days=max_age_days)
     converted, _missing = converter.convert_bars(bars, series.currency)
+    payload["inputs"] = {
+        "asset_id": asset_id, "currency": series.currency, "asset_type": series.asset_type,
+        "adjustment_basis": series.adjustment_basis,
+        "bars": [
+            [str(day), *prices, int(segment)]
+            for day, prices, segment in zip(
+                bars["date"],
+                [
+                    [float(value) if math.isfinite(float(value)) else None for value in row]
+                    for row in bars[["open", "high", "low", "close", "adjusted_close"]].to_numpy()
+                ],
+                bars["segment_id"], strict=True,
+            )
+        ],
+        "fx": {
+            "max_age_days": max_age_days,
+            "rates": [[str(day), converter.rate_on(series.currency, str(day))] for day in bars["date"]],
+        },
+    }
+    if bars.empty:
+        payload["reason"] = "NO_BARS"
+        return BenchmarkSnapshot(payload)
     close = converted["close_eur"].to_numpy(dtype=float)
     valid = np.isfinite(close) & (close > 0)
     if not valid.any():
-        return None
+        payload["reason"] = "NO_VALID_EUR_PRICES"
+        return BenchmarkSnapshot(payload)
     close = close[valid]
     segments = converted["segment_id"].to_numpy()[valid]
     ratio = np.ones(close.shape[0])
@@ -185,8 +234,22 @@ def benchmark_curve(
     aligned = chained.reindex(chained.index.union(pd.Index(days))).ffill().reindex(days)
     base = aligned.dropna()
     if base.empty:
-        return None
-    return aligned / float(base.iloc[0])
+        payload["reason"] = "NO_VALUE_ON_CALENDAR"
+        return BenchmarkSnapshot(payload)
+    curve = aligned / float(base.iloc[0])
+    payload.update(status="AVAILABLE", reason=None, curve=list(zip(days, _values(curve), strict=True)))
+    return BenchmarkSnapshot(payload)
+
+
+def benchmark_curve(
+    connection: sqlite3.Connection,
+    symbol: str,
+    *,
+    data_mode: DataMode,
+    calendar: Sequence[str],
+) -> pd.Series | None:
+    """Crescita EUR del benchmark; compatibilita per i chiamanti che non persistono uno snapshot."""
+    return benchmark_snapshot(connection, symbol, data_mode=data_mode, calendar=calendar).curve
 
 
 def _resolve_assets(

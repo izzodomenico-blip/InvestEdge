@@ -1361,6 +1361,8 @@ MIGRATIONS = {
         ("spread_cost_eur", "ALTER TABLE backtest_runs ADD COLUMN spread_cost_eur REAL"),
         ("turnover", "ALTER TABLE backtest_runs ADD COLUMN turnover REAL"),
         ("exposure", "ALTER TABLE backtest_runs ADD COLUMN exposure REAL"),
+        # R2: niente backfill sui run storici; NULL significa snapshot mai registrato.
+        ("benchmark_snapshot_json", "ALTER TABLE backtest_runs ADD COLUMN benchmark_snapshot_json TEXT"),
     ],
     "backtest_trades": [
         ("commission", "ALTER TABLE backtest_trades ADD COLUMN commission REAL"),

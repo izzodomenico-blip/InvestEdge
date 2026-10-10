@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
@@ -15,8 +16,8 @@ from backend.app.config import get_settings
 from backend.app.database import db_session, get_connection, init_db
 from backend.app.lab.contracts import LabError
 from backend.app.lab.trials import canonical_hash, family_key, family_trial_sharpes, record_trial
-from backend.app.lab.universe import build_universe_inputs
-from backend.app.models import BacktestCompareIn, BacktestRunIn
+from backend.app.lab.universe import BenchmarkSnapshot, benchmark_snapshot, build_universe_inputs
+from backend.app.models import BacktestCompareIn, BacktestRunIn, WalkForwardIn
 from backend.app.services.backtest_engine import BacktestEngine
 from tests.lab_fixtures import insert_asset, insert_bars, insert_fx, synthetic_bars
 
@@ -250,6 +251,311 @@ def test_real_benchmark_uses_only_real_series(lab_connection: sqlite3.Connection
     assert real.equity_curve[0].benchmark_value == pytest.approx(10_000)
     assert real.equity_curve[-1].benchmark_value == pytest.approx(10_000 * (1 + expected / 100))
     assert not any("Benchmark" in warning for warning in real.summary.warnings)
+
+
+@pytest.mark.parametrize("revision", ["price", "fx", "price_scale", "fx_scale"])
+def test_benchmark_snapshot_survives_price_and_fx_revisions(
+    lab_connection: sqlite3.Connection, revision: str
+) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    bench_id, bench = _real_asset(lab_connection, "BENCH", currency="USD", seed=11)
+    insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bench["date"]])
+    lab_connection.commit()
+    payload = _payload(["TRADED"], benchmark_symbol="BENCH", **_period(bars))
+    engine = BacktestEngine()
+    first = engine.run_backtest(lab_connection, payload, now=NOW)
+    before = first.model_dump(mode="json")
+    if revision.startswith("price"):
+        day_filter = "" if revision.endswith("scale") else " AND date = ?"
+        args = (bench_id,) if not day_filter else (bench_id, str(bench["date"].iloc[-1]))
+        lab_connection.execute(
+            "UPDATE price_history SET open=open*1.1, high=high*1.1, low=low*1.1, close=close*1.1, "
+            "adjusted_close=adjusted_close*1.1 WHERE asset_id=?" + day_filter, args,
+        )
+    else:
+        day_filter = "" if revision.endswith("scale") else " AND observed_at = ?"
+        args = () if not day_filter else (str(bench["date"].iloc[-1]),)
+        lab_connection.execute(
+            "UPDATE fx_rates SET rate=rate*1.1 WHERE from_currency='USD' AND provider='ecb'" + day_filter, args,
+        )
+    lab_connection.commit()
+    revised = engine.run_backtest(lab_connection, payload, now=NOW)
+    assert revised.summary.fingerprint != first.summary.fingerprint
+    assert revised.summary.total_return_percent == first.summary.total_return_percent
+    assert [t.model_dump(exclude={"id"}) for t in revised.trades] == [
+        t.model_dump(exclude={"id"}) for t in first.trades
+    ]
+    if revision.endswith("scale"):
+        assert revised.summary.benchmark_return_percent == pytest.approx(first.summary.benchmark_return_percent)
+        assert [p.benchmark_value for p in revised.equity_curve] == pytest.approx(
+            [p.benchmark_value for p in first.equity_curve]
+        )
+    else:
+        assert revised.summary.benchmark_return_percent != first.summary.benchmark_return_percent
+    assert engine.get_backtest(lab_connection, first.backtest_id).model_dump(mode="json") == before
+    assert first.summary.benchmark_snapshot_status == "FROZEN"
+    assert len(family_trial_sharpes(lab_connection, family_key("score", "D"))) == 1
+    snapshot = json.loads(lab_connection.execute(
+        "SELECT benchmark_snapshot_json FROM backtest_runs WHERE id=?", (first.backtest_id,)
+    ).fetchone()[0])
+    assert snapshot["inputs"]["currency"] == "USD"
+    assert all(rate == 0.9 for _day, rate in snapshot["inputs"]["fx"]["rates"])
+    # Gli input salvati ricostruiscono il rendimento: benchmark USD convertito in EUR, normalizzato al primo giorno.
+    native = {row[0]: row[5] for row in snapshot["inputs"]["bars"]}
+    rates = dict(snapshot["inputs"]["fx"]["rates"])
+    expected = (native[payload.end_date] * rates[payload.end_date] /
+                (native[payload.start_date] * rates[payload.start_date]) - 1) * 100
+    assert first.summary.benchmark_return_percent == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("missing", ["symbol", "fx", "other_mode"])
+def test_unavailable_benchmark_is_frozen_when_sources_appear(
+    lab_connection: sqlite3.Connection, missing: str
+) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    if missing == "fx":
+        _real_asset(lab_connection, "BENCH", currency="USD", seed=11)
+    elif missing == "other_mode":
+        _demo_asset(lab_connection, "BENCH", seed=11)
+    payload = _payload(["TRADED"], benchmark_symbol="BENCH", **_period(bars))
+    engine = BacktestEngine()
+    first = engine.run_backtest(lab_connection, payload, now=NOW)
+    before = first.model_dump(mode="json")
+    assert all(p.benchmark_value is None for p in first.equity_curve)
+    if missing == "symbol":
+        _real_asset(lab_connection, "BENCH", seed=11)
+    elif missing == "fx":
+        insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bars["date"]])
+    else:
+        bench_id = lab_connection.execute("SELECT id FROM assets WHERE symbol='BENCH'").fetchone()[0]
+        insert_bars(lab_connection, bench_id, synthetic_bars(BARS, 11), real=True, provider="stooq")
+    lab_connection.commit()
+    revised = engine.run_backtest(lab_connection, payload, now=NOW)
+    assert revised.summary.fingerprint != first.summary.fingerprint
+    assert any(p.benchmark_value is not None for p in revised.equity_curve)
+    assert engine.get_backtest(lab_connection, first.backtest_id).model_dump(mode="json") == before
+    assert first.summary.benchmark_snapshot_status == "UNAVAILABLE"
+
+
+def test_saved_benchmark_never_reads_current_price_or_fx_sources(lab_connection: sqlite3.Connection) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    _real_asset(lab_connection, "BENCH", currency="USD", seed=11)
+    insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bars["date"]])
+    lab_connection.commit()
+    engine = BacktestEngine()
+    first = engine.run_backtest(lab_connection, _payload(["TRADED"], benchmark_symbol="BENCH", **_period(bars)), now=NOW)
+
+    def deny_sources(action: int, table: str, _column: str, _db: str, _trigger: str) -> int:
+        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and table in {"price_history", "fx_rates"} else sqlite3.SQLITE_OK
+
+    lab_connection.set_authorizer(deny_sources)
+    try:
+        assert engine.get_backtest(lab_connection, first.backtest_id).model_dump() == first.model_dump()
+    finally:
+        lab_connection.set_authorizer(None)
+
+
+@pytest.mark.parametrize("version", ["v0", "v1"])
+def test_historical_runs_without_snapshot_keep_saved_numbers_and_hide_live_curve(
+    lab_connection: sqlite3.Connection, version: str
+) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    _real_asset(lab_connection, "BENCH", seed=11)
+    engine = BacktestEngine()
+    first = engine.run_backtest(lab_connection, _payload(["TRADED"], benchmark_symbol="BENCH", **_period(bars)), now=NOW)
+    lab_connection.execute("UPDATE backtest_runs SET benchmark_snapshot_json=NULL WHERE id=?", (first.backtest_id,))
+    lab_connection.execute("UPDATE backtest_runs SET engine_version=? WHERE id=?", (version, first.backtest_id))
+    lab_connection.commit()
+    before = tuple(lab_connection.execute(
+        "SELECT benchmark_return_percent, alpha_vs_benchmark, fingerprint FROM backtest_runs WHERE id=?",
+        (first.backtest_id,),
+    ).fetchone())
+    detail = engine.get_backtest(lab_connection, first.backtest_id)
+    assert all(p.benchmark_value is None and p.benchmark_return_percent is None for p in detail.equity_curve)
+    assert detail.summary.benchmark_snapshot_status == "NOT_RECORDED"
+    assert any("senza snapshot" in w for w in detail.summary.warnings)
+    [summary] = engine.list_backtests(lab_connection)
+    assert summary.benchmark_snapshot_status == "NOT_RECORDED"
+    assert any("senza snapshot" in w for w in summary.warnings)
+    assert (detail.summary.benchmark_return_percent, detail.summary.alpha_vs_benchmark, detail.summary.fingerprint) == before
+    assert tuple(lab_connection.execute(
+        "SELECT benchmark_return_percent, alpha_vs_benchmark, fingerprint FROM backtest_runs WHERE id=?",
+        (first.backtest_id,),
+    ).fetchone()) == before
+
+
+def test_compare_fingerprint_includes_external_benchmark(lab_connection: sqlite3.Connection) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    bench_id, _bench = _real_asset(lab_connection, "BENCH", seed=11)
+    data = _payload_data(["TRADED"], benchmark_symbol="BENCH", **_period(bars))
+    data.pop("strategy_name")
+    payload = BacktestCompareIn(**data, strategy_names=["BUY_AND_HOLD", "SCORE_THRESHOLD"])
+    engine = BacktestEngine()
+    before = engine.compare_strategies(lab_connection, payload, now=NOW)
+    lab_connection.execute("UPDATE price_history SET close=close*1.1 WHERE asset_id=? AND date=?", (bench_id, str(bars["date"].iloc[-1])))
+    lab_connection.commit()
+    after = engine.compare_strategies(lab_connection, payload, now=NOW)
+    first = {entry["strategy_name"]: entry for entry in before["entries"]}
+    second = {entry["strategy_name"]: entry for entry in after["entries"]}
+    assert all(first[name]["summary"]["fingerprint"] != second[name]["summary"]["fingerprint"] for name in first)
+    assert all(first[name]["summary"]["total_return_percent"] == second[name]["summary"]["total_return_percent"] for name in first)
+
+
+@pytest.mark.parametrize("direction", ["direct", "inverse"])
+def test_benchmark_snapshot_uses_prior_asof_fx_and_round_trips(
+    lab_connection: sqlite3.Connection, direction: str
+) -> None:
+    _bench_id, bars = _real_asset(lab_connection, "BENCH", currency="USD", bars=synthetic_bars(5, 11))
+    quotes = [(str(bars["date"].iloc[0]), 0.9), (str(bars["date"].iloc[3]), 0.95)]
+    if direction == "direct":
+        insert_fx(lab_connection, "USD", quotes)
+    else:
+        lab_connection.executemany(
+            "INSERT INTO fx_rates (from_currency, to_currency, rate, observed_at, provider, quality) "
+            "VALUES ('EUR', 'USD', ?, ?, 'ecb', 'reference')",
+            [(1 / rate, day) for day, rate in quotes],
+        )
+    days = [str(day) for day in bars["date"].iloc[2:]]
+    snapshot = benchmark_snapshot(lab_connection, "BENCH", data_mode="REAL", calendar=days)
+    rates = dict(snapshot.payload["inputs"]["fx"]["rates"])
+    assert rates == pytest.approx(dict(zip(bars["date"], [0.9, 0.9, 0.9, 0.95, 0.95], strict=True)))
+    expected = bars["close"].iloc[2:].reset_index(drop=True) * [0.9, 0.95, 0.95]
+    expected = expected / expected.iloc[0]
+    assert snapshot.curve.tolist() == pytest.approx(expected.tolist())
+    decoded = BenchmarkSnapshot(json.loads(json.dumps(snapshot.payload, allow_nan=False)))
+    assert decoded.inputs_hash == snapshot.inputs_hash
+    pd.testing.assert_series_equal(decoded.curve, snapshot.curve)
+
+
+@pytest.mark.parametrize("source", ["stale_direct", "seed"])
+def test_benchmark_snapshot_freezes_missing_fx_without_inverse_or_seed_fallback(
+    lab_connection: sqlite3.Connection, source: str
+) -> None:
+    _bench_id, bars = _real_asset(lab_connection, "BENCH", currency="USD", bars=synthetic_bars(5, 11))
+    if source == "seed":
+        insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bars["date"]], provider="seed")
+    else:
+        insert_fx(lab_connection, "USD", [("2017-01-01", 0.9)])
+        lab_connection.executemany(
+            "INSERT INTO fx_rates (from_currency, to_currency, rate, observed_at, provider, quality) "
+            "VALUES ('EUR', 'USD', 1.1, ?, 'ecb', 'reference')", [(str(day),) for day in bars["date"]],
+        )
+    snapshot = benchmark_snapshot(lab_connection, "BENCH", data_mode="REAL", calendar=bars["date"].tolist())
+    assert snapshot.curve is None
+    assert snapshot.payload["status"] == "UNAVAILABLE"
+    assert all(rate is None for _day, rate in snapshot.payload["inputs"]["fx"]["rates"])
+    json.dumps(snapshot.payload, allow_nan=False)
+
+
+def test_benchmark_snapshot_preserves_segment_boundary(lab_connection: sqlite3.Connection) -> None:
+    bars = synthetic_bars(8, 11)
+    factor = float(bars.loc[3, "close"]) / (2 * float(bars.loc[4, "close"]))
+    bars.loc[4:, PRICE_COLUMNS] *= factor
+    _real_asset(lab_connection, "BENCH", bars=bars)
+    snapshot = benchmark_snapshot(lab_connection, "BENCH", data_mode="REAL", calendar=bars["date"].tolist())
+    assert snapshot.payload["inputs"]["bars"][3][-1] == 0
+    assert snapshot.payload["inputs"]["bars"][4][-1] == 1
+    assert snapshot.curve.iloc[4] == pytest.approx(snapshot.curve.iloc[3])
+    expected = (bars.loc[3, "close"] / bars.loc[0, "close"]) * (bars.loc[7, "close"] / bars.loc[4, "close"])
+    assert snapshot.curve.iloc[-1] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("unused", ["future", "demo", "seed"])
+def test_unused_benchmark_sources_do_not_change_fingerprint(
+    lab_connection: sqlite3.Connection, unused: str
+) -> None:
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    bench_id, bench = _real_asset(lab_connection, "BENCH", currency="USD", seed=11)
+    insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bench["date"]])
+    lab_connection.commit()
+    payload = _payload(["TRADED"], benchmark_symbol="BENCH", **_period(bars))
+    engine = BacktestEngine()
+    first = engine.run_backtest(lab_connection, payload, now=NOW)
+    if unused == "future":
+        future = synthetic_bars(5, 19, start=str(date.fromisoformat(payload.end_date) + timedelta(days=1)))
+        insert_bars(lab_connection, bench_id, future, real=True, provider="stooq")
+        insert_fx(lab_connection, "USD", [(str(day), 1.4) for day in future["date"]])
+    elif unused == "demo":
+        demo = bench.copy()
+        demo[PRICE_COLUMNS] *= 3
+        insert_bars(lab_connection, bench_id, demo, real=False, provider=None)
+    else:
+        insert_fx(lab_connection, "USD", [(str(day), 2.7) for day in bench["date"]], provider="seed")
+    lab_connection.commit()
+    revised = engine.run_backtest(lab_connection, payload, now=NOW)
+    assert revised.summary.fingerprint == first.summary.fingerprint
+    assert revised.summary.benchmark_return_percent == first.summary.benchmark_return_percent
+    assert [p.benchmark_value for p in revised.equity_curve] == [p.benchmark_value for p in first.equity_curve]
+
+
+@pytest.mark.parametrize("revision", ["price", "fx"])
+def test_walk_forward_job_freezes_result_and_grid_fingerprint_includes_benchmark(
+    lab_connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, revision: str
+) -> None:
+    from backend.app.lab import handlers  # noqa: F401 - registra i job
+    from backend.app.lab.jobs import JobService
+
+    _freeze_handler_clock(monkeypatch)
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    bench_id, bench = _real_asset(lab_connection, "BENCH", currency="USD", seed=11)
+    insert_fx(lab_connection, "USD", [(str(day), 0.9) for day in bench["date"]])
+    lab_connection.commit()
+    payload = WalkForwardIn(
+        **_payload_data(["TRADED"], benchmark_symbol="BENCH", **_period(bars)),
+        is_sessions=40, oos_sessions=20,
+    )
+    service = JobService("inline")
+    job = service.enqueue("WALK_FORWARD", payload.model_dump(mode="json"))
+    assert job.status == "SUCCEEDED"
+    saved = job.result
+    old_trials = _trial_rows(lab_connection)
+    if revision == "price":
+        lab_connection.execute(
+            "UPDATE price_history SET close=close*1.1, adjusted_close=adjusted_close*1.1 WHERE asset_id=? AND date=?",
+            (bench_id, payload.end_date),
+        )
+    else:
+        lab_connection.execute(
+            "UPDATE fx_rates SET rate=rate*1.1 WHERE from_currency='USD' AND observed_at=?", (payload.end_date,)
+        )
+    lab_connection.commit()
+    next_job = service.enqueue("WALK_FORWARD", payload.model_dump(mode="json"))
+    assert next_job.status == "SUCCEEDED"
+    assert service.get(job.id).result == saved
+    new_trials = _trial_rows(lab_connection)
+    assert new_trials[:len(old_trials)] == old_trials
+    assert len(new_trials) == 2 * len(old_trials)
+    assert {t[2] for t in new_trials} == {t[2] for t in old_trials}
+    assert {t[3] for t in new_trials[len(old_trials):]}.isdisjoint({t[3] for t in old_trials})
+    assert saved["oos_metrics"]["benchmark_return_percent"] != next_job.result["oos_metrics"]["benchmark_return_percent"]
+    assert saved["n_trials"] == next_job.result["n_trials"]
+
+
+def test_compare_job_saved_result_survives_benchmark_revision(
+    lab_connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from backend.app.lab import handlers  # noqa: F401 - registra i job
+    from backend.app.lab.jobs import JobService
+
+    _freeze_handler_clock(monkeypatch)
+    _asset_id, bars = _real_asset(lab_connection, "TRADED")
+    bench_id, _bench = _real_asset(lab_connection, "BENCH", seed=11)
+    data = _payload_data(["TRADED"], benchmark_symbol="BENCH", **_period(bars))
+    data.pop("strategy_name")
+    payload = BacktestCompareIn(**data, strategy_names=["BUY_AND_HOLD", "SCORE_THRESHOLD"])
+    service = JobService("inline")
+    first = service.enqueue("COMPARE", payload.model_dump(mode="json"))
+    assert first.status == "SUCCEEDED"
+    before = first.result
+    lab_connection.execute(
+        "UPDATE price_history SET close=close*1.1, adjusted_close=adjusted_close*1.1 WHERE asset_id=? AND date=?",
+        (bench_id, payload.end_date),
+    )
+    lab_connection.commit()
+    second = service.enqueue("COMPARE", payload.model_dump(mode="json"))
+    assert second.status == "SUCCEEDED"
+    assert service.get(first.id).result == before
+    assert before["benchmark_return_percent"] != second.result["benchmark_return_percent"]
 
 
 def test_bars_without_valid_fx_are_excluded_and_counted(lab_connection: sqlite3.Connection) -> None:
@@ -516,7 +822,7 @@ def test_existing_runs_are_marked_v0_after_migration(tmp_path, monkeypatch: pyte
         trade_columns = {row[1] for row in connection.execute("PRAGMA table_info(backtest_trades)")}
         assert {
             "engine_version", "data_mode", "signal_name", "signal_timeframe", "cost_profile_json", "fingerprint",
-            "warnings_json",
+            "warnings_json", "benchmark_snapshot_json",
         } <= run_columns
         assert {"commission", "spread_cost"} <= trade_columns
         engine = BacktestEngine()
@@ -524,7 +830,12 @@ def test_existing_runs_are_marked_v0_after_migration(tmp_path, monkeypatch: pyte
         [summary] = engine.list_backtests(connection)
 
         assert (summary.engine_version, summary.fee_percent, summary.data_mode) == ("v0", 0.1, None)
-        assert (summary.warnings, summary.excluded, summary.cost_profile) == ([], {}, None)
+        assert (summary.excluded, summary.cost_profile) == ({}, None)
+        assert summary.benchmark_snapshot_status == "NOT_RECORDED"
+        assert any("senza snapshot" in warning for warning in summary.warnings)
+        assert connection.execute("SELECT benchmark_snapshot_json FROM backtest_runs").fetchone()[0] is None
+        init_db()  # migrazione idempotente, senza ricostruzione da prezzi/cambi correnti
+        assert connection.execute("SELECT benchmark_snapshot_json FROM backtest_runs").fetchone()[0] is None
         detail = engine.get_backtest(connection, summary.id)
         assert detail.trades[0].fees == 1
         assert detail.trades[0].commission is None
@@ -644,6 +955,7 @@ def test_backtest_route_returns_202_job_and_persists_a_v1_run(
     summary = detail["summary"]
     assert (summary["engine_version"], summary["data_mode"], summary["fee_percent"]) == ("v1", "REAL", None)
     assert summary["total_trades"] > 0
+    assert summary["benchmark_snapshot_status"] == "UNAVAILABLE"
     assert all(trade["commission"] == 1.0 for trade in detail["trades"])
     history = client.get("/backtests").json()
     assert [item["engine_version"] for item in history if item["id"] == run_id] == ["v1"]

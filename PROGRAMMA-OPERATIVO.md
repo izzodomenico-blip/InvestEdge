@@ -2,17 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (R1 verificata e chiusa; prossimo passo R2).
+Ultimo aggiornamento: 2026-10-10 (R1 e R2 verificate e chiuse; prossimo passo R3).
 
 ## Prossimo passo
 
-**SP1 R2 — Congelare benchmark e impronta completa dei risultati.**
+**SP1 R3 — Ripristinare i contratti asincroni frontend e gli indicatori Analisi.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer.
-- Branch `investedge/sp1-remediation-2` da `origin/investedge/sp1-remediation-1`, dopo verifica del gate remoto R1. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
-- Ingressi: rilievo R2 e criteri qui sotto; spec SP1 §6.5, §7.6, §14–§15; piano SP1, sezione *Remediation approvate il 2026-10-10*.
-- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. P e R1 FATTI; il Task 12 riparte solo dopo le tre correzioni verificate.
-- R2 e R3 restano aperte. Intraday e Alpaca richiedono i gate successivi; nessun trading è attivato.
+- Branch `investedge/sp1-remediation-3` da `origin/investedge/sp1-remediation-2`, dopo verifica del gate remoto R2. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
+- Ingressi: rilievo R3 e criteri qui sotto; contratti backend correnti, compreso il campo additivo R2 `benchmark_snapshot_status`; piano SP1, sezione *Remediation approvate il 2026-10-10*.
+- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. P, R1 e R2 FATTI; il Task 12 riparte solo dopo le tre correzioni verificate.
+- R3 resta aperta. Intraday e Alpaca richiedono i gate successivi; nessun trading è attivato.
 
 ## Legenda
 
@@ -56,7 +56,7 @@ Review in sola lettura sul Task 11 `c19c8d8` (2026-10-10): suite offline `pytest
 | ID | Problema osservato | Correzione e gate |
 |---|---|---|
 | R1 | Il confine di segmento usa la barra seguente: uno split alla prima barra OOS cambia l'ultimo rendimento IS e può cambiare i parametri scelti. Fixture sintetica: IS 40/OOS 20, seed 137/1137, sola prima barra OOS dimezzata; buy/sell 75/35 → 75/40, input IS invariati. | Ogni Sharpe IS e la scelta devono restare identici modificando, aggiungendo o rimuovendo OOS, compresi split e gap al cutoff. La griglia globale per il registro non alimenta la selezione; OOS resta una simulazione continua. **Chiuso R1 il 2026-10-10:** prefissi al cutoff, eleggibilità e calendario prima di `NO_FEATURES`; 32 test WFO e suite 875 passati + 1 xfail atteso. |
-| R2 | Il benchmark esterno all'universo non entra nell'hash dei dati; una revisione modifica la curva riletta ma lascia summary e fingerprint precedenti. Riproduzione in DB in memoria: benchmark 23,32% → 35,65%, stessa impronta e strategia invariata. | Congelare input/curva benchmark e includerli nell'impronta. Una revisione crea una nuova impronta; un run salvato conserva curva, rendimento e alpha coerenti. Compatibilità esplicita per v0 e v1 pre-correzione. |
+| R2 | Il benchmark esterno all'universo non entra nell'hash dei dati; una revisione modifica la curva riletta ma lascia summary e fingerprint precedenti. Riproduzione in DB in memoria: benchmark 23,32% → 35,65%, stessa impronta e strategia invariata. | Congelare input/curva benchmark e includerli nell'impronta. Una revisione crea una nuova impronta; un run salvato conserva curva, rendimento e alpha coerenti. Compatibilità esplicita per v0 e v1 pre-correzione. **Chiuso R2 il 2026-10-10:** snapshot benchmark/FX, letture congelate, stato storico esplicito; 73 test mirati e suite 897 passati + 1 xfail atteso. |
 | R3 | Backtest, confronto e walk-forward trattano 202 `JobOut` come risultato sincrono e possono causare una pagina bianca; Analisi usa nomi di indicatori superati e i 409 non sono spiegati. | Adeguare contratti, polling, risultati, annullamento, errori e smontaggio; correggere nomi/unità degli indicatori. Test frontend su risposte attuali e tutti gli stati terminali. Riutilizzare poi questo lavoro nei Task 14–15. |
 
 ### Fasi e condizioni di passaggio
@@ -270,8 +270,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | FATTO | `a23aa62` | 2026-10-05 | Claude |
 | 11 | Statistiche, walk-forward vero e DSR | FATTO | `c19c8d8` | 2026-10-05 | Claude |
 | P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | `1ae5a9e` | 2026-10-10 | Codex |
-| R1 | Causalità della selezione walk-forward | FATTO | branch `investedge/sp1-remediation-1`; evidenza sotto | 2026-10-10 | Codex |
-| R2 | Benchmark congelato e impronta completa | NON INIZIATO | branch previsto `investedge/sp1-remediation-2` | — | — |
+| R1 | Causalità della selezione walk-forward | FATTO | `7f0a790`; evidenza sotto | 2026-10-10 | Codex |
+| R2 | Benchmark congelato e impronta completa | FATTO | branch `investedge/sp1-remediation-2`; evidenza sotto | 2026-10-10 | Codex |
 | R3 | Contratti asincroni frontend e indicatori Analisi | NON INIZIATO | branch previsto `investedge/sp1-remediation-3` | — | — |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
 | 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
@@ -300,6 +300,19 @@ Evidenza R1 (2026-10-10, Codex):
 - due review indipendenti read-only: esecuzione/confini e metodologia/regressioni. Corretti i rilievi su eleggibilità, calendario e formulazione degli errori nella spec; nessun rilievo Critical/Important aperto;
 - spec §6.2/§8.3 e piano aggiornati. Invarianza verificata sui run validi; un IS vuoto usa Sharpe `None` e prima configurazione, mentre la validazione globale (`LAB_EMPTY_UNIVERSE` se `NO_FEATURES` svuota tutto) resta invariata. La selezione richiede simulazioni aggiuntive per ciascuna finestra; callback di avanzamento/annullamento preservata. Nessuna nuova dipendenza, modifica del simulatore, attivazione Alpaca o merge su `main`;
 - chiusura sul solo branch R1 con commit del piano, push e confronto SHA remoto; working tree pulito richiesto dal gate. Prossimo passo R2; R3 e Task 12–16 restano NON INIZIATI.
+
+Evidenza R2 (2026-10-10, Codex):
+
+- base remota R1 `7f0a7900228e34ef7796cd7cdfdf35b22861671b` verificata; branch `investedge/sp1-remediation-2` pubblicato subito come lock. SHA di R1 registrato nella sua riga; SHA di R2 da registrare nel task successivo;
+- TDD offline: `pytest tests/test_lab_backtest.py -k 'snapshot or sources_appear or saved_benchmark or compare_fingerprint' -p no:cacheprovider` = **11 falliti** prima dell'implementazione: revisioni prezzo/FX (anche scale uniformi), benchmark assente poi disponibile, lettura con tabelle sorgente negate, storici v0/v1 e confronto. Le failure hanno mostrato l'impronta invariata e la curva letta dalle fonti correnti;
+- `universe.py` cattura benchmark esterno all'universo, barre native effettive e segmenti, valuta/base di rettifica, cambi as-of per barra, soglia di età e curva normalizzata in un unico snapshot canonico. La stessa cattura alimenta rendimento, alpha, curva e hash; REAL/DEMO separati, FX seed esclusi. Una revisione uniforme cambia l'impronta anche quando il rendimento rimane uguale;
+- `backtest_engine.py` persiste `benchmark_snapshot_json` con run/curva/trial nel medesimo savepoint. Nuove letture usano soltanto JSON e summary salvati; prezzo/FX rivisti non alterano il risultato precedente. Indisponibilità congelata. COMPARE/WFO includono il digest nei tentativi e conservano l'output immutabile del job; **non conservano il payload completo degli input**. WFO ritaglia/rinormalizza OOS dal medesimo snapshot; `config_hash` e N restano invariati;
+- migrazione solo additiva in `database.py`, colonna nullable senza backfill. `BacktestSummaryOut.benchmark_snapshot_status` additivo: `FROZEN`, `UNAVAILABLE`, `NOT_RECORDED`. Gli storici senza snapshot mantengono rendimento/alpha/impronta; curva benchmark nulla e avviso esplicito nel dettaglio e nella lista, senza aggiornare il DB;
+- `pytest tests/test_lab_backtest.py tests/test_lab_walk_forward.py -p no:cacheprovider --junitxml=<scratch>/targeted.xml --basetemp=<scratch>/targeted-temp` = **73 passati**, 0 falliti/errori, 40,22 s. **22 regressioni R2 nuove**; ulteriori asserzioni su migrazione idempotente e API. Coperti FX diretto/inverso as-of, diretto stale senza fallback, seed, split, prezzi/FX futuri inutilizzati, dati DEMO e risultati job salvati;
+- suite completa `pytest -p no:cacheprovider --junitxml=<scratch>/junit.xml --basetemp=<scratch>/pytest-temp` = **897 passati, 1 xfail strict atteso** (`test_module_does_not_import_technical_analysis[services/ml_dataset_service.py]`, Task 13), **0 falliti, 0 errori**, 175,59 s; conteggi controllati nel JUnit XML. Guardia di rete attiva, provider live disattivati, sole fixture sintetiche e DB temporanei; database reale mai aperto;
+- `ruff check backend scripts tests --no-cache` verde, `pip check` pulito, `git diff --check` verde. Warning di deprecazione Starlette già presenti; test/build frontend non applicabili al task backend. Nessuna nuova dipendenza;
+- due review indipendenti read-only, esecuzione/persistenza/API e metodologia/FX/impronte: nessun rilievo concreto aperto. Spec §6.5/§7.6 e checkbox del piano aggiornate. Le note Task 10 descrivono il comportamento storico, superato da R2;
+- chiusura sul solo branch R2 con commit del piano, push e confronto SHA remoto; working tree pulito al gate. Nessun merge su `main` né attivazione Alpaca. Prossimo passo R3; Task 12–16 restano NON INIZIATI.
 
 Evidenza Task 0 (2026-10-01/02, Claude):
 
@@ -691,10 +704,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | Priorità: correggere rilievi R1–R3, completare SP1, validare intraday holding 15–30 minuti con tecnica e news, Alpaca paper senza leva; leva prevista solo dopo validazione e gate dedicati. | utente |
 | 2026-10-10 | SP6 diviso in SP6a paper prioritario dopo i gate intraday SP2b/SP3 e SP6b reale/leva opzionali successivi; ML/radar non bloccano il primo paper. Dettagli e soglie nelle spec future; nessuna strategia dichiarata profittevole in anticipo. | Codex, attuazione della priorità utente |
 | 2026-10-10 | SP1 R1: selezione su prefissi dal primo giorno al cutoff con rendimento terminale incluso; eleggibilità sulle barre EUR proprie e calendario prima di NO_FEATURES. Griglia globale distinta, OOS continuo, validazione globale invariata. Autorizzati review, commit, push e aggiornamento del programma; R2 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
+| 2026-10-10 | SP1 R2: congelare benchmark/FX e impronta, preservare risultati salvati e compatibilità storica esplicita; autorizzati review, commit, push e aggiornamento del programma nella stessa chat. Migrazione nullable, snapshot BACKTEST e output/digest dei job; R3 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
 
 ## Note di ripresa
 
-- Riprendere da `origin/investedge/sp1-remediation-1` per R2, verificando SHA remoto e working tree pulito; poi R3 → Task 12 del piano. R1 chiusa con 875 passati + 1 xfail atteso; R2/R3 restano aperte. P = `1ae5a9e` registrato in R1; registrare lo SHA di R1 nel commit R2.
+- Riprendere da `origin/investedge/sp1-remediation-2` per R3, verificando SHA remoto e working tree pulito; poi Task 12 del piano. R1/R2 chiuse; R2 con 897 passati + 1 xfail atteso, R3 aperta. P = `1ae5a9e` registrato in R1, R1 = `7f0a790` registrato in R2; registrare lo SHA di R2 nel commit R3.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.

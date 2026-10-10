@@ -36,9 +36,10 @@ from backend.app.lab.stats import DsrResult, deflated_sharpe, sharpe_daily
 from backend.app.lab.strategies import StrategyParams
 from backend.app.lab.trials import canonical_hash, family_key, family_trial_sharpes, record_trial, trial_config
 from backend.app.lab.universe import (
+    BenchmarkSnapshot,
     UniverseInputs,
     _market_bars,
-    benchmark_curve,
+    benchmark_snapshot,
     build_universe_inputs,
     no_real_series_error,
 )
@@ -101,6 +102,7 @@ _RUN_COLUMNS = (
     "profit_factor", "total_trades", "final_value", "benchmark_return_percent", "alpha_vs_benchmark", "created_at",
     "engine_version", "data_mode", "signal_name", "signal_timeframe", "cost_profile_json", "fingerprint",
     "warnings_json", "excluded_json", "commission_eur", "spread_cost_eur", "turnover", "exposure",
+    "benchmark_snapshot_json",
 )
 
 
@@ -118,6 +120,7 @@ class _Outcome:
     summary: BacktestSummaryOut
     equity_curve: list[BacktestEquityPointOut]
     config_hash: str
+    benchmark: BenchmarkSnapshot
 
 
 @dataclass
@@ -178,7 +181,7 @@ class BacktestEngine:
         step = checkpoint or _no_checkpoint
         inputs = self._universe(connection, config, now, step, share=0.6)
         costs = _cost_profile(config)
-        benchmark = benchmark_curve(
+        benchmark = benchmark_snapshot(
             connection, config.benchmark_symbol, data_mode=config.data_mode, calendar=inputs.calendar
         )
         outcome = self._simulate(config, config.strategy_name, config.name, inputs, costs, benchmark)
@@ -206,7 +209,7 @@ class BacktestEngine:
             raise LabError("LAB_INVALID_STRATEGIES", "Seleziona almeno due strategie diverse.")
         inputs = self._universe(connection, payload, now, step, share=0.5)
         costs = _cost_profile(payload)
-        benchmark = benchmark_curve(
+        benchmark = benchmark_snapshot(
             connection, payload.benchmark_symbol, data_mode=payload.data_mode, calendar=inputs.calendar
         )
         outcomes: list[_Outcome] = []
@@ -258,21 +261,24 @@ class BacktestEngine:
         inputs = self._universe(connection, payload, now, step, share=0.4)
         costs = _cost_profile(payload)
         params = _strategy_params(payload, payload.strategy_name)
+        selection_calendar = _walk_forward_calendar(connection, payload, inputs, step)
+        snapshot = benchmark_snapshot(
+            connection, payload.benchmark_symbol, data_mode=payload.data_mode, calendar=selection_calendar
+        )
         run = run_walk_forward(
             inputs,
             _simulation_config(payload, costs, params, inputs.calendar),
             parameter_grid(payload.strategy_name, params),
             is_sessions=is_sessions,
             oos_sessions=oos_sessions,
-            selection_calendar=_walk_forward_calendar(connection, payload, inputs, step),
+            selection_calendar=selection_calendar,
             progress=lambda value: step(0.4 + 0.5 * value),
         )
-        benchmark = benchmark_curve(
-            connection,
-            payload.benchmark_symbol,
-            data_mode=payload.data_mode,
-            calendar=[str(day) for day in run.oos.equity["date"]],
-        )
+        benchmark = snapshot.curve
+        if benchmark is not None:
+            benchmark = benchmark.reindex([str(day) for day in run.oos.equity["date"]])
+            known = benchmark.dropna()
+            benchmark = benchmark / float(known.iloc[0]) if not known.empty else None
         step(0.95)
         windows = (is_sessions, oos_sessions)
         if payload.data_mode != "REAL":
@@ -287,7 +293,7 @@ class BacktestEngine:
                     payload,
                     kind="WF_GRID",
                     config_hash=canonical_hash(trial),
-                    fingerprint=_run_fingerprint(payload, trial, inputs),
+                    fingerprint=_run_fingerprint(payload, trial, inputs, snapshot),
                     returns=result.daily_returns,
                     job_id=job_id,
                 )
@@ -450,7 +456,7 @@ class BacktestEngine:
             )
             for row in equity_rows
         ]
-        self._hydrate_benchmark(connection, summary, equity_curve)
+        self._hydrate_benchmark(run, summary, equity_curve)
 
         benchmark_final = summary.initial_cash * (1 + (summary.benchmark_return_percent / 100))
         trades = [self._trade_from_row(row) for row in trade_rows]
@@ -507,14 +513,15 @@ class BacktestEngine:
         name: str,
         inputs: UniverseInputs,
         costs: CostProfile,
-        benchmark: pd.Series | None,
+        benchmark: BenchmarkSnapshot,
     ) -> _Outcome:
+        growth = benchmark.curve
         params = _strategy_params(config, strategy_name)
         result = simulate(inputs.markets, inputs.signals, inputs.calendar, _simulation_config(config, costs, params, inputs.calendar))
         metrics = compute_metrics(result, float(config.initial_cash))
         trial = _trial_config(config, params, costs)
-        fingerprint = _run_fingerprint(config, trial, inputs)
-        benchmark_return = _benchmark_return(benchmark)
+        fingerprint = _run_fingerprint(config, trial, inputs, benchmark)
+        benchmark_return = _benchmark_return(growth)
         total_return = metrics["total_return_percent"]
         summary = BacktestSummaryOut(
             name=name,
@@ -545,21 +552,23 @@ class BacktestEngine:
             signal_name=config.signal_name,
             signal_timeframe=config.signal_timeframe,
             cost_profile=asdict(costs),
-            warnings=_warnings(config, costs, inputs, result, benchmark),
+            warnings=_warnings(config, costs, inputs, result, growth),
             excluded=dict(inputs.excluded),
             commission_eur=_round(metrics["commission_eur"]),
             spread_cost_eur=_round(metrics["spread_cost_eur"]),
             turnover=_round(metrics["turnover"]),
             exposure=_round(metrics["exposure"]),
             fingerprint=fingerprint,
+            benchmark_snapshot_status="FROZEN" if growth is not None else "UNAVAILABLE",
         )
         return _Outcome(
             strategy_name=strategy_name,
             result=result,
             metrics=metrics,
             summary=summary,
-            equity_curve=_equity_points(result, benchmark, float(config.initial_cash)),
+            equity_curve=_equity_points(result, growth, float(config.initial_cash)),
             config_hash=canonical_hash(trial),
+            benchmark=benchmark,
         )
 
     def _record_trials(
@@ -637,6 +646,7 @@ class BacktestEngine:
             json.dumps(summary.cost_profile, sort_keys=True), summary.fingerprint,
             json.dumps(summary.warnings, ensure_ascii=False), json.dumps(summary.excluded, sort_keys=True),
             summary.commission_eur, summary.spread_cost_eur, summary.turnover, summary.exposure,
+            json.dumps(outcome.benchmark.payload, sort_keys=True, ensure_ascii=False, allow_nan=False),
         )
         equity = outcome.result.equity
         connection.execute("SAVEPOINT backtest_persist")
@@ -705,56 +715,14 @@ class BacktestEngine:
 
     def _hydrate_benchmark(
         self,
-        connection: sqlite3.Connection,
+        run: sqlite3.Row,
         summary: BacktestSummaryOut,
         equity_curve: list[BacktestEquityPointOut],
     ) -> None:
-        if not summary.benchmark_symbol or not equity_curve:
-            return
-        if summary.engine_version == LEGACY_ENGINE_VERSION:
-            self._hydrate_legacy_benchmark(connection, summary, equity_curve)
-            return
-        if summary.data_mode is None:
-            return
-        growth = benchmark_curve(
-            connection,
-            summary.benchmark_symbol,
-            data_mode=summary.data_mode,
-            calendar=[point.date for point in equity_curve],
-        )
-        _attach_benchmark(equity_curve, growth, summary.initial_cash)
-
-    def _hydrate_legacy_benchmark(
-        self,
-        connection: sqlite3.Connection,
-        summary: BacktestSummaryOut,
-        equity_curve: list[BacktestEquityPointOut],
-    ) -> None:
-        """Run v0: benchmark dal close dello storico come nel motore precedente (nessuna conversione EUR)."""
-        rows = connection.execute(
-            """
-            SELECT substr(ph.date, 1, 10) AS day, ph.close
-            FROM price_history ph
-            JOIN assets a ON a.id = ph.asset_id
-            WHERE UPPER(a.symbol) = ? AND substr(ph.date, 1, 10) <= ?
-            ORDER BY day, ph.id
-            """,
-            (str(summary.benchmark_symbol).upper(), summary.end_date),
-        ).fetchall()
-        index = 0
-        latest_price: float | None = None
-        first_price: float | None = None
-        for point in equity_curve:
-            while index < len(rows) and str(rows[index][0]) <= point.date:
-                latest_price = float(rows[index][1])
-                index += 1
-            if latest_price is None:
-                continue
-            if first_price is None:
-                first_price = latest_price
-            return_percent = ((latest_price / first_price) - 1) * 100 if first_price else 0.0
-            point.benchmark_value = _round(summary.initial_cash * (1 + return_percent / 100))
-            point.benchmark_return_percent = _round(return_percent)
+        """Le letture non interrogano prezzi/cambi correnti, nemmeno per i run storici senza snapshot."""
+        payload = _json_or(run["benchmark_snapshot_json"], None)
+        if payload is not None:
+            _attach_benchmark(equity_curve, BenchmarkSnapshot(payload).curve, summary.initial_cash)
 
     def _net_analysis(
         self,
@@ -841,6 +809,16 @@ class BacktestEngine:
     def _summary_from_row(self, row: sqlite3.Row) -> BacktestSummaryOut:
         engine_version = row["engine_version"] or LEGACY_ENGINE_VERSION
         legacy = engine_version == LEGACY_ENGINE_VERSION
+        snapshot = _json_or(row["benchmark_snapshot_json"], None)
+        warnings = _json_or(row["warnings_json"], [])
+        if snapshot is None:
+            status = "NOT_RECORDED"
+            warnings.append(
+                "Benchmark storico senza snapshot: curva non disponibile; rendimento e alpha sono valori "
+                "salvati non riproducibili."
+            )
+        else:
+            status = "FROZEN" if snapshot["status"] == "AVAILABLE" else "UNAVAILABLE"
         return BacktestSummaryOut(
             id=row["id"],
             name=row["name"],
@@ -872,13 +850,14 @@ class BacktestEngine:
             signal_name=row["signal_name"],
             signal_timeframe=row["signal_timeframe"],
             cost_profile=_json_or(row["cost_profile_json"], None),
-            warnings=_json_or(row["warnings_json"], []),
+            warnings=warnings,
             excluded=_json_or(row["excluded_json"], {}),
             commission_eur=_optional_round(row["commission_eur"]),
             spread_cost_eur=_optional_round(row["spread_cost_eur"]),
             turnover=_optional_round(row["turnover"]),
             exposure=_optional_round(row["exposure"]),
             fingerprint=row["fingerprint"],
+            benchmark_snapshot_status=status,
         )
 
     def _trade_from_row(self, row: sqlite3.Row) -> BacktestTradeOut:
@@ -959,7 +938,9 @@ def _trial_config(config: BacktestSettings, params: StrategyParams, costs: CostP
     )
 
 
-def _run_fingerprint(config: BacktestSettings, trial: dict[str, Any], inputs: UniverseInputs) -> str:
+def _run_fingerprint(
+    config: BacktestSettings, trial: dict[str, Any], inputs: UniverseInputs, benchmark: BenchmarkSnapshot
+) -> str:
     """Impronta canonica di configurazione, periodo, versioni, `data_mode` e input dell'universo."""
     return canonical_hash(
         {
@@ -973,6 +954,7 @@ def _run_fingerprint(config: BacktestSettings, trial: dict[str, Any], inputs: Un
             "versions": {"engine": ENGINE_VERSION, "pipeline": PIPELINE_VERSION, "score": SCORE_VERSION},
             "data_mode": config.data_mode,
             "inputs_hash": inputs.inputs_hash,
+            "benchmark_inputs_hash": benchmark.inputs_hash,
         }
     )
 

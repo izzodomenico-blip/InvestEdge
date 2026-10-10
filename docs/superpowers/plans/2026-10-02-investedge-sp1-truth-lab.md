@@ -97,9 +97,13 @@ Commit: `fix: make walk-forward selection causal at segment boundaries`
 **Files:** `backend/app/services/backtest_engine.py`, `backend/app/lab/universe.py`, `tests/test_lab_backtest.py`; per migrazione/contratto additivo se necessario `backend/app/database.py`, `backend/app/models/schemas.py`, `backend/app/models/__init__.py`, `tests/test_database.py`, `tests/test_api.py`; spec SP1, piano e programma.
 **Contratto:** benchmark e FX usati sono inclusi nell'impronta anche fuori dall'universo; input/curva salvati riferiti allo stesso snapshot di rendimento/alpha. Un benchmark rivisto cambia l'impronta del nuovo run senza cambiare il risultato di quello salvato. Definire comportamento v0 e v1 pre-snapshot; non inventare lo snapshot storico mancante né sovrascrivere summary esistenti.
 
-- [ ] RED: DB temporaneo, asset tradato A/benchmark B esterno; modificare solo B e verificare impronta nuova e rilettura coerente del run vecchio; coprire revisioni FX, benchmark assente e storici.
-- [ ] GREEN: persistenza minima e migrazione solo additiva; regressioni backtest/API/schema, suite completa e Ruff secondo protocollo.
-- [ ] Review indipendente e chiusura con evidenza fresca nel registro.
+- [x] RED: DB temporaneo, asset tradato A/benchmark B esterno; modificare solo B e verificare impronta nuova e rilettura coerente del run vecchio; coprire revisioni FX, benchmark assente e storici.
+- [x] GREEN: persistenza minima e migrazione solo additiva; regressioni backtest/API/schema, suite completa e Ruff secondo protocollo.
+- [x] Review indipendente e chiusura con evidenza fresca nel registro.
+
+**Semantica verificata (2026-10-10):** BACKTEST persiste in un unico savepoint snapshot versionato di input benchmark/FX e curva, usato anche per rendimento/alpha e impronta. Indisponibilità congelata; migrazione nullable senza backfill, storici con valori salvati intatti e curva nulla/`NOT_RECORDED`. COMPARE/WFO congelano l'output del job e includono il digest benchmark nei tentativi; non persistono il payload completo degli input. WFO ritaglia/rinormalizza OOS dalla stessa cattura; `config_hash` e N invariati.
+
+**Evidenza:** RED = **11 falliti per la causa prevista**; `pytest tests/test_lab_backtest.py tests/test_lab_walk_forward.py -p no:cacheprovider --junitxml=<scratch>/targeted.xml` = **73 passati** (22 regressioni R2 nuove). Suite completa = **897 passati, 1 xfail strict atteso Task 13, 0 falliti/0 errori** (JUnit, 175,59 s); Ruff e pip check verdi; due review read-only senza rilievi concreti aperti. Dettagli e comandi nel programma, evidenza R2. Test/build frontend non applicabili.
 
 Commit: `fix: freeze benchmark inputs and results for reproducible backtests`
 
