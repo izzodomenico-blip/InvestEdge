@@ -19,10 +19,11 @@ from backend.app.config import get_settings
 from backend.app.data_providers.base import ProviderError, RealDataDisabled
 from backend.app.database import get_connection
 from backend.app.lab.contracts import LabError
+from backend.app.lab.evidence import run_evidence
 from backend.app.lab.feature_store import FeatureStore
 from backend.app.lab.jobs import JobContext, JobOutcome, register_job_handler
 from backend.app.lab.series import preferred_data_mode
-from backend.app.models import BacktestCompareIn, BacktestRunIn, WalkForwardIn
+from backend.app.models import BacktestCompareIn, BacktestRunIn, EvidenceIn, WalkForwardIn
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.fx_service import FXService
 
@@ -134,3 +135,17 @@ register_job_handler("FX_BACKFILL", backfill_fx)
 register_job_handler("BACKTEST", run_backtest)
 register_job_handler("COMPARE", compare_backtests)
 register_job_handler("WALK_FORWARD", walk_forward_backtest)
+
+
+def evidence_job(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
+    payload = EvidenceIn.model_validate(dict(params))
+    connection = get_connection()
+    try:
+        ids = run_evidence(connection, payload, job_id=context.job_id, now=datetime.now(UTC),
+                           checkpoint=_checkpoint(context))
+    finally:
+        connection.close()
+    return JobOutcome(result={"report_ids": ids})
+
+
+register_job_handler("EVIDENCE", evidence_job)

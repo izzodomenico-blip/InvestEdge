@@ -1242,7 +1242,7 @@ EvidenceReportOut, EvidenceSummaryOut, EvidenceLatestOut {signal_name, timeframe
 
 Route: `POST /lab/evidence` (202; sempre `REAL`; 409 `LAB_NO_REAL_SERIES`; 422 per segnale o orizzonte non validi), `GET /lab/evidence?signal_name=&timeframe=&limit=`, `GET /lab/evidence/{id}` (404), `GET /lab/evidence/latest?signal_name=score&timeframe=D`, `GET /lab/signals` (`["score", *SUBSCORE_COLUMNS, *FEATURE_COLUMNS_V1]`). Ordine del migliore: `VALIDATO` > `NON_VALIDATO` > `INSUFFICIENTE`. `limits_json` contiene: bias di sopravvivenza, base di rettifica per asset, eventi split, barre escluse per cambio, nota CoinGecko se presente, costi ipotizzati.
 
-- [ ] **Step 1: Test RED.** Fixture sintetica in `tests/test_lab_harness.py`: 20 asset × 1100 sedute, `AssetMarket` con prezzi EUR casuali con seed fisso.
+- [x] **Step 1: Test RED.** Fixture sintetica in `tests/test_lab_harness.py`: 20 asset × 1100 sedute, `AssetMarket` con prezzi EUR casuali con seed fisso.
   - `test_constructed_predictive_signal_has_positive_ic_and_tstat`: segnale = rendimento futuro a *h* + rumore (σ uguale al rendimento) → `ic_mean > 0`, `t_nw >= 2`, `spread_net > 0`;
   - `test_random_signal_ic_is_not_significant` (segnale casuale con seed fisso dichiarato nel test: `abs(t_nw) < 2`);
   - `test_labels_never_cross_segments` e `test_labels_use_next_open_to_open`;
@@ -1256,10 +1256,12 @@ Route: `POST /lab/evidence` (202; sempre `REAL`; 409 `LAB_NO_REAL_SERIES`; 422 p
   - `test_reports_are_immutable` (UPDATE e DELETE sollevano);
   - `test_evidence_refuses_demo_only_universe` (409);
   - API: `POST /lab/evidence` su DB con 12 asset reali sintetici (400 barre) → 202, job `SUCCEEDED`, 3 report `INSUFFICIENTE`; `GET /lab/evidence/latest` con migliore e orizzonti; `GET /lab/signals`.
-- [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_harness.py`, `tests\test_lab_evidence.py`, suite completa, Ruff).
-- [ ] **Step 5: Chiusura**
+- [x] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_lab_harness.py`, `tests\test_lab_evidence.py`, suite completa, Ruff).
+- [x] **Step 5: Chiusura**
 
 Commit: `feat: add signal evaluation harness and evidence verdicts`
+
+Evidenza di chiusura (2026-10-10, Codex): RED per moduli assenti; due rilievi di review riprodotti in RED e corretti. 56 regressioni offline Task 12; suite completa 955 passati + 1 xfail strict atteso Task 13; Ruff, pip check e diff check verdi. Due review indipendenti PASS. Immutabilità, rollback/annullamento, snapshot famiglia DSR, causalità R1 e revisione prezzi/FX coperti. Nessun frontend o dipendenza modificato. Stato, SHA R4 e prossimo Task 13 in PROGRAMMA-OPERATIVO.md.
 
 ---
 

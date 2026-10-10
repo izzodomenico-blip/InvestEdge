@@ -106,6 +106,12 @@ class Settings:
     backtest_min_trade_eur: float = 100.0
     lab_wf_is_sessions: int = 504
     lab_wf_oos_sessions: int = 126
+    lab_min_names: int = 10
+    lab_min_ic_dates: int = 252
+    lab_min_oos_sessions: int = 252
+    lab_min_t_stat: float = 2.0
+    lab_min_dsr: float = 0.95
+    lab_reference_capital_eur: float = 10000
 
     @property
     def database_url(self) -> str:
@@ -250,6 +256,12 @@ class Settings:
             backtest_min_trade_eur=float(os.getenv("BACKTEST_MIN_TRADE_EUR", "100")),
             lab_wf_is_sessions=int(os.getenv("LAB_WF_IS_SESSIONS", "504")),
             lab_wf_oos_sessions=int(os.getenv("LAB_WF_OOS_SESSIONS", "126")),
+            lab_min_names=int(os.getenv("LAB_MIN_NAMES", "10")),
+            lab_min_ic_dates=int(os.getenv("LAB_MIN_IC_DATES", "252")),
+            lab_min_oos_sessions=int(os.getenv("LAB_MIN_OOS_SESSIONS", "252")),
+            lab_min_t_stat=float(os.getenv("LAB_MIN_T_STAT", "2.0")),
+            lab_min_dsr=float(os.getenv("LAB_MIN_DSR", "0.95")),
+            lab_reference_capital_eur=float(os.getenv("LAB_REFERENCE_CAPITAL_EUR", "10000")),
         )
 
 

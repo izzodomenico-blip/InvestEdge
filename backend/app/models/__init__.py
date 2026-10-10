@@ -1,4 +1,12 @@
-from backend.app.models.lab import FeatureRefreshIn, FxBackfillIn, JobOut
+from backend.app.models.lab import (
+    EvidenceIn,
+    EvidenceLatestOut,
+    EvidenceReportOut,
+    EvidenceSummaryOut,
+    FeatureRefreshIn,
+    FxBackfillIn,
+    JobOut,
+)
 from backend.app.models.market_data import (
     ADAPTER_VALIDATION_REASONS,
     EffectiveObservationQuality,
@@ -270,4 +278,8 @@ __all__ = [
     "FeatureRefreshIn",
     "FxBackfillIn",
     "JobOut",
+    "EvidenceIn",
+    "EvidenceLatestOut",
+    "EvidenceReportOut",
+    "EvidenceSummaryOut",
 ]

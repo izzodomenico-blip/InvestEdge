@@ -9,9 +9,19 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from backend.app.config import get_settings
 from backend.app.data_providers.ecb import normalize_ecb_currency
+from backend.app.database import db_session
 from backend.app.lab import handlers as _handlers  # noqa: F401 - registra gli handler dei job
+from backend.app.lab.contracts import LabError, Timeframe
+from backend.app.lab.evidence import latest_verdicts, precheck_evidence, report_from_row, summary_from_row
 from backend.app.lab.jobs import JobNotCancellable, JobNotFound, JobRecord, JobStatus, get_job_service
 from backend.app.models import FeatureRefreshIn, FxBackfillIn, JobOut
+from backend.app.models.lab import (
+    LAB_SIGNAL_NAMES,
+    EvidenceIn,
+    EvidenceLatestOut,
+    EvidenceReportOut,
+    EvidenceSummaryOut,
+)
 
 router = APIRouter()
 
@@ -83,3 +93,64 @@ def backfill_fx_history(payload: FxBackfillIn) -> JobOut:
         raise HTTPException(status_code=422, detail="La data di inizio non puo essere futura.")
     params = {"currencies": currencies, "start_date": start.isoformat()}
     return _job_out(get_job_service().enqueue("FX_BACKFILL", params))
+
+
+def _validate_signal(signal_name: str | None) -> None:
+    if signal_name is not None and signal_name not in LAB_SIGNAL_NAMES:
+        raise HTTPException(status_code=422, detail="Segnale non disponibile nel laboratorio.")
+
+
+@router.get("/lab/signals", response_model=list[str])
+def list_lab_signals() -> list[str]:
+    return list(LAB_SIGNAL_NAMES)
+
+
+@router.post("/lab/evidence", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def create_lab_evidence(payload: EvidenceIn) -> JobOut:
+    with db_session() as connection:
+        try:
+            precheck_evidence(connection, payload)
+        except LabError as exc:
+            raise HTTPException(status_code=409, detail={"reason_code": exc.code, "message": exc.message}) from None
+    return _job_out(get_job_service().enqueue("EVIDENCE", payload.model_dump()))
+
+
+@router.get("/lab/evidence", response_model=list[EvidenceSummaryOut])
+def list_lab_evidence(
+    signal_name: str | None = Query(None, max_length=64), timeframe: Timeframe | None = None,
+    limit: int = Query(20, ge=1, le=100),
+) -> list[EvidenceSummaryOut]:
+    _validate_signal(signal_name)
+    with db_session() as connection:
+        rows = connection.execute(
+            """SELECT * FROM lab_evidence_reports
+            WHERE (? IS NULL OR signal_name=?) AND (? IS NULL OR timeframe=?)
+            ORDER BY created_at DESC, id DESC LIMIT ?""",
+            (signal_name, signal_name, timeframe, timeframe, limit),
+        ).fetchall()
+    return [summary_from_row(row) for row in rows]
+
+
+@router.get("/lab/evidence/latest", response_model=EvidenceLatestOut)
+def latest_lab_evidence(
+    signal_name: str = Query("score", max_length=64), timeframe: Timeframe = "D",
+) -> EvidenceLatestOut:
+    _validate_signal(signal_name)
+    with db_session() as connection:
+        horizons = latest_verdicts(connection, signal_name, timeframe)
+    reports = [report for report in horizons.values() if report is not None]
+    # Stesso verdetto: data piu recente, poi id maggiore.
+    priority = {"VALIDATO": 2, "NON_VALIDATO": 1, "INSUFFICIENTE": 0}
+    best = max(reports, key=lambda report: (priority[report["verdict"]], report["created_at"], report["id"]),
+               default=None)
+    return EvidenceLatestOut(signal_name=signal_name, timeframe=timeframe,
+                             horizons={str(h): report for h, report in horizons.items()}, best=best)
+
+
+@router.get("/lab/evidence/{report_id}", response_model=EvidenceReportOut)
+def get_lab_evidence(report_id: int) -> EvidenceReportOut:
+    with db_session() as connection:
+        row = connection.execute("SELECT * FROM lab_evidence_reports WHERE id=?", (report_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail={"reason_code": "EVIDENCE_NOT_FOUND"})
+    return report_from_row(row)

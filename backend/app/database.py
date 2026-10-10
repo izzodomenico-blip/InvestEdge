@@ -833,6 +833,22 @@ CREATE TABLE IF NOT EXISTS lab_jobs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS lab_evidence_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER,
+    signal_name TEXT NOT NULL,
+    timeframe TEXT NOT NULL CHECK(timeframe IN ('D', 'W', 'M')),
+    horizon INTEGER NOT NULL CHECK(horizon IN (1, 5, 21)),
+    verdict TEXT NOT NULL CHECK(verdict IN ('VALIDATO', 'NON_VALIDATO', 'INSUFFICIENTE')),
+    metrics_json TEXT NOT NULL,
+    walk_forward_json TEXT,
+    config_json TEXT NOT NULL,
+    universe_json TEXT NOT NULL,
+    limits_json TEXT NOT NULL,
+    fingerprint TEXT NOT NULL CHECK(length(fingerprint) = 64),
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS lab_trials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     family_key TEXT NOT NULL,
@@ -1211,6 +1227,22 @@ CREATE INDEX IF NOT EXISTS idx_lab_jobs_status_created ON lab_jobs(status, creat
 CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_jobs_open
 ON lab_jobs(kind, params_hash)
 WHERE status IN ('QUEUED', 'RUNNING');
+CREATE INDEX IF NOT EXISTS idx_lab_evidence_signal
+ON lab_evidence_reports(signal_name, timeframe, horizon, created_at DESC, id DESC);
+CREATE TRIGGER IF NOT EXISTS trg_lab_evidence_no_update
+BEFORE UPDATE ON lab_evidence_reports BEGIN
+    SELECT RAISE(ABORT, 'lab evidence reports are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_lab_evidence_no_delete
+BEFORE DELETE ON lab_evidence_reports BEGIN
+    SELECT RAISE(ABORT, 'lab evidence reports are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_lab_evidence_no_replace
+BEFORE INSERT ON lab_evidence_reports WHEN EXISTS (SELECT 1 FROM lab_evidence_reports WHERE id=NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'lab evidence reports are append-only');
+END;
+
 CREATE INDEX IF NOT EXISTS idx_lab_trials_family ON lab_trials(family_key, config_hash, created_at);
 CREATE TRIGGER IF NOT EXISTS trg_lab_trials_no_update
 BEFORE UPDATE ON lab_trials
