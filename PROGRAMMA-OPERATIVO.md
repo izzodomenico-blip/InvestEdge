@@ -2,17 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (R1 e R2 verificate e chiuse; prossimo passo R3).
+Ultimo aggiornamento: 2026-10-10 (R1–R3 verificate e chiuse; R3 con deroga audit esplicita; prossimo passo R4 dipendenze frontend).
 
 ## Prossimo passo
 
-**SP1 R3 — Ripristinare i contratti asincroni frontend e gli indicatori Analisi.**
+**SP1 R4 — Correggere le dipendenze frontend segnalate dall'audit, prima del Task 12.**
 
-- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer.
-- Branch `investedge/sp1-remediation-3` da `origin/investedge/sp1-remediation-2`, dopo verifica del gate remoto R2. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
-- Ingressi: rilievo R3 e criteri qui sotto; contratti backend correnti, compreso il campo additivo R2 `benchmark_snapshot_status`; piano SP1, sezione *Remediation approvate il 2026-10-10*.
-- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. P, R1 e R2 FATTI; il Task 12 riparte solo dopo le tre correzioni verificate.
-- R3 resta aperta. Intraday e Alpaca richiedono i gate successivi; nessun trading è attivato.
+- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer. R4 è registrato come prossimo lavoro, non eseguito in R3.
+- Branch previsto: `investedge/sp1-remediation-4` da `origin/investedge/sp1-remediation-3`, dopo verifica del gate remoto R3. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
+- Ingressi: audit R3 completo = 6 high, 3 moderate, 1 low nelle dipendenze dev; audit `--omit=dev` = 0 vulnerabilità. `braces@3.0.3` non ha patch pubblicata; npm propone Tailwind 4. `source-map-js@1.2.1` ha aggiornamento disponibile. Non usare `--force` né ignorare advisory.
+- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P e R1–R3 FATTI. Il Task 12 parte solo dopo R4 e relativo gate audit.
+- Deroga esplicita dell'utente del 2026-10-10: chiudere/pubblicare R3 pur con audit completo fallito, registrando la correzione dipendenze prima del Task 12. Test e build R3 verdi; nessuna modifica a manifest/lockfile in R3. Intraday e Alpaca richiedono i gate successivi.
 
 ## Legenda
 
@@ -21,7 +21,7 @@ Ultimo aggiornamento: 2026-10-10 (R1 e R2 verificate e chiuse; prossimo passo R3
 | NON INIZIATO | Nessun lavoro. Può partire solo se le dipendenze sono FATTE. |
 | IN CORSO | Branch remoto del task pubblicato: il task appartiene all'owner indicato. |
 | BLOCCATO | Serve una decisione dell'utente o una dipendenza esterna. Motivo in *Note di ripresa*. |
-| FATTO | Test e gate del task verdi, commit pubblicato. |
+| FATTO | Test e gate del task verdi, commit pubblicato; eventuale deroga deve essere esplicita dell'utente e registrata con evidenza e prossimo lavoro. |
 | VERIFICATO | FATTO + gate di fine SP superato + merge fast-forward su `main`. |
 
 Lo SHA di un task viene scritto dal commit successivo: un commit non può contenere il proprio SHA. Fino ad allora vale il branch remoto indicato.
@@ -57,13 +57,13 @@ Review in sola lettura sul Task 11 `c19c8d8` (2026-10-10): suite offline `pytest
 |---|---|---|
 | R1 | Il confine di segmento usa la barra seguente: uno split alla prima barra OOS cambia l'ultimo rendimento IS e può cambiare i parametri scelti. Fixture sintetica: IS 40/OOS 20, seed 137/1137, sola prima barra OOS dimezzata; buy/sell 75/35 → 75/40, input IS invariati. | Ogni Sharpe IS e la scelta devono restare identici modificando, aggiungendo o rimuovendo OOS, compresi split e gap al cutoff. La griglia globale per il registro non alimenta la selezione; OOS resta una simulazione continua. **Chiuso R1 il 2026-10-10:** prefissi al cutoff, eleggibilità e calendario prima di `NO_FEATURES`; 32 test WFO e suite 875 passati + 1 xfail atteso. |
 | R2 | Il benchmark esterno all'universo non entra nell'hash dei dati; una revisione modifica la curva riletta ma lascia summary e fingerprint precedenti. Riproduzione in DB in memoria: benchmark 23,32% → 35,65%, stessa impronta e strategia invariata. | Congelare input/curva benchmark e includerli nell'impronta. Una revisione crea una nuova impronta; un run salvato conserva curva, rendimento e alpha coerenti. Compatibilità esplicita per v0 e v1 pre-correzione. **Chiuso R2 il 2026-10-10:** snapshot benchmark/FX, letture congelate, stato storico esplicito; 73 test mirati e suite 897 passati + 1 xfail atteso. |
-| R3 | Backtest, confronto e walk-forward trattano 202 `JobOut` come risultato sincrono e possono causare una pagina bianca; Analisi usa nomi di indicatori superati e i 409 non sono spiegati. | Adeguare contratti, polling, risultati, annullamento, errori e smontaggio; correggere nomi/unità degli indicatori. Test frontend su risposte attuali e tutti gli stati terminali. Riutilizzare poi questo lavoro nei Task 14–15. |
+| R3 | Backtest, confronto e walk-forward trattano 202 `JobOut` come risultato sincrono e possono causare una pagina bianca; Analisi usa nomi di indicatori superati e i 409 non sono spiegati. | Adeguare contratti, polling, risultati, annullamento, errori e smontaggio; correggere nomi/unità degli indicatori. Test frontend su risposte attuali e tutti gli stati terminali. Riutilizzare poi questo lavoro nei Task 14–15. **Chiuso R3 il 2026-10-10:** 37 regressioni mirate, 61 test frontend, build verde; audit completo fallito con deroga utente, R4 obbligatoria prima del Task 12. |
 
 ### Fasi e condizioni di passaggio
 
 | Gate | Lavoro prioritario | Evidenza richiesta |
 |---|---|---|
-| G0 — SP1 | R1–R3, poi Task 12–16 nella sequenza del registro | Test di regressione offline, suite/lint/build pertinenti e review finale senza rilievi Critical/Important aperti. L'evidenza D/W/M di SP1 non valida l'intraday. |
+| G0 — SP1 | R1–R4, poi Task 12–16 nella sequenza del registro | Test di regressione offline, suite/lint/build pertinenti e review finale senza rilievi Critical/Important aperti. L'evidenza D/W/M di SP1 non valida l'intraday. |
 | G1 — SP2b intraday | Provider ufficiali Alpaca Market Data e news; identità listing, calendario USA, barre 1 minuto, quote bid/ask, revisioni, eventi e universo storico | Replay point-in-time riproducibile; feed, copertura, ritardo e lacune espliciti; test con barre/news tardive, split, halt e cambi d'ora. Nessun seed usato per la validazione. |
 | G2 — SP3 intraday | Due famiglie candidate, confronti tecnica/news, harness e walk-forward per holding 15 e 30 minuti | Regole e soglie fissate prima dei test; risultati OOS netti, holdout intatto, costi stressati, stabilità e registro dei tentativi. Se nessuna strategia passa, nessuna viene promossa. |
 | G3 — SP6a | Alpaca Trading API paper, long-only, limite interno 1×, capitale rappresentativo e risk engine | Limiti configurati, ordini idempotenti, riconciliazione, uscite temporizzate, kill switch e recupero da riavvio/disconnessione verificati; track record paper e scarto dal replay misurati. |
@@ -253,7 +253,7 @@ Evidenza Task 18 (2026-10-01, Claude):
 
 ## Registro SP1 — Laboratorio di verità
 
-Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Piano: `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md`. Branch numerici: `investedge/sp1-task-N`; il Task 1 parte da `origin/investedge/sp1-task-0`. Eccezione approvata il 2026-10-10: Task 11 → revisione P → R1 → R2 → R3 → Task 12; basi e branch delle remediation nel piano.
+Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Piano: `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md`. Branch numerici: `investedge/sp1-task-N`; il Task 1 parte da `origin/investedge/sp1-task-0`. Eccezione approvata il 2026-10-10: Task 11 → revisione P → R1 → R2 → R3 → R4 → Task 12; basi e branch delle remediation nel piano.
 
 | Task | Titolo | Stato | Commit | Data | Owner |
 |---|---|---|---|---|---|
@@ -271,8 +271,9 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 11 | Statistiche, walk-forward vero e DSR | FATTO | `c19c8d8` | 2026-10-05 | Claude |
 | P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | `1ae5a9e` | 2026-10-10 | Codex |
 | R1 | Causalità della selezione walk-forward | FATTO | `7f0a790`; evidenza sotto | 2026-10-10 | Codex |
-| R2 | Benchmark congelato e impronta completa | FATTO | branch `investedge/sp1-remediation-2`; evidenza sotto | 2026-10-10 | Codex |
-| R3 | Contratti asincroni frontend e indicatori Analisi | NON INIZIATO | branch previsto `investedge/sp1-remediation-3` | — | — |
+| R2 | Benchmark congelato e impronta completa | FATTO | `caf388c`; evidenza sotto | 2026-10-10 | Codex |
+| R3 | Contratti asincroni frontend e indicatori Analisi | FATTO | branch `investedge/sp1-remediation-3`; evidenza/deroga audit sotto | 2026-10-10 | Codex |
+| R4 | Correzione dipendenze frontend e gate audit | NON INIZIATO | — | — | — |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
 | 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
 | 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
@@ -313,6 +314,21 @@ Evidenza R2 (2026-10-10, Codex):
 - `ruff check backend scripts tests --no-cache` verde, `pip check` pulito, `git diff --check` verde. Warning di deprecazione Starlette già presenti; test/build frontend non applicabili al task backend. Nessuna nuova dipendenza;
 - due review indipendenti read-only, esecuzione/persistenza/API e metodologia/FX/impronte: nessun rilievo concreto aperto. Spec §6.5/§7.6 e checkbox del piano aggiornate. Le note Task 10 descrivono il comportamento storico, superato da R2;
 - chiusura sul solo branch R2 con commit del piano, push e confronto SHA remoto; working tree pulito al gate. Nessun merge su `main` né attivazione Alpaca. Prossimo passo R3; Task 12–16 restano NON INIZIATI.
+
+Evidenza R3 (2026-10-10, Codex):
+
+- richiesta utente: correggere i contratti asincroni frontend e gli indicatori Analisi con polling/errori/annullamento offline, review, commit, push e aggiornamento del programma nella stessa chat;
+- base remota R2 `caf388cb5864e2f8faf987c40ef5bb6e6e9d2427` verificata; branch `investedge/sp1-remediation-3` pubblicato subito come lock. SHA di R2 registrato nella sua riga; SHA di R3 sarà registrato da R4;
+- RED offline iniziale: **14 test delle pagine falliti** per render del `JobOut` come risultato, contratto WFO superato, indicatori/unità, errori 409, abort e risposta obsoleta; helper ancora assente (import fallito). RED aggiuntivi per cancel tardivo del vecchio run e importi v0 senza valuta: entrambi riprodotti prima della correzione;
+- `api.ts`: `JobOut`, stato/kind/nullability, WFO a finestre IS/OOS e campi v1 riallineati agli schemi. Messaggio strutturato del server nei 409; POST/GET propagano AbortSignal e preservano AbortError, anche quando una risposta arriva dopo l'abort;
+- `jobs.ts` condiviso: polling sequenziale senza GET sovrapposti, nessun GET se il POST è già terminale; FAILED/CANCELLED/INTERRUPTED interrompono l'attesa. BACKTEST usa `result_ref` e controlla l'ID inline; COMPARE/WFO leggono `result`. Cancel cooperativo con conferma terminale e race `JOB_NOT_CANCELLABLE` riletta; smontaggio interrompe solo il client, senza annullare implicitamente il job remoto;
+- Backtest mostra stato/avanzamento, sblocca il form su errore/terminale e blocca doppio invio; un cancel tardivo non aggiorna il nuovo run. WFO legge finestre, OOS continuo e Sharpe/DSR/N nullable; stop/target vuoti inviano null. Costi percentuali legacy rimossi perché ignorati dal backend v1. Importi EUR solo per v1; v0 conserva i valori con unità legacy dichiarata indeterminata, senza conversioni inventate;
+- Analisi usa `volatility_30d` annualizzata e `max_drawdown_252`, frazioni ×100; distanze supporto/resistenza già in punti percentuali, null = N/D. MACD/ATR nella valuta dell'asset; provenienza da `analysis.data_mode`. Score finale tecnico, news informative. Il 409 REAL insufficiente mostra il motivo e lo storico richiesto; abort/guardie impediscono risposte obsolete;
+- `npm --prefix frontend run test:run -- src/lib/jobs.test.ts src/pages/BacktestPage.test.tsx src/pages/AnalysisPage.test.tsx --reporter=json --outputFile=<scratch>/targeted.json` = **37 passati**, 0 falliti; fixture fetch sintetiche/locali, timer controllati, nessun provider live. Suite frontend completa `npm --prefix frontend run test:run -- --reporter=json --outputFile=<scratch>/frontend-full.json` = **61 passati**, 0 falliti; build `npm --prefix frontend run build` verde (warning non bloccante bundle >500 kB);
+- suite backend `pytest -p no:cacheprovider --junitxml=<scratch>/backend-full.xml --basetemp=<scratch>/pytest-temp` = **897 passati, 1 xfail strict atteso Task 13**, 0 falliti/0 errori, **163,78 s**; JUnit verificato. Due warning di deprecazione Starlette. Rete esterna bloccata dalle fixture, DB temporanei, provider live disattivati; database reale mai aperto. Ruff e pip check verdi; `git diff --check` verde;
+- due review indipendenti read-only: esecuzione/contratti e indicatori/metodologia. Corretto il rilievo P2 sulle unità v0; nessun rilievo Critical/Important del diff R3 aperto. Task 12–16 restano NON INIZIATI; selector segnali/form completo/Evidenza/ML non anticipati;
+- **Audit non verde, deroga esplicita utente:** `npm --prefix frontend audit --audit-level=high --json` exit 1 = **6 high, 3 moderate, 1 low** preesistenti; nessuna dipendenza cambiata in R3. High: braces, chokidar, fast-glob, micromatch, source-map-js, tailwindcss (più voci dalla stessa causa transitive). `npm --prefix frontend audit --omit=dev --audit-level=high --json` exit 0 = **0 vulnerabilità runtime**. Advisory [braces senza patch](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) e [source-map-js <1.2.2](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) verificati; `npm view braces version` = 3.0.3, Tailwind 3 massimo 3.4.19; npm propone Tailwind 4.3.3. Utente autorizza chiusura/pubblicazione R3 e inserimento **R4 prima del Task 12**, senza dichiarare audit PASS;
+- chiusura sul solo branch R3 con commit del piano, push e confronto SHA remoto; working tree pulito al gate. Nessun merge su `main` né attivazione Alpaca. Prossimo passo R4; il suo commit registrerà lo SHA R3.
 
 Evidenza Task 0 (2026-10-01/02, Claude):
 
@@ -705,10 +721,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | SP6 diviso in SP6a paper prioritario dopo i gate intraday SP2b/SP3 e SP6b reale/leva opzionali successivi; ML/radar non bloccano il primo paper. Dettagli e soglie nelle spec future; nessuna strategia dichiarata profittevole in anticipo. | Codex, attuazione della priorità utente |
 | 2026-10-10 | SP1 R1: selezione su prefissi dal primo giorno al cutoff con rendimento terminale incluso; eleggibilità sulle barre EUR proprie e calendario prima di NO_FEATURES. Griglia globale distinta, OOS continuo, validazione globale invariata. Autorizzati review, commit, push e aggiornamento del programma; R2 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
 | 2026-10-10 | SP1 R2: congelare benchmark/FX e impronta, preservare risultati salvati e compatibilità storica esplicita; autorizzati review, commit, push e aggiornamento del programma nella stessa chat. Migrazione nullable, snapshot BACKTEST e output/digest dei job; R3 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
+| 2026-10-10 | SP1 R3: contratti/frontend/indicatori verificati; autorizzati review, commit, push e chiusura. Deroga esplicita all'audit completo fallito su dipendenze preesistenti; registrare R4 dipendenze prima del Task 12, senza migrazione in R3. Audit runtime pulito. | utente |
 
 ## Note di ripresa
 
-- Riprendere da `origin/investedge/sp1-remediation-2` per R3, verificando SHA remoto e working tree pulito; poi Task 12 del piano. R1/R2 chiuse; R2 con 897 passati + 1 xfail atteso, R3 aperta. P = `1ae5a9e` registrato in R1, R1 = `7f0a790` registrato in R2; registrare lo SHA di R2 nel commit R3.
+- Riprendere da `origin/investedge/sp1-remediation-3` per R4 dipendenze, verificando SHA remoto e working tree pulito; registrare lo SHA R3 nel commit R4. R1–R3 chiuse; R3 = 61 frontend verdi, build verde, 897 backend passati + 1 xfail atteso; audit completo fallito con deroga utente, audit runtime pulito. R4 è NON INIZIATO e precede Task 12 (base prevista `origin/investedge/sp1-remediation-4`). P = `1ae5a9e`, R1 = `7f0a790`, R2 = `caf388c` già registrati.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.

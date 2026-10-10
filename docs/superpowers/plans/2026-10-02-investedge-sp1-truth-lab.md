@@ -27,7 +27,7 @@
 ## Protocollo per ogni task
 
 1. Nuova chat con contesto pulito per ogni task, salvo deroga esplicita dell'utente. Leggere `AGENTS.md`, `PROGRAMMA-OPERATIVO.md`, la spec SP1 e questo piano. Eseguire solo il primo task `NON INIZIATO` con dipendenze `FATTO`.
-2. Branch numerici: `investedge/sp1-task-N`. Base del Task 1: `origin/investedge/sp1-task-0`; base del Task N: `origin/investedge/sp1-task-(N-1)`. **Eccezione approvata il 2026-10-10:** Task 11 → P → R1 → R2 → R3 → Task 12; usare i branch/basi della sezione remediation, non la formula numerica. Pubblicare subito il branch (lock di presa in carico).
+2. Branch numerici: `investedge/sp1-task-N`. Base del Task 1: `origin/investedge/sp1-task-0`; base del Task N: `origin/investedge/sp1-task-(N-1)`. **Eccezione approvata il 2026-10-10:** Task 11 → P → R1 → R2 → R3 → R4 → Task 12; usare i branch/basi della sezione remediation, non la formula numerica. Pubblicare subito il branch (lock di presa in carico).
 3. Verifica della base (sostituire solo i due valori):
 
 ```powershell
@@ -62,7 +62,7 @@ git diff --check
 
 ## Remediation approvate il 2026-10-10
 
-Ordine vincolante: **P → R1 → R2 → R3 → Task 12**. Task 1–11 restano FATTI come storia; nessuna correzione è implicita nei loro test verdi. Stato e owner nel programma operativo. Ogni remediation applica TDD offline e protocollo di test/lint/review/commit/push; chiude il precedente SHA nel registro.
+Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12**. Task 1–11 restano FATTI come storia; nessuna correzione è implicita nei loro test verdi. Stato e owner nel programma operativo. Ogni remediation applica TDD offline e protocollo di test/lint/review/commit/push; chiude il precedente SHA nel registro.
 
 ### P: Revisione documentale programma intraday/Alpaca
 
@@ -113,13 +113,31 @@ Commit: `fix: freeze benchmark inputs and results for reproducible backtests`
 **Files:** `frontend/src/lib/api.ts`, `frontend/src/lib/jobs.ts`, `frontend/src/pages/BacktestPage.tsx`, `frontend/src/pages/AnalysisPage.tsx`, `frontend/src/pages/BacktestPage.test.tsx`, `frontend/src/pages/AnalysisPage.test.tsx`, `frontend/src/lib/jobs.test.ts`; piano e programma.
 **Contratto:** run/confronto/WFO ricevono `JobOut` 202, attendono esito e leggono risultato/riferimento corretto; nullability e campi coerenti con backend corrente. Coprire FAILED/CANCELLED/INTERRUPTED, errori 409, annullamento e abort allo smontaggio. Analisi usa nomi/unità `features-v1` e spiega storico REAL insufficiente. Nessun render del job come risultato né pagina bianca.
 
-- [ ] RED: fixture fetch offline per run, confronto e WFO (202 → stato terminale), errore/annullamento/smontaggio; indicatori e 409 Analisi.
-- [ ] GREEN: contratti e helper job condivisi, test frontend completi, build e audit secondo protocollo; verifiche backend previste dal protocollo.
-- [ ] Review indipendente, check dei tipi rispetto agli schemi e chiusura con evidenza fresca.
+- [x] RED: fixture fetch offline per run, confronto e WFO (202 → stato terminale), errore/annullamento/smontaggio; indicatori e 409 Analisi.
+- [x] GREEN: contratti/helper job, test frontend completi e build verdi; verifiche backend verdi. Audit completo eseguito e fallito: deroga esplicita utente del 2026-10-10, R4 obbligatorio prima del Task 12.
+- [x] Review indipendente, check dei tipi rispetto agli schemi e chiusura con evidenza fresca.
 
 R3 anticipa solo il ripristino dei contratti già pubblicati e degli indicatori. Il selettore `GET /lab/signals` richiede Task 12: resta nel Task 14 insieme a form costi/segnale/timeframe e presentazione completa. Task 15 conserva Evidenza, badge e ML. R3 crea `jobs.ts` e test Backtest, poi riusati: nessuna duplicazione né marcatura anticipata dei Task 14–15.
 
 Commit: `fix: restore frontend contracts for asynchronous lab results`
+
+**Semantica verificata (2026-10-10):** JobOut 202 e terminali, polling sequenziale, riferimento BACKTEST e inline COMPARE/WFO; annullamento cooperativo/race 409 e abort client allo smontaggio. Contratto WFO corrente con null; indicatori features-v1, unità e provenienza del calcolo corrette, messaggio REAL insufficiente esplicito. Un cancel tardivo non contamina il nuovo run; v0 conserva importi con unità indeterminata.
+
+**Evidenza:** RED pagine = **14 falliti**, helper assente; ulteriori RED cancel tardivo/v0. GREEN mirato = **37 passati**, suite frontend = **61 passati**, build verde. Backend = **897 passati, 1 xfail strict atteso Task 13, 0 falliti/errori**, 163,78 s; Ruff/pip check verdi. Due review read-only, rilievo v0 corretto. Audit completo exit 1 (**6 high, 3 moderate, 1 low** preesistenti), `--omit=dev` exit 0 (**0 vulnerabilità**); **deroga utente alla chiusura R3**, correzione in R4 prima del Task 12. Dettagli in `PROGRAMMA-OPERATIVO.md`, evidenza R3.
+
+### R4: Dipendenze frontend e gate audit
+
+**Inserito su decisione esplicita dell'utente del 2026-10-10 durante la chiusura R3. Stato:** NON INIZIATO; prossimo lavoro, da prendere in carico prima del Task 12.
+**Branch:** `investedge/sp1-remediation-4` — **Base:** `origin/investedge/sp1-remediation-3`.
+**Files:** `frontend/package.json`, `frontend/package-lock.json`; se necessari alla migrazione `frontend/postcss.config.*`, `frontend/tailwind.config.*`, `frontend/vite.config.*`, CSS d'ingresso e test frontend pertinenti; piano e programma. Limitare le modifiche a dipendenze e compatibilità della build/stili esistenti.
+
+**Contratto:** eliminare tutte le high/critical del gate audit senza `--force` o esclusioni di advisory. Diagnosticare le dipendenze transitive e preferire aggiornamenti compatibili; `braces@3.0.3` non ha patch al gate R3, npm propone Tailwind 4. Verificare fonti/versioni correnti prima delle modifiche. Se la migrazione Tailwind è necessaria, preservare il comportamento e la resa delle pagine; nessuna espansione dei contratti o dell'intraday.
+
+- [ ] Raccogliere audit/risoluzione dipendenze e baseline offline test/build/stili; riprodurre il gate fallito e definire regressioni osservabili della migrazione.
+- [ ] Correzione minima di dipendenze/configurazione; test frontend completi e build, controllo stili/rendering offline, `npm --prefix frontend audit --audit-level=high` exit 0. Moderate/low residue dichiarate; verifiche backend/Ruff del protocollo.
+- [ ] Review indipendente, chiusura nel programma e piano; registrare SHA R3, commit/push del solo branch e gate remoto. Poi Task 12 da `origin/investedge/sp1-remediation-4`.
+
+Commit: `chore: resolve frontend dependency audit findings`
 
 ## Mappa della baseline e confini
 
@@ -1150,7 +1168,7 @@ Commit: `feat: add true walk-forward with deflated Sharpe`
 
 ### Task 12: Harness di valutazione, report di evidenza e verdetto
 
-**Branch:** `investedge/sp1-task-12` — **Base:** `origin/investedge/sp1-remediation-3` (R1–R3 FATTI).
+**Branch:** `investedge/sp1-task-12` — **Base:** `origin/investedge/sp1-remediation-4` (R1–R4 FATTI; audit corretto prima del Task 12).
 
 **Files:**
 - Create: `backend/app/lab/harness.py`, `backend/app/lab/evidence.py`, `tests/test_lab_harness.py`, `tests/test_lab_evidence.py`

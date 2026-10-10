@@ -27,10 +27,12 @@ import {
   type BacktestRunInput,
   type BacktestStrategy,
   type BacktestSummary,
+  type JobOut,
   type RebalanceFrequency,
   type WalkForwardInput,
   type WalkForwardResult,
 } from "../lib/api";
+import { cancelJob, getBacktestJobResult, getInlineJobResult, waitForJob } from "../lib/jobs";
 import { formatCurrency, formatPercent } from "../lib/format";
 import { Activity, BarChart3, BadgeDollarSign, Receipt, ShieldAlert } from "lucide-react";
 
@@ -39,11 +41,20 @@ type BacktestMode = "single" | "compare" | "walkforward";
 const compareSeriesColors = ["#22D3EE", "#A78BFA", "#34D399"];
 const benchmarkColor = "#94A3B8";
 
-const consistencyTone: Record<string, string> = {
-  ROBUSTA: "border-emerald-300/30 bg-emerald-400/10 text-emerald-200",
-  INCERTA: "border-amber-300/30 bg-amber-400/10 text-amber-200",
-  FRAGILE: "border-rose-300/30 bg-rose-400/10 text-rose-200",
+const jobLabels: Record<JobOut["status"], string> = {
+  QUEUED: "Accodato", RUNNING: "In esecuzione", SUCCEEDED: "Completato",
+  FAILED: "Non riuscito", CANCELLED: "Annullato", INTERRUPTED: "Interrotto",
 };
+
+function formatBacktestCurrency(value: number, engineVersion: string) {
+  if (engineVersion === "v1") return formatCurrency(value, "EUR");
+  return value.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+    " (unita legacy)";
+}
+
+function optionalNumber(value: number | null) {
+  return value === null ? "N/D" : value.toFixed(2);
+}
 
 type FormState = {
   name: string;
@@ -56,7 +67,6 @@ type FormState = {
   buy_threshold: string;
   sell_threshold: string;
   max_asset_weight: string;
-  fee_percent: string;
   stop_loss_percent: string;
   take_profit_percent: string;
   rebalance_frequency: RebalanceFrequency;
@@ -74,7 +84,6 @@ const defaultForm: FormState = {
   buy_threshold: "70",
   sell_threshold: "40",
   max_asset_weight: "0.15",
-  fee_percent: "0.10",
   stop_loss_percent: "8",
   take_profit_percent: "25",
   rebalance_frequency: "WEEKLY",
@@ -91,9 +100,9 @@ function metricTone(value: number) {
   return value >= 0 ? "green" : "rose";
 }
 
-function numberOrUndefined(value: string) {
+function numberOrNull(value: string) {
   if (value.trim() === "") {
-    return undefined;
+    return null;
   }
   return Number(value);
 }
@@ -114,7 +123,11 @@ export function BacktestPage() {
   ]);
   const [compareResult, setCompareResult] = useState<BacktestCompareResult | null>(null);
   const [comparing, setComparing] = useState(false);
-  const [folds, setFolds] = useState("4");
+  const [isSessions, setIsSessions] = useState("504");
+  const [oosSessions, setOosSessions] = useState("126");
+  const [job, setJob] = useState<JobOut | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const operationController = useRef<AbortController | null>(null);
   const [walkResult, setWalkResult] = useState<WalkForwardResult | null>(null);
   const [walking, setWalking] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BacktestSummary | null>(null);
@@ -129,28 +142,38 @@ export function BacktestPage() {
     ? normalizedDeleteName ? `${normalizedDeleteName} #${deleteTarget.id}` : `#${deleteTarget.id}`
     : "";
 
-  async function loadData() {
+  async function loadData(signal: AbortSignal) {
     setLoading(true);
     setError(null);
     try {
       const [assetData, historyData] = await Promise.all([
-        apiGet<Asset[]>("/assets"),
-        apiGet<BacktestSummary[]>("/backtests"),
+        apiGet<Asset[]>("/assets", { signal }),
+        apiGet<BacktestSummary[]>("/backtests", { signal }),
       ]);
+      signal.throwIfAborted();
       setAssets(assetData);
       setHistory(historyData);
-      if (historyData[0]) {
-        setResult(await apiGet<BacktestResult>(`/backtests/${historyData[0].id}`));
+      if (historyData[0]?.id) {
+        const previous = await apiGet<BacktestResult>("/backtests/" + historyData[0].id, { signal });
+        signal.throwIfAborted();
+        setResult(previous);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Errore durante il caricamento dei backtest.");
+      if (!signal.aborted) {
+        setError(err instanceof Error ? err.message : "Errore durante il caricamento dei backtest.");
+      }
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadData();
+    const controller = new AbortController();
+    void loadData(controller.signal);
+    return () => {
+      controller.abort();
+      operationController.current?.abort();
+    };
   }, []);
 
   const selectedAssetSet = useMemo(() => new Set(form.symbols), [form.symbols]);
@@ -190,48 +213,105 @@ export function BacktestPage() {
     return null;
   }
 
-  async function runBacktest(event: React.FormEvent<HTMLFormElement>) {
+  async function runOperation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (backtestOperationInFlight.current) return;
     setError(null);
     const validation = validate();
     if (validation) {
       setError(validation);
       return;
     }
-    if (backtestOperationInFlight.current) {
+    if (mode === "compare" && compareStrategies.length < 2) {
+      setError("Seleziona almeno due strategie da confrontare.");
+      return;
+    }
+    if (mode === "walkforward" && (
+      !Number.isInteger(Number(isSessions)) || Number(isSessions) < 2 || Number(isSessions) > 10000 ||
+      !Number.isInteger(Number(oosSessions)) || Number(oosSessions) < 1 || Number(oosSessions) > 10000
+    )) {
+      setError("Finestre non valide: IS da 2 a 10000 sedute, OOS da 1 a 10000.");
       return;
     }
     backtestOperationInFlight.current = true;
     resultRequestId.current += 1;
+    const controller = new AbortController();
+    operationController.current = controller;
+    const signal = controller.signal;
     setHistoryBusy(true);
-    setRunning(true);
+    setRunning(mode === "single");
+    setComparing(mode === "compare");
+    setWalking(mode === "walkforward");
+    setJob(null);
+    setCancelling(false);
+    if (mode === "single") setResult(null);
+    if (mode === "compare") setCompareResult(null);
+    if (mode === "walkforward") setWalkResult(null);
+    const input: BacktestRunInput = {
+      name: form.name, strategy_name: form.strategy_name, symbols: form.symbols,
+      initial_cash: Number(form.initial_cash), start_date: form.start_date, end_date: form.end_date,
+      benchmark_symbol: form.benchmark_symbol, buy_threshold: Number(form.buy_threshold),
+      sell_threshold: Number(form.sell_threshold), max_asset_weight: Number(form.max_asset_weight),
+      stop_loss_percent: numberOrNull(form.stop_loss_percent),
+      take_profit_percent: numberOrNull(form.take_profit_percent),
+      rebalance_frequency: form.rebalance_frequency,
+      top_n: (mode === "compare" ? compareStrategies.includes("TOP_N_SCORE") : form.strategy_name === "TOP_N_SCORE")
+        ? Number(form.top_n) : undefined,
+    };
+    const { strategy_name: _strategy, ...settings } = input;
+    const payload: BacktestRunInput | BacktestCompareInput | WalkForwardInput = mode === "compare"
+      ? { ...settings, strategy_names: compareStrategies }
+      : mode === "walkforward"
+        ? { ...input, is_sessions: Number(isSessions), oos_sessions: Number(oosSessions) }
+        : input;
+    const path = mode === "single" ? "/backtests/run" : mode === "compare"
+      ? "/backtests/compare" : "/backtests/walk-forward";
+    const kind = mode === "single" ? "BACKTEST" : mode === "compare" ? "COMPARE" : "WALK_FORWARD";
     try {
-      const payload: BacktestRunInput = {
-        name: form.name,
-        strategy_name: form.strategy_name,
-        symbols: form.symbols,
-        initial_cash: Number(form.initial_cash),
-        start_date: form.start_date,
-        end_date: form.end_date,
-        benchmark_symbol: form.benchmark_symbol,
-        buy_threshold: Number(form.buy_threshold),
-        sell_threshold: Number(form.sell_threshold),
-        max_asset_weight: Number(form.max_asset_weight),
-        fee_percent: Number(form.fee_percent),
-        stop_loss_percent: numberOrUndefined(form.stop_loss_percent),
-        take_profit_percent: numberOrUndefined(form.take_profit_percent),
-        rebalance_frequency: form.rebalance_frequency,
-        top_n: form.strategy_name === "TOP_N_SCORE" ? Number(form.top_n) : undefined,
-      };
-      const nextResult = await apiPost<BacktestResult>("/backtests/run", payload);
-      setResult(nextResult);
-      setHistory(await apiGet<BacktestSummary[]>("/backtests"));
+      const initial = await apiPost<JobOut>(path, payload, { signal });
+      if (initial.kind !== kind) throw new Error("Tipo di elaborazione inatteso.");
+      const completed = await waitForJob(initial, { signal, onUpdate: setJob });
+      if (mode === "single") {
+        setResult(await getBacktestJobResult(completed, signal));
+        setHistory(await apiGet<BacktestSummary[]>("/backtests", { signal }));
+      } else if (mode === "compare") {
+        const next = getInlineJobResult<BacktestCompareResult>(completed);
+        if (!Array.isArray(next.entries)) throw new Error("Risultato del confronto non disponibile.");
+        setCompareResult(next);
+      } else {
+        const next = getInlineJobResult<WalkForwardResult>(completed);
+        if (!Array.isArray(next.windows) || !next.oos_metrics) throw new Error("Risultato walk-forward non disponibile.");
+        setWalkResult(next);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Errore durante l'esecuzione del backtest.");
+      if (!signal.aborted) {
+        setError(err instanceof Error ? err.message : "Errore durante l'elaborazione.");
+      }
     } finally {
       backtestOperationInFlight.current = false;
-      setHistoryBusy(false);
-      setRunning(false);
+      if (!signal.aborted) {
+        setHistoryBusy(false);
+        setRunning(false);
+        setComparing(false);
+        setWalking(false);
+        setCancelling(false);
+      }
+      if (operationController.current === controller) operationController.current = null;
+    }
+  }
+
+  async function requestCancellation() {
+    const controller = operationController.current;
+    if (!controller || !job || cancelling) return;
+    setCancelling(true);
+    try {
+      const next = await cancelJob(job.id, controller.signal);
+      if (!controller.signal.aborted && operationController.current === controller) setJob(next);
+    } catch (err) {
+      if (!controller.signal.aborted && operationController.current === controller) {
+        setCancelling(false);
+        setError(err instanceof Error ? err.message : "Annullamento non riuscito.");
+      }
     }
   }
 
@@ -293,97 +373,6 @@ export function BacktestPage() {
         ? current.filter((item) => item !== strategy)
         : [...current, strategy],
     );
-  }
-
-  async function runCompare(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const validation = validate();
-    if (validation) {
-      setError(validation);
-      return;
-    }
-    if (compareStrategies.length < 2) {
-      setError("Seleziona almeno due strategie da confrontare.");
-      return;
-    }
-    if (backtestOperationInFlight.current) {
-      return;
-    }
-    backtestOperationInFlight.current = true;
-    resultRequestId.current += 1;
-    setHistoryBusy(true);
-    setComparing(true);
-    try {
-      const payload: BacktestCompareInput = {
-        name: form.name,
-        strategy_names: compareStrategies,
-        symbols: form.symbols,
-        initial_cash: Number(form.initial_cash),
-        start_date: form.start_date,
-        end_date: form.end_date,
-        benchmark_symbol: form.benchmark_symbol,
-        buy_threshold: Number(form.buy_threshold),
-        sell_threshold: Number(form.sell_threshold),
-        max_asset_weight: Number(form.max_asset_weight),
-        fee_percent: Number(form.fee_percent),
-        stop_loss_percent: numberOrUndefined(form.stop_loss_percent),
-        take_profit_percent: numberOrUndefined(form.take_profit_percent),
-        rebalance_frequency: form.rebalance_frequency,
-        top_n: compareStrategies.includes("TOP_N_SCORE") ? Number(form.top_n) : undefined,
-      };
-      setCompareResult(await apiPost<BacktestCompareResult>("/backtests/compare", payload));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Errore durante il confronto delle strategie.");
-    } finally {
-      backtestOperationInFlight.current = false;
-      setHistoryBusy(false);
-      setComparing(false);
-    }
-  }
-
-  async function runWalkForward(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const validation = validate();
-    if (validation) {
-      setError(validation);
-      return;
-    }
-    if (backtestOperationInFlight.current) {
-      return;
-    }
-    backtestOperationInFlight.current = true;
-    resultRequestId.current += 1;
-    setHistoryBusy(true);
-    setWalking(true);
-    try {
-      const payload: WalkForwardInput = {
-        name: form.name,
-        strategy_name: form.strategy_name,
-        symbols: form.symbols,
-        initial_cash: Number(form.initial_cash),
-        start_date: form.start_date,
-        end_date: form.end_date,
-        benchmark_symbol: form.benchmark_symbol,
-        buy_threshold: Number(form.buy_threshold),
-        sell_threshold: Number(form.sell_threshold),
-        max_asset_weight: Number(form.max_asset_weight),
-        fee_percent: Number(form.fee_percent),
-        stop_loss_percent: numberOrUndefined(form.stop_loss_percent),
-        take_profit_percent: numberOrUndefined(form.take_profit_percent),
-        rebalance_frequency: form.rebalance_frequency,
-        top_n: form.strategy_name === "TOP_N_SCORE" ? Number(form.top_n) : undefined,
-        folds: Number(folds),
-      };
-      setWalkResult(await apiPost<WalkForwardResult>("/backtests/walk-forward", payload));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Errore durante la validazione walk-forward.");
-    } finally {
-      backtestOperationInFlight.current = false;
-      setHistoryBusy(false);
-      setWalking(false);
-    }
   }
 
   const compareChartData = useMemo(() => {
@@ -475,16 +464,25 @@ export function BacktestPage() {
 
       {error && <div className="rounded-lg border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-200">{error}</div>}
 
+      {job && (running || comparing || walking) && (
+        <Panel title="Elaborazione">
+          <div role="status" aria-live="polite" className="space-y-3">
+            <p>{jobLabels[job.status]} · {Math.round(Math.max(0, Math.min(1, job.progress)) * 100)}%</p>
+            <progress aria-label="Avanzamento elaborazione" value={job.progress} max={1} className="w-full" />
+            {(cancelling || job.cancel_requested) && <p>Annullamento richiesto: attendo la conferma.</p>}
+          </div>
+          <button type="button" onClick={() => void requestCancellation()}
+            disabled={cancelling || job.cancel_requested || (job.status !== "QUEUED" && job.status !== "RUNNING")}
+            className="mt-3 rounded-md border border-slate-700 px-3 py-2 text-sm disabled:opacity-50">
+            Annulla elaborazione
+          </button>
+        </Panel>
+      )}
+
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.35fr]">
         <Panel title="Configurazione">
           <form
-            onSubmit={(event) =>
-              void (mode === "compare"
-                ? runCompare(event)
-                : mode === "walkforward"
-                  ? runWalkForward(event)
-                  : runBacktest(event))
-            }
+            onSubmit={(event) => void runOperation(event)}
             className="space-y-4"
           >
             <label className="block space-y-2">
@@ -590,10 +588,7 @@ export function BacktestPage() {
                 <span className="text-sm text-slate-400">Peso max asset</span>
                 <input type="number" step="0.01" value={form.max_asset_weight} onChange={(event) => updateField("max_asset_weight", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60" />
               </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-400">Commissioni %</span>
-                <input type="number" step="0.01" value={form.fee_percent} onChange={(event) => updateField("fee_percent", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60" />
-              </label>
+
               <label className="space-y-2">
                 <span className="text-sm text-slate-400">Stop loss %</span>
                 <input type="number" value={form.stop_loss_percent} onChange={(event) => updateField("stop_loss_percent", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60" />
@@ -609,13 +604,20 @@ export function BacktestPage() {
                 </label>
               )}
               {mode === "walkforward" && (
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-400">Numero fold (2-12)</span>
-                  <input type="number" min="2" max="12" value={folds} onChange={(event) => setFolds(event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/60" />
-                </label>
+                <>
+                  <label className="space-y-2">
+                    <span className="text-sm text-slate-400">Finestra IS (sedute)</span>
+                    <input type="number" min="2" max="10000" value={isSessions} onChange={(event) => setIsSessions(event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm text-slate-400">Finestra OOS (sedute)</span>
+                    <input type="number" min="1" max="10000" value={oosSessions} onChange={(event) => setOosSessions(event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+                  </label>
+                </>
               )}
             </div>
 
+            <p className="text-xs text-slate-400">Profilo costi Trade Republic; importi e rendimenti del backtest in EUR.</p>
             {mode === "compare" ? (
               <button disabled={comparing || historyBusy} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
                 <GitCompareArrows className={`h-4 w-4 ${comparing ? "animate-pulse" : ""}`} aria-hidden="true" />
@@ -740,70 +742,44 @@ export function BacktestPage() {
           ) : mode === "walkforward" ? (
             walkResult ? (
               <>
-                <Panel
-                  eyebrow={`Validazione out-of-sample · ${walkResult.folds} periodi`}
-                  title="Verdetto robustezza"
-                  action={
-                    <span className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-semibold ${consistencyTone[walkResult.consistency] ?? consistencyTone.INCERTA}`}>
-                      <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                      {walkResult.consistency}
-                    </span>
-                  }
-                >
-                  <p className="text-sm leading-relaxed text-slate-300">{walkResult.verdict}</p>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                      <p className="text-xs uppercase text-slate-500">Periodi positivi</p>
-                      <p className="num mt-1 text-lg font-semibold text-white">{walkResult.positive_folds}/{walkResult.folds}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                      <p className="text-xs uppercase text-slate-500">Battono benchmark</p>
-                      <p className="num mt-1 text-lg font-semibold text-cyan-200">{walkResult.folds_beating_benchmark}/{walkResult.folds}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                      <p className="text-xs uppercase text-slate-500">Rendimento medio</p>
-                      <p className={`num mt-1 text-lg font-semibold ${walkResult.mean_return_percent >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPercent(walkResult.mean_return_percent)}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                      <p className="text-xs uppercase text-slate-500">Dispersione (std)</p>
-                      <p className="num mt-1 text-lg font-semibold text-amber-200">{formatPercent(walkResult.std_return_percent)}</p>
-                    </div>
+                <Panel title="Risultati fuori campione" eyebrow={walkResult.data_mode + " · " + walkResult.oos_sessions + " sedute OOS"}>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <MetricCard label="Rendimento OOS" value={formatPercent(walkResult.oos_metrics.total_return_percent)} delta="Rendimento netto" tone={metricTone(walkResult.oos_metrics.total_return_percent)} icon={Activity} />
+                    <MetricCard label="Max drawdown OOS" value={formatPercent(walkResult.oos_metrics.max_drawdown)} delta="Serie OOS continua" tone="rose" icon={ShieldAlert} />
+                    <MetricCard label="Valore finale OOS" value={formatCurrency(walkResult.oos_metrics.final_value, "EUR")} delta="Valore finale" tone="cyan" icon={BadgeDollarSign} />
                   </div>
-                  <p className="mt-4 text-xs text-slate-500">
-                    Intero periodo: <span className="num text-slate-300">{formatPercent(walkResult.full_period_return_percent)}</span>
-                    {"  ·  "}peggior fold: <span className="num text-rose-300">{formatPercent(walkResult.worst_fold_return_percent)}</span>
-                    {"  ·  "}miglior fold: <span className="num text-emerald-300">{formatPercent(walkResult.best_fold_return_percent)}</span>
-                    {"  ·  "}alpha medio: <span className="num text-slate-300">{formatPercent(walkResult.mean_alpha_vs_benchmark)}</span>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    {[["Sharpe IS medio", optionalNumber(walkResult.is_sharpe_mean)],
+                      ["Sharpe OOS", optionalNumber(walkResult.oos_sharpe)],
+                      ["Degrado IS − OOS", optionalNumber(walkResult.degradation)],
+                      ["DSR", walkResult.dsr === null ? "N/D" : (walkResult.dsr.dsr * 100).toFixed(1) + "%"],
+                      ["N configurazioni", walkResult.n_trials ?? "N/D"]].map(([label, value]) => (
+                      <div key={label} className="rounded-lg border border-slate-800 p-3">
+                        <p className="text-xs text-slate-400">{label}</p><p className="mt-1 font-semibold">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-4 text-sm text-slate-400">
+                    Finestre: {walkResult.window_is_sessions} sedute IS / {walkResult.window_oos_sessions} OOS.
+                    Sharpe annualizzati; DSR e N non disponibili per i run DEMO.
                   </p>
+                  {walkResult.warnings.map((warning) => <p key={warning} className="mt-2 text-sm text-amber-200">{warning}</p>)}
                 </Panel>
-
-                <Panel eyebrow="Dettaglio per periodo" title="Risultati fold">
+                <Panel title="Finestre walk-forward">
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[620px] border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-left text-xs uppercase text-slate-500">
-                          <th className="px-3 pb-3 pl-0 font-medium">Fold</th>
-                          <th className="px-3 pb-3 font-medium">Periodo</th>
-                          <th className="px-3 pb-3 text-right font-medium">Return</th>
-                          <th className="px-3 pb-3 text-right font-medium">Drawdown</th>
-                          <th className="px-3 pb-3 text-right font-medium">Sharpe</th>
-                          <th className="px-3 pb-3 text-right font-medium">Alpha</th>
-                          <th className="px-3 pb-3 pr-0 text-right font-medium">Trade</th>
+                    <table className="w-full min-w-[620px]">
+                      <thead><tr className="text-left text-xs text-slate-400">
+                        <th>Finestra</th><th>In-sample</th><th>Fuori campione</th><th>Parametri scelti</th><th>Sharpe IS</th>
+                      </tr></thead>
+                      <tbody>{walkResult.windows.map((window) => (
+                        <tr key={window.index} className="border-t border-slate-800 text-sm">
+                          <td className="py-3">{window.index + 1}</td>
+                          <td>{window.is_start} → {window.is_end}</td>
+                          <td>{window.oos_start} → {window.oos_end}</td>
+                          <td>{window.chosen.name}; buy {window.chosen.buy_threshold} / sell {window.chosen.sell_threshold}; N {window.chosen.top_n}; {window.chosen.rebalance_frequency}</td>
+                          <td>{optionalNumber(window.is_sharpe)}</td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80">
-                        {walkResult.fold_results.map((fold) => (
-                          <tr key={fold.fold} className="text-sm">
-                            <td className="px-3 py-3 pl-0 font-semibold text-white">#{fold.fold}</td>
-                            <td className="px-3 py-3 text-xs text-slate-400">{fold.start_date} → {fold.end_date}</td>
-                            <td className={fold.total_return_percent >= 0 ? "num px-3 py-3 text-right font-semibold text-emerald-300" : "num px-3 py-3 text-right font-semibold text-rose-300"}>{formatPercent(fold.total_return_percent)}</td>
-                            <td className="num px-3 py-3 text-right text-rose-300">{formatPercent(fold.max_drawdown)}</td>
-                            <td className="num px-3 py-3 text-right text-slate-300">{fold.sharpe_ratio.toFixed(2)}</td>
-                            <td className={fold.alpha_vs_benchmark >= 0 ? "num px-3 py-3 text-right font-semibold text-emerald-300" : "num px-3 py-3 text-right font-semibold text-rose-300"}>{formatPercent(fold.alpha_vs_benchmark)}</td>
-                            <td className="num px-3 py-3 pr-0 text-right text-slate-300">{fold.total_trades}</td>
-                          </tr>
-                        ))}
-                      </tbody>
+                      ))}</tbody>
                     </table>
                   </div>
                 </Panel>
@@ -811,19 +787,23 @@ export function BacktestPage() {
             ) : (
               <Panel title="Validazione robustezza">
                 <p className="text-sm text-slate-400">
-                  Scegli strategia e numero di fold, poi premi "Valida robustezza". Il periodo viene diviso in segmenti
-                  consecutivi indipendenti: una strategia solida resta positiva nella maggior parte dei segmenti, non solo
-                  sull'intero periodo.
+                  Scegli strategia e finestre in sedute, poi premi "Valida robustezza". I parametri vengono scelti
+                  in-sample e applicati alla finestra successiva; il portafoglio prosegue in un'unica simulazione fuori campione.
                 </p>
               </Panel>
             )
           ) : result ? (
             <>
+              {result.summary.engine_version !== "v1" && (
+                <p className="text-sm text-amber-200">
+                  Run storico v0: unita monetaria non dichiarata; importi salvati senza conversione.
+                </p>
+              )}
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <MetricCard label="Rendimento" value={formatPercent(result.summary.total_return_percent)} delta="Totale periodo" tone={metricTone(result.summary.total_return_percent)} icon={Activity} />
                 <MetricCard label="CAGR" value={formatPercent(result.summary.cagr)} delta="Annualizzato" tone={metricTone(result.summary.cagr)} icon={BarChart3} />
                 <MetricCard label="Max drawdown" value={formatPercent(result.summary.max_drawdown)} delta="Peggior discesa" tone="rose" icon={ShieldAlert} />
-                <MetricCard label="Valore finale" value={formatCurrency(result.summary.final_value, "EUR")} delta={`${result.summary.total_trades} trade`} tone="cyan" icon={BadgeDollarSign} />
+                <MetricCard label="Valore finale" value={formatBacktestCurrency(result.summary.final_value, result.summary.engine_version)} delta={`${result.summary.total_trades} trade`} tone="cyan" icon={BadgeDollarSign} />
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -863,7 +843,7 @@ export function BacktestPage() {
                       <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-slate-400">Valore finale netto</span>
-                          <span className="num text-lg font-semibold text-white">{formatCurrency(result.net_analysis.net_final_value, "EUR")}</span>
+                          <span className="num text-lg font-semibold text-white">{formatBacktestCurrency(result.net_analysis.net_final_value, result.summary.engine_version)}</span>
                         </div>
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <span className="text-slate-500">Aliquota effettiva sulle plusvalenze</span>
@@ -877,27 +857,27 @@ export function BacktestPage() {
                         <tbody className="divide-y divide-slate-800/80">
                           <tr>
                             <td className="px-4 py-2.5 text-slate-400">Plusvalenze tassabili</td>
-                            <td className="num px-4 py-2.5 text-right text-slate-200">{formatCurrency(result.net_analysis.realized_gains_taxable, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right text-slate-200">{formatBacktestCurrency(result.net_analysis.realized_gains_taxable, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
                             <td className="px-4 py-2.5 text-slate-400">Imposta plusvalenze (26% / 12,5%)</td>
-                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatCurrency(result.net_analysis.capital_gains_tax, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.capital_gains_tax, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
                             <td className="px-4 py-2.5 text-slate-400">Slippage / spread stimato</td>
-                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatCurrency(result.net_analysis.slippage_costs, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.slippage_costs, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
                             <td className="px-4 py-2.5 text-slate-400">Imposta di bollo (0,2% annuo)</td>
-                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatCurrency(result.net_analysis.stamp_duty, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right text-rose-300">- {formatBacktestCurrency(result.net_analysis.stamp_duty, result.summary.engine_version)}</td>
                           </tr>
                           <tr>
                             <td className="px-4 py-2.5 text-slate-500">Commissioni (gia nel lordo)</td>
-                            <td className="num px-4 py-2.5 text-right text-slate-500">{formatCurrency(result.net_analysis.commission_costs, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right text-slate-500">{formatBacktestCurrency(result.net_analysis.commission_costs, result.summary.engine_version)}</td>
                           </tr>
                           <tr className="bg-slate-900/40">
                             <td className="px-4 py-2.5 font-semibold text-amber-100">Totale costi e tasse</td>
-                            <td className="num px-4 py-2.5 text-right font-semibold text-amber-200">- {formatCurrency(result.net_analysis.total_costs_and_taxes, "EUR")}</td>
+                            <td className="num px-4 py-2.5 text-right font-semibold text-amber-200">- {formatBacktestCurrency(result.net_analysis.total_costs_and_taxes, result.summary.engine_version)}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -918,7 +898,7 @@ export function BacktestPage() {
                       <CartesianGrid stroke="#1E293B" vertical={false} />
                       <XAxis dataKey="date" stroke="#64748B" axisLine={false} tickLine={false} minTickGap={32} />
                       <YAxis stroke="#64748B" axisLine={false} tickLine={false} width={80} />
-                      <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatCurrency(Number(value), "EUR"), "Valore"]} />
+                      <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatBacktestCurrency(Number(value), result.summary.engine_version), "Valore"]} />
                       <Line type="monotone" dataKey="portfolio_value" stroke="#22D3EE" strokeWidth={2.5} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -945,7 +925,7 @@ export function BacktestPage() {
                       <LineChart data={result.equity_curve} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
                         <XAxis dataKey="date" hide />
                         <YAxis stroke="#64748B" axisLine={false} tickLine={false} width={80} />
-                        <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatCurrency(Number(value), "EUR"), "Valore"]} />
+                        <Tooltip contentStyle={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 8 }} formatter={(value) => [formatBacktestCurrency(Number(value), result.summary.engine_version), "Valore"]} />
                         <Line type="monotone" dataKey="portfolio_value" stroke="#22D3EE" strokeWidth={2.5} dot={false} />
                         <Line type="monotone" dataKey="benchmark_value" stroke="#94A3B8" strokeWidth={2} dot={false} />
                       </LineChart>
@@ -985,8 +965,8 @@ export function BacktestPage() {
                       <td className="px-3 py-3 font-semibold text-white">{trade.symbol}</td>
                       <td className={trade.order_type === "BUY" ? "px-3 py-3 font-semibold text-emerald-300" : "px-3 py-3 font-semibold text-rose-300"}>{trade.order_type}</td>
                       <td className="px-3 py-3 text-right text-slate-300">{trade.quantity.toLocaleString("it-IT")}</td>
-                      <td className="px-3 py-3 text-right text-slate-300">{formatCurrency(trade.price, "USD")}</td>
-                      <td className={trade.pnl >= 0 ? "px-3 py-3 text-right font-semibold text-emerald-300" : "px-3 py-3 text-right font-semibold text-rose-300"}>{formatCurrency(trade.pnl, "USD")}</td>
+                      <td className="px-3 py-3 text-right text-slate-300">{formatBacktestCurrency(trade.price, result.summary.engine_version)}</td>
+                      <td className={trade.pnl >= 0 ? "px-3 py-3 text-right font-semibold text-emerald-300" : "px-3 py-3 text-right font-semibold text-rose-300"}>{formatBacktestCurrency(trade.pnl, result.summary.engine_version)}</td>
                       <td className="max-w-72 px-3 py-3 pr-0 text-slate-500">{trade.reason ?? "-"}</td>
                     </tr>
                   ))}
@@ -1013,11 +993,11 @@ export function BacktestPage() {
                     <tr key={position.symbol} className="text-sm">
                       <td className="px-3 py-3 pl-0 font-semibold text-white">{position.symbol}</td>
                       <td className="px-3 py-3 text-right text-slate-300">{position.quantity.toLocaleString("it-IT")}</td>
-                      <td className="px-3 py-3 text-right text-slate-300">{formatCurrency(position.average_price, "USD")}</td>
-                      <td className="px-3 py-3 text-right text-slate-300">{formatCurrency(position.final_price, "USD")}</td>
-                      <td className="px-3 py-3 text-right font-semibold text-white">{formatCurrency(position.final_value, "USD")}</td>
+                      <td className="px-3 py-3 text-right text-slate-300">{formatBacktestCurrency(position.average_price, result.summary.engine_version)}</td>
+                      <td className="px-3 py-3 text-right text-slate-300">{formatBacktestCurrency(position.final_price, result.summary.engine_version)}</td>
+                      <td className="px-3 py-3 text-right font-semibold text-white">{formatBacktestCurrency(position.final_value, result.summary.engine_version)}</td>
                       <td className={position.unrealized_pnl + position.realized_pnl >= 0 ? "px-3 py-3 pr-0 text-right font-semibold text-emerald-300" : "px-3 py-3 pr-0 text-right font-semibold text-rose-300"}>
-                        {formatCurrency(position.unrealized_pnl + position.realized_pnl, "USD")}
+                        {formatBacktestCurrency(position.unrealized_pnl + position.realized_pnl, result.summary.engine_version)}
                       </td>
                     </tr>
                   ))}

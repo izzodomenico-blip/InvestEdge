@@ -8,6 +8,9 @@ if (import.meta.env.DEV) {
   console.info("[InvestEdge] API_URL", API_URL);
 }
 
+export type DataMode = "REAL" | "DEMO";
+export type SignalTimeframe = "D" | "W" | "M";
+
 export type Signal = "STRONG_BUY" | "BUY" | "HOLD" | "REDUCE" | "SELL";
 
 export type Reason = {
@@ -46,6 +49,8 @@ export type Asset = {
   confidence: string | null;
   technical_summary: string | null;
   updated_at: string | null;
+  signal_data_mode: DataMode | null;
+  score_unavailable_reason: string | null;
 };
 
 export type SignalRecord = {
@@ -400,27 +405,56 @@ export type TechnicalAnalysis = {
   reasons: Reason[];
   summaries: Record<string, string>;
   technical_summary: string;
+  data_mode: DataMode | null;
 };
 
 export type BacktestStrategy = "SCORE_THRESHOLD" | "BUY_AND_HOLD" | "TOP_N_SCORE";
 export type RebalanceFrequency = "DAILY" | "WEEKLY" | "MONTHLY";
 
-export type BacktestRunInput = {
-  name: string;
-  strategy_name: BacktestStrategy;
+export type BacktestSettingsInput = {
   symbols: string[];
-  initial_cash: number;
+  initial_cash?: number;
   start_date: string;
   end_date: string;
-  benchmark_symbol: string;
-  buy_threshold: number;
-  sell_threshold: number;
-  max_asset_weight: number;
-  fee_percent: number;
-  stop_loss_percent?: number;
-  take_profit_percent?: number;
-  rebalance_frequency: RebalanceFrequency;
-  top_n?: number;
+  benchmark_symbol?: string;
+  buy_threshold?: number;
+  sell_threshold?: number;
+  max_asset_weight?: number;
+  stop_loss_percent?: number | null;
+  take_profit_percent?: number | null;
+  rebalance_frequency?: RebalanceFrequency;
+  top_n?: number | null;
+  data_mode?: DataMode;
+  signal_name?: string;
+  signal_timeframe?: SignalTimeframe;
+  commission_eur?: number | null;
+  cost_bps_equity?: number | null;
+  cost_bps_crypto?: number | null;
+  fractional_shares?: boolean | null;
+  min_trade_eur?: number | null;
+};
+
+export type BacktestRunInput = BacktestSettingsInput & {
+  name: string;
+  strategy_name: BacktestStrategy;
+};
+
+export type JobKind = "BACKTEST" | "COMPARE" | "WALK_FORWARD" | "EVIDENCE" | "FEATURE_REFRESH" | "FX_BACKFILL" | "ML_TRAIN";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
+export type JobOut = {
+  id: number;
+  kind: JobKind;
+  status: JobStatus;
+  params: Record<string, unknown>;
+  progress: number;
+  result_ref: string | null;
+  result: Record<string, unknown> | null;
+  error_code: string | null;
+  error_message: string | null;
+  cancel_requested: boolean;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 };
 
 export type BacktestSummary = {
@@ -434,7 +468,7 @@ export type BacktestSummary = {
   buy_threshold: number;
   sell_threshold: number;
   max_asset_weight: number;
-  fee_percent: number;
+  fee_percent: number | null;
   stop_loss_percent: number | null;
   take_profit_percent: number | null;
   rebalance_frequency: string;
@@ -449,6 +483,19 @@ export type BacktestSummary = {
   benchmark_return_percent: number;
   alpha_vs_benchmark: number;
   created_at: string | null;
+  engine_version: string;
+  data_mode: DataMode | null;
+  signal_name: string | null;
+  signal_timeframe: SignalTimeframe | null;
+  cost_profile: Record<string, unknown> | null;
+  warnings: string[];
+  excluded: Record<string, string>;
+  commission_eur: number | null;
+  spread_cost_eur: number | null;
+  turnover: number | null;
+  exposure: number | null;
+  fingerprint: string | null;
+  benchmark_snapshot_status: "FROZEN" | "UNAVAILABLE" | "NOT_RECORDED";
 };
 
 export type BacktestEquityPoint = {
@@ -474,6 +521,8 @@ export type BacktestTrade = {
   net_amount: number;
   pnl: number;
   reason: string | null;
+  commission: number | null;
+  spread_cost: number | null;
 };
 
 export type BacktestPosition = {
@@ -517,22 +566,9 @@ export type BacktestResult = {
   net_analysis: BacktestNetAnalysis | null;
 };
 
-export type BacktestCompareInput = {
+export type BacktestCompareInput = BacktestSettingsInput & {
   name?: string;
   strategy_names: BacktestStrategy[];
-  symbols: string[];
-  initial_cash: number;
-  start_date: string;
-  end_date: string;
-  benchmark_symbol: string;
-  buy_threshold: number;
-  sell_threshold: number;
-  max_asset_weight: number;
-  fee_percent: number;
-  stop_loss_percent?: number;
-  take_profit_percent?: number;
-  rebalance_frequency: RebalanceFrequency;
-  top_n?: number;
 };
 
 export type BacktestCompareEntry = {
@@ -554,37 +590,72 @@ export type BacktestCompareResult = {
 };
 
 export type WalkForwardInput = BacktestRunInput & {
-  folds: number;
+  is_sessions?: number | null;
+  oos_sessions?: number | null;
 };
 
-export type WalkForwardFold = {
-  fold: number;
+export type WalkForwardWindow = {
+  index: number;
+  is_start: string;
+  is_end: string;
+  oos_start: string;
+  oos_end: string;
+  chosen: {
+    name: string;
+    buy_threshold: number;
+    sell_threshold: number;
+    max_asset_weight: number;
+    top_n: number;
+    rebalance_frequency: string;
+  };
+  is_sharpe: number | null;
+};
+
+export type WalkForwardMetrics = {
   start_date: string;
   end_date: string;
   total_return_percent: number;
   cagr: number;
   max_drawdown: number;
   sharpe_ratio: number;
-  alpha_vs_benchmark: number;
+  profit_factor: number;
+  win_rate: number;
   total_trades: number;
+  turnover: number;
+  exposure: number;
+  commission_eur: number;
+  spread_cost_eur: number;
   final_value: number;
+  benchmark_return_percent: number;
+  alpha_vs_benchmark: number;
+};
+
+export type DeflatedSharpe = {
+  dsr: number;
+  sr: number;
+  sr0: number;
+  n_trials: number;
+  n_obs: number;
+  skew: number;
+  kurtosis: number;
 };
 
 export type WalkForwardResult = {
   strategy_name: string;
-  folds: number;
-  full_period_return_percent: number;
-  mean_return_percent: number;
-  median_return_percent: number;
-  std_return_percent: number;
-  positive_folds: number;
-  folds_beating_benchmark: number;
-  worst_fold_return_percent: number;
-  best_fold_return_percent: number;
-  mean_alpha_vs_benchmark: number;
-  consistency: "ROBUSTA" | "INCERTA" | "FRAGILE";
-  verdict: string;
-  fold_results: WalkForwardFold[];
+  data_mode: DataMode;
+  window_is_sessions: number;
+  window_oos_sessions: number;
+  windows: WalkForwardWindow[];
+  grid_size: number;
+  is_sharpe_mean: number | null;
+  oos_sharpe: number | null;
+  degradation: number | null;
+  oos_metrics: WalkForwardMetrics;
+  oos_sessions: number;
+  dsr: DeflatedSharpe | null;
+  n_trials: number | null;
+  excluded: Record<string, string>;
+  warnings: string[];
 };
 
 export type ScenarioType =
@@ -1071,7 +1142,8 @@ async function parseError(response: Response): Promise<ApiError> {
     }
     const reason = payload.detail?.reason_code;
     const message = typeof reason === "string" ? REASON_CODE_MESSAGES[reason] : undefined;
-    return new ApiError(message ?? fallback, response.status, payload.detail ?? null);
+    const serverMessage = typeof payload.detail?.message === "string" ? payload.detail.message : undefined;
+    return new ApiError(message ?? serverMessage ?? fallback, response.status, payload.detail ?? null);
   } catch {
     return new ApiError(fallback, response.status);
   }
@@ -1145,18 +1217,24 @@ export async function apiGet<T>(path: string, init: { signal?: AbortSignal } = {
     throw await parseError(response);
   }
 
-  return response.json() as Promise<T>;
+  const payload = await response.json();
+  init.signal?.throwIfAborted();
+  return payload as T;
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPost<T>(
+  path: string, body?: unknown, init: { signal?: AbortSignal } = {},
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       method: "POST",
+      signal: init.signal,
       headers: body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
+    if (isAbortError(error)) throw error;
     throw new Error(fetchErrorMessage("POST", path, error));
   }
 
@@ -1164,7 +1242,9 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     throw await parseError(response);
   }
 
-  return response.json() as Promise<T>;
+  const payload = await response.json();
+  init.signal?.throwIfAborted();
+  return payload as T;
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {

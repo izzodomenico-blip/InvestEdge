@@ -30,9 +30,9 @@ const indicatorLabels: Array<[string, string, "number" | "percent"]> = [
   ["rsi_14", "RSI 14", "number"],
   ["macd_line", "MACD", "number"],
   ["adx_14", "ADX", "number"],
-  ["atr_14", "ATR", "number"],
-  ["volatility_annualized_30d", "Volatilita", "percent"],
-  ["max_drawdown", "Max drawdown", "percent"],
+  ["atr_14", "ATR 14", "number"],
+  ["volatility_30d", "Volatilità annualizzata · 30 barre", "percent"],
+  ["max_drawdown_252", "Max drawdown · 252 barre", "percent"],
 ];
 
 const sentimentTone: Record<string, string> = {
@@ -47,14 +47,14 @@ const impactTone: Record<string, string> = {
   LOW: "border-slate-700 bg-slate-900 text-slate-300",
 };
 
-function formatIndicator(value: number | null | undefined, kind: "number" | "percent" = "number") {
-  if (value == null || Number.isNaN(value)) {
+function formatIndicator(value: number | null | undefined, kind: "number" | "percent" | "percentPoints" = "number") {
+  if (value == null || !Number.isFinite(value)) {
     return "N/D";
   }
   if (kind === "percent") {
     return `${(value * 100).toFixed(1)}%`;
   }
-  return value.toFixed(2);
+  return kind === "percentPoints" ? value.toFixed(2) + "%" : value.toFixed(2);
 }
 
 export function AnalysisPage() {
@@ -75,58 +75,64 @@ export function AnalysisPage() {
   const latestPoint = prices?.prices[prices.prices.length - 1];
 
   useEffect(() => {
+    const controller = new AbortController();
     async function loadAssets() {
       setLoadingAssets(true);
       setError(null);
       try {
-        const response = await apiGet<Asset[]>("/assets");
+        const response = await apiGet<Asset[]>("/assets", { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setAssets(response);
         if (!currentSymbolParam && response[0]) {
           setSearchParams({ symbol: response[0].symbol }, { replace: true });
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Errore durante il caricamento degli asset.");
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Errore durante il caricamento degli asset.");
+        }
       } finally {
-        setLoadingAssets(false);
+        if (!controller.signal.aborted) setLoadingAssets(false);
       }
     }
-
     void loadAssets();
+    return () => controller.abort();
   }, [currentSymbolParam, setSearchParams]);
 
   useEffect(() => {
-    if (!selectedSymbol) {
-      return;
-    }
-
+    if (!selectedSymbol) return;
+    const controller = new AbortController();
+    const request = { signal: controller.signal };
+    const symbol = encodeURIComponent(selectedSymbol);
     async function loadAnalysis() {
       setLoadingAnalysis(true);
       setError(null);
       try {
         const [priceResponse, analysisResponse] = await Promise.all([
-          apiGet<PriceHistory>(`/prices/${selectedSymbol}`),
-          apiGet<TechnicalAnalysis>(`/technical-analysis/${selectedSymbol}`),
+          apiGet<PriceHistory>("/prices/" + symbol, request),
+          apiGet<TechnicalAnalysis>("/technical-analysis/" + symbol, request),
         ]);
         const [newsStatusResponse, newsSummaryResponse] = await Promise.all([
-          apiGet<NewsStatus>("/news/status").catch(() => null),
-          apiGet<NewsSentimentSummary>(`/news/sentiment/${selectedSymbol}`).catch(() => null),
+          apiGet<NewsStatus>("/news/status", request).catch(() => null),
+          apiGet<NewsSentimentSummary>("/news/sentiment/" + symbol, request).catch(() => null),
         ]);
+        if (controller.signal.aborted) return;
         setPrices(priceResponse);
         setAnalysis(analysisResponse);
         setNewsStatus(newsStatusResponse);
         setNewsSummary(newsSummaryResponse);
       } catch (err) {
+        if (controller.signal.aborted) return;
         setPrices(null);
         setAnalysis(null);
         setNewsStatus(null);
         setNewsSummary(null);
         setError(err instanceof Error ? err.message : "Asset non trovato o analisi non disponibile.");
       } finally {
-        setLoadingAnalysis(false);
+        if (!controller.signal.aborted) setLoadingAnalysis(false);
       }
     }
-
     void loadAnalysis();
+    return () => controller.abort();
   }, [selectedSymbol]);
 
   if (loadingAssets) {
@@ -211,7 +217,8 @@ export function AnalysisPage() {
 
       {!loadingAnalysis && prices && analysis && selectedAsset && (
         <>
-          {!latestPoint?.is_real_data && (
+          <p className="text-sm text-slate-400">Calcolo tecnico: {analysis.data_mode ?? "non dichiarata"}</p>
+          {analysis.data_mode === "DEMO" && (
             <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
               Dati reali disattivati o non disponibili. Stai usando dati seed/demo per questo asset.
             </div>
@@ -305,12 +312,12 @@ export function AnalysisPage() {
                 <p className={(analysis.news_score ?? 0) >= 0 ? "mt-2 font-semibold text-emerald-300" : "mt-2 font-semibold text-rose-300"}>
                   {(analysis.news_score ?? 0) > 0 ? "+" : ""}{(analysis.news_score ?? 0).toFixed(2)}
                 </p>
-                <p className="mt-1 text-sm text-slate-500">max +/- 5</p>
+                <p className="mt-1 text-sm text-slate-500">News informative: non modificano lo score tecnico.</p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                 <p className="text-xs uppercase text-slate-500">Final score</p>
                 <p className="mt-2 font-semibold text-white">{(analysis.final_score ?? analysis.score).toFixed(1)}/100</p>
-                <p className="mt-1 text-sm text-slate-500">Score tecnico + news</p>
+                <p className="mt-1 text-sm text-slate-500">Coincide con lo score tecnico.</p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                 <p className="text-xs uppercase text-slate-500">Impatto</p>
@@ -409,7 +416,7 @@ export function AnalysisPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 {indicatorLabels.map(([key, label, kind]) => (
                   <div key={key} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                    <p className="text-xs uppercase text-slate-500">{label}</p>
+                    <p className="text-xs uppercase text-slate-500">{label}{key === "macd_line" || key === "atr_14" ? " (" + analysis.asset.currency + ")" : ""}</p>
                     <p className="mt-2 text-xl font-semibold text-white">{formatIndicator(analysis.indicators[key], kind)}</p>
                   </div>
                 ))}
@@ -424,7 +431,7 @@ export function AnalysisPage() {
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                   <span className="text-sm text-slate-400">Distanza supporto</span>
-                  <span className="font-semibold text-emerald-300">{formatIndicator(analysis.support_resistance.support_distance_percent)}%</span>
+                  <span className="font-semibold text-emerald-300">{formatIndicator(analysis.support_resistance.support_distance_percent, "percentPoints")}</span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                   <span className="text-sm text-slate-400">Resistenza vicina</span>
@@ -432,7 +439,7 @@ export function AnalysisPage() {
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                   <span className="text-sm text-slate-400">Distanza resistenza</span>
-                  <span className="font-semibold text-amber-300">{formatIndicator(analysis.support_resistance.resistance_distance_percent)}%</span>
+                  <span className="font-semibold text-amber-300">{formatIndicator(analysis.support_resistance.resistance_distance_percent, "percentPoints")}</span>
                 </div>
               </div>
             </Panel>
