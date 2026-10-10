@@ -1,6 +1,6 @@
 # InvestEdge — SP1 "Laboratorio di verità"
 
-**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1–R4 e Task 12–15 implementati e verificati il 10 ottobre 2026; Task 16 ha superato il gate finale; merge su main da confermare.
+**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1–R4 e Task 12–15 implementati e verificati il 10 ottobre 2026; Task 16 ha superato il gate finale; SP1 VERIFICATO con merge fast-forward confermato dall'utente il 2026-10-10, main remoto d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
 
 **Relazione:** attua SP1 della spec di programma `2026-09-30-investedge-profit-engine-program-design.md` (§4, principi §5, difetti §7). Dove questa spec è più precisa, prevale per SP1.
 

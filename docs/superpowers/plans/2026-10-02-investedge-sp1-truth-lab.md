@@ -1439,3 +1439,7 @@ Commit: `chore: verify SP1 truth lab`
 | §13 Errori e sicurezza | 1 (rete), 8 (errori dei job), tutti |
 | §14–15 Verifica e criteri di successo | 1–16, gate nel 16 |
 | §16 Configurazione | 4, 9, 11, 12 |
+
+## Chiusura del gate e merge confermato (2026-10-10)
+
+Utente conferma il fast-forward nella stessa chat. Task 16 pubblicato `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`; ascendenza da main `a23aa6247a673e70f66420f080cd9e440897c1bf` verificata, push non forzato e `git ls-remote origin refs/heads/main` uguale al Task 16. SP1 VERIFICATO. Nessun codice modificato dopo il gate 1010 backend / 134 frontend / 5 smoke. Prossimo lavoro: proposta spec/piano SP2b e approvazione prima del codice intraday; backlog e gate nel programma.

@@ -1,13 +1,13 @@
 # SP1 — Laboratorio di verità: verifica finale
 
-Data: 2026-10-10. Owner: Codex. Stato: **FATTO — gate finale SP1 superato; merge su main da confermare**.
+Data: 2026-10-10. Owner: Codex. Stato: **VERIFICATO — gate finale SP1 superato e merge fast-forward su main confermato/verificato**.
 
 ## Scope e base
 
 Base cumulativa `origin/investedge/sp1-task-0` = `53fe614625fdd63277464a770f8d8c105fde894f`.
 Base Task 16 `origin/investedge/sp1-task-15` = `e4481ccac33b0078ff844667804b8a95fd5e5f63`.
 Branch di consegna: `investedge/sp1-task-16`, pubblicato immediatamente come lock alla base verificata.
-Il commit Task 16 non registra il proprio SHA: lo registra il lavoro successivo.
+Commit Task 16 pubblicato: `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`, registrato da questo lavoro successivo. Gate remoto branch e worktree pulito verificati alla consegna.
 
 SP1 copre pipeline causale D/W/M, score unico, serie/segmenti/FX, cache incrementale, job,
 simulatore EUR con costi TR, benchmark congelato, walk-forward, tentativi/DSR,
@@ -16,7 +16,7 @@ Task 16 aggiunge smoke offline, audit cumulativo, README e questo report; correg
 
 Il checkout originale è rimasto al Task 6 `96f7299a4aaef1c2074ed1f2afeae2ffbf5cf27d`.
 Si è lavorato nel worktree gestito `intraday-program`. Nessun accesso al database reale dell'utente.
-Merge su main non eseguito: il piano Task 16 richiede conferma prima del fast-forward.
+Merge confermato dall'utente il 2026-10-10: ascendenza main `a23aa62` -> Task 16 verificata, push fast-forward non forzato e main remoto uguale a `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`. La catena finale ha 22 commit lineari dopo Task 0, zero merge commit.
 
 ## Catena e perimetro
 
@@ -191,6 +191,6 @@ Scan finale del report/delta e chiusura delle note PASS prima del commit.
   Nessuna deroga high/critical nel gate finale.
 
 SP1 verifica il software e produce evidenza sui dati configurati; non dimostra redditività
-né valida holding intraday di 15–30 minuti. Prossimo passo: conferma utente del merge fast-forward
-su main, poi spec/piano SP2b con gate dati/news intraday; seguono strategie SP3 e Alpaca paper senza leva.
+né valida holding intraday di 15–30 minuti. Merge SP1 eseguito. Prossimo passo: approvazione della
+proposta spec/piano SP2b con gate dati/news intraday; seguono strategie SP3 e Alpaca paper senza leva.
 Trading reale e leva restano ai gate e alle azioni esplicite previsti nel programma.
