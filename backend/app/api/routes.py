@@ -57,7 +57,6 @@ from backend.app.models import (
     MLPredictionOut,
     MLStatusOut,
     MLTrainIn,
-    MLTrainOut,
     NewsItemOut,
     NewsRefreshAllOut,
     NewsRefreshResultOut,
@@ -872,30 +871,18 @@ def ml_status() -> MLStatusOut:
         return MLStatusOut(**ml_engine.get_status(connection))
 
 
-@router.post("/ml/train", response_model=MLTrainOut)
-def ml_train(payload: MLTrainIn) -> MLTrainOut:
+@router.post("/ml/train", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def ml_train(payload: MLTrainIn) -> JobOut:
     try:
         with db_session() as connection:
-            training_symbols = payload.symbols
-            if not training_symbols:
-                training_symbols = [
-                    str(row["symbol"])
-                    for row in connection.execute(
-                        """
-                        SELECT DISTINCT a.symbol
-                        FROM assets a
-                        JOIN price_history ph ON ph.asset_id = a.id
-                        ORDER BY a.symbol
-                        """
-                    ).fetchall()
-                ]
-            _ensure_unambiguous_symbols(
-                connection,
-                [*training_symbols, payload.benchmark_symbol],
-            )
-            return MLTrainOut(**ml_engine.train_model(connection, payload))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            symbols, _warnings = ml_engine._resolve_training_symbols(connection, payload)
+            _ensure_unambiguous_symbols(connection, [*symbols, payload.benchmark_symbol])
+        record = get_job_service().enqueue("ML_TRAIN", payload.model_dump(mode="json"))
+    except LabError as exc:
+        raise _lab_conflict(exc) from None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Nessun asset con dati prezzo disponibile per il training ML.") from None
+    return JobOut(**asdict(record))
 
 
 @router.get("/ml/models", response_model=list[MLModelSummaryOut])
@@ -912,6 +899,8 @@ def ml_predict(symbol: str, payload: MLPredictIn | None = None) -> MLPredictionO
             return MLPredictionOut(
                 **ml_engine.predict_for_symbol(connection, symbol, payload.model_id if payload else None)
             )
+    except LabError as exc:
+        raise _lab_conflict(exc) from None
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -922,6 +911,8 @@ def ml_predict_all(payload: MLPredictIn | None = None) -> MLPredictAllOut:
         with db_session() as connection:
             _ensure_unambiguous_symbols(connection, _selected_asset_symbols(connection))
             return MLPredictAllOut(**ml_engine.predict_all_watchlist(connection, payload.model_id if payload else None))
+    except LabError as exc:
+        raise _lab_conflict(exc) from None
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

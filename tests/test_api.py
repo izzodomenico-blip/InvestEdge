@@ -1313,6 +1313,7 @@ def test_ml_dataset_has_no_lookahead(client: TestClient) -> None:
             symbols=["AAPL", "MSFT", "SPY"],
             horizon_days=14,
             target_type="POSITIVE_RETURN",
+            data_mode="DEMO",
         )
     assert not dataset.empty
     assert set(FEATURE_COLUMNS).issubset(dataset.columns)
@@ -1324,8 +1325,7 @@ def test_ml_train_reports_insufficient_split_after_temporal_purge(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from backend.app.api.routes import ml_engine
-    from backend.app.services.ml_dataset_service import FEATURE_COLUMNS
+    from backend.app.services.ml_dataset_service import FEATURE_COLUMNS, MLDatasetService
 
     feature_dates = pd.date_range("2026-01-01", periods=20, freq="D")
     dataset = pd.DataFrame(
@@ -1338,7 +1338,7 @@ def test_ml_train_reports_insufficient_split_after_temporal_purge(
     )
     for index, column in enumerate(FEATURE_COLUMNS, start=1):
         dataset[column] = float(index)
-    monkeypatch.setattr(ml_engine.dataset_service, "build_ml_dataset", lambda **_kwargs: dataset.copy())
+    monkeypatch.setattr(MLDatasetService, "build_ml_dataset", lambda self, **_kwargs: dataset.copy())
 
     response = client.post(
         "/ml/train",
@@ -1351,13 +1351,16 @@ def test_ml_train_reports_insufficient_split_after_temporal_purge(
         },
     )
 
-    assert response.status_code == 400
-    assert "dopo la purga temporale" in response.json()["detail"].lower()
+    assert response.status_code == 202
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["error_code"] == "ML_TRAIN_FAILED"
+    assert "dopo la purga temporale" in response.json()["error_message"].lower()
 
 
 def test_ml_train_and_predict(client: TestClient) -> None:
     train_payload = {
         "model_name": "Test GB",
+        "data_mode": "DEMO",
         "model_type": "HIST_GRADIENT_BOOSTING",
         "target_type": "POSITIVE_RETURN",
         "horizon_days": 14,
@@ -1366,8 +1369,11 @@ def test_ml_train_and_predict(client: TestClient) -> None:
         "cv_folds": 3,
     }
     train_response = client.post("/ml/train", json=train_payload)
-    assert train_response.status_code == 200
-    train_data = train_response.json()
+    assert train_response.status_code == 202
+    job = train_response.json()
+    assert job["kind"] == "ML_TRAIN"
+    assert job["status"] == "SUCCEEDED"
+    train_data = job["result"]
     assert train_data["model_id"] > 0
     metrics = train_data["metrics"]
     assert 0.0 <= metrics["accuracy"] <= 1.0
@@ -1380,6 +1386,8 @@ def test_ml_train_and_predict(client: TestClient) -> None:
     assert predict_response.status_code == 200
     prediction = predict_response.json()
     assert prediction["symbol"] == "AAPL"
+    assert prediction["pipeline_version"] == "features-v1"
+    assert prediction["data_mode"] == "DEMO"
     assert prediction["confidence"] in {"LOW", "MEDIUM", "HIGH"}
     assert prediction["predicted_label"]
 
@@ -5737,3 +5745,115 @@ def test_trade_republic_attestation_concurrent_applies_keep_one_active_version(
     listing_state, attestations = _trade_republic_state(listing_id)
     assert [(row[1], row[3]) for row in attestations] == [(1, "RETIRED"), (2, "ACTIVE")]
     assert listing_state[:2] == ("VERIFIED", "2026-09-28T08:00:00Z")
+
+@pytest.mark.parametrize("endpoint", ["/ml/predict/AAPL", "/ml/predict-all"])
+def test_model_without_pipeline_version_is_rejected(client, endpoint):
+    from backend.app.database import db_session
+    with db_session() as connection:
+        connection.execute(
+            "INSERT INTO ml_models (model_name, model_type, target_type, horizon_days, features_json) "
+            "VALUES ('Legacy', 'LOGISTIC_REGRESSION', 'POSITIVE_RETURN', 5, '[]')")
+    response = client.post(endpoint, json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["reason_code"] == "MODEL_PIPELINE_MISMATCH"
+    assert "riaddestra" in response.json()["detail"]["message"].lower()
+
+
+def test_demo_model_predicts_only_demo_features(client):
+    from backend.app.database import db_session
+    from backend.app.services.ml_dataset_service import MLDatasetService
+    from tests.lab_fixtures import insert_asset, insert_bars, synthetic_bars
+
+    with db_session() as connection:
+        asset_id = int(connection.execute("SELECT id FROM assets WHERE symbol='AAPL'").fetchone()[0])
+        insert_bars(connection, asset_id, synthetic_bars(400, seed=91), real=True, provider=None)
+        only_real = insert_asset(connection, "REALONLY")
+        insert_bars(connection, only_real, synthetic_bars(400, seed=92), real=True, provider=None)
+    response = client.post("/ml/train", json={"model_name": "Demo", "model_type": "LOGISTIC_REGRESSION",
+        "symbols": ["AAPL", "MSFT"], "data_mode": "DEMO", "horizon_days": 5, "min_samples": 20, "cv_folds": 2})
+    assert response.status_code == 202
+    assert response.json()["status"] == "SUCCEEDED"
+    model_id = response.json()["result"]["model_id"]
+    with db_session() as connection:
+        expected = MLDatasetService().build_features_for_symbol(connection, "AAPL", "DEMO")
+    prediction = client.post("/ml/predict/AAPL", json={"model_id": model_id})
+    assert prediction.status_code == 200
+    assert prediction.json()["features_snapshot"] == expected
+    all_predictions = client.post("/ml/predict-all", json={"model_id": model_id})
+    assert all_predictions.status_code == 200
+    assert not any(row["symbol"] == "REALONLY" for row in all_predictions.json()["predictions"])
+    assert any("REALONLY" in warning for warning in all_predictions.json()["warnings"])
+    model = next(row for row in client.get("/ml/models").json() if row["id"] == model_id)
+    assert model["data_mode"] == "DEMO"
+    assert model["pipeline_version"] == "features-v1"
+    assert model["model_path"] is None
+
+
+@pytest.mark.parametrize("mismatch", ["db_version", "db_features", "db_mode", "bundle_version", "bundle_features", "bundle_mode"])
+@pytest.mark.parametrize("endpoint", ["/ml/predict/AAPL", "/ml/predict-all"])
+def test_model_metadata_and_bundle_must_match_pipeline(client, mismatch, endpoint):
+    import json
+
+    import joblib
+
+    from backend.app.database import db_session
+    from backend.app.models import MLTrainIn
+    from backend.app.services.ml_engine import MLEngine
+
+    with db_session() as connection:
+        result = MLEngine().train_model(connection, MLTrainIn(model_name="Versioned", data_mode="DEMO",
+            symbols=["AAPL", "MSFT"], model_type="LOGISTIC_REGRESSION", horizon_days=5, min_samples=20, cv_folds=2))
+        model_id = result["model_id"]
+        path = connection.execute("SELECT model_path FROM ml_models WHERE id=?", (model_id,)).fetchone()[0]
+        if mismatch.startswith("db_"):
+            column, value = {"db_version": ("pipeline_version", "features-v0"),
+                             "db_features": ("features_json", json.dumps(["score"])),
+                             "db_mode": ("data_mode", None)}[mismatch]
+            connection.execute(f"UPDATE ml_models SET {column}=? WHERE id=?", (value, model_id))
+        else:
+            bundle = joblib.load(path)
+            key, value = {"bundle_version": ("pipeline_version", "features-v0"),
+                          "bundle_features": ("features", ["score"]),
+                          "bundle_mode": ("data_mode", "REAL")}[mismatch]
+            bundle[key] = value
+            joblib.dump(bundle, path)
+    response = client.post(endpoint, json={"model_id": model_id})
+    assert response.status_code == 409
+    assert response.json()["detail"]["reason_code"] == "MODEL_PIPELINE_MISMATCH"
+    with db_session() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ml_predictions").fetchone()[0] == 0
+
+
+def test_ml_job_error_does_not_expose_internal_exception(client, monkeypatch):
+    from backend.app.services.ml_dataset_service import MLDatasetService
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("fixture-private-path")
+    monkeypatch.setattr(MLDatasetService, "build_ml_dataset", fail)
+    response = client.post("/ml/train", json={"model_name": "Safe failure", "symbols": ["AAPL"], "data_mode": "DEMO"})
+    assert response.status_code == 202
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["error_code"] == "ML_TRAIN_FAILED"
+    assert "fixture-private-path" not in response.text
+    assert response.json()["result"] is None
+
+
+def test_unreadable_model_error_is_sanitized(client, monkeypatch):
+    import joblib
+
+    from backend.app.database import db_session
+    from backend.app.models import MLTrainIn
+    from backend.app.services.ml_engine import MLEngine
+
+    with db_session() as connection:
+        result = MLEngine().train_model(connection, MLTrainIn(model_name="Unreadable", data_mode="DEMO",
+            symbols=["AAPL"], model_type="LOGISTIC_REGRESSION", horizon_days=5, min_samples=20, cv_folds=2))
+
+    def fail(_path):
+        raise ValueError("fixture-private-path")
+
+    monkeypatch.setattr(joblib, "load", fail)
+    response = client.post("/ml/predict/AAPL", json={"model_id": result["model_id"]})
+    assert response.status_code == 400
+    assert "riaddestra" in response.json()["detail"].lower()
+    assert "fixture-private-path" not in response.text

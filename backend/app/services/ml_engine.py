@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import statistics
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from backend.app.config import get_settings
+from backend.app.lab.contracts import PIPELINE_VERSION, LabError
 from backend.app.models import MLTrainIn
 from backend.app.services.common import now_utc as _now
 from backend.app.services.ml_dataset_service import FEATURE_COLUMNS, MLDatasetService, validate_split_no_lookahead
@@ -40,7 +43,12 @@ class MLEngine:
             "message": "ML pronto." if models_count > 0 else "Nessun modello ML disponibile. Addestra un modello da AI Lab.",
         }
 
-    def train_model(self, connection: sqlite3.Connection, config: MLTrainIn) -> dict[str, Any]:
+    def train_model(
+        self, connection: sqlite3.Connection, config: MLTrainIn,
+        *, checkpoint: Callable[[float], None] | None = None,
+    ) -> dict[str, Any]:
+        step = checkpoint or (lambda _progress: None)
+        step(0.0)
         selected_symbols, selection_warnings = self._resolve_training_symbols(connection, config)
         storage_config = config.model_copy(update={"symbols": selected_symbols})
         dataset = self.dataset_service.build_ml_dataset(
@@ -49,7 +57,9 @@ class MLEngine:
             horizon_days=config.horizon_days,
             target_type=config.target_type,
             benchmark_symbol=config.benchmark_symbol,
+            data_mode=config.data_mode,
         )
+        step(0.2)
         if len(dataset) < config.min_samples:
             raise ValueError(
                 f"Pochi dati per il training: {len(dataset)} campioni disponibili, minimo richiesto {config.min_samples}."
@@ -67,8 +77,9 @@ class MLEngine:
         model = self._build_model(config.model_type)
         model.fit(x_train, y_train)
 
+        step(0.45)
         metrics = self.evaluate_model(model, x_test, y_test)
-        metrics["walk_forward"] = self._walk_forward_cv(dataset, config.model_type, config.cv_folds)
+        metrics["walk_forward"] = self._walk_forward_cv(dataset, config.model_type, config.cv_folds, checkpoint=step)
         warnings = selection_warnings + self._training_warnings(metrics, len(dataset))
         explanation = self.explain_model_basic(model)
         if not explanation.get("feature_importance"):
@@ -80,18 +91,33 @@ class MLEngine:
         metrics["train_samples"] = int(len(train))
         metrics["test_samples"] = int(len(test))
 
-        now = _now()
-        training_run_id = self._insert_training_run(connection, storage_config, train, test, metrics, now)
-        metrics["training_run_id"] = training_run_id
-        model_id = self._insert_model(connection, storage_config, metrics, now)
-        model_path = self.save_model(model, model_id, storage_config, metrics)
-        connection.execute("UPDATE ml_models SET model_path = ? WHERE id = ?", (str(model_path), model_id))
+        # Staging fuori dal write lock: cancel/progress usano un'altra connessione.
+        model_path = self.save_model(model, None, storage_config, metrics)
+        try:
+            step(0.95)
+            now = _now()
+            connection.execute("SAVEPOINT ml_training")
+            try:
+                training_run_id = self._insert_training_run(connection, storage_config, train, test, metrics, now)
+                metrics["training_run_id"] = training_run_id
+                model_id = self._insert_model(connection, storage_config, metrics, now)
+                connection.execute("UPDATE ml_models SET model_path = ? WHERE id = ?", (str(model_path), model_id))
+                connection.execute("RELEASE SAVEPOINT ml_training")
+            except BaseException:
+                connection.execute("ROLLBACK TO SAVEPOINT ml_training")
+                connection.execute("RELEASE SAVEPOINT ml_training")
+                raise
+        except BaseException:
+            model_path.unlink(missing_ok=True)
+            raise
 
         return {
             "model_id": model_id,
             "training_run": self.get_training_run(connection, training_run_id),
             "metrics": metrics,
             "features_used": FEATURE_COLUMNS,
+            "pipeline_version": PIPELINE_VERSION,
+            "data_mode": config.data_mode,
             "warnings": warnings,
         }
 
@@ -111,7 +137,10 @@ class MLEngine:
             metrics["roc_auc"] = None
         return metrics
 
-    def _walk_forward_cv(self, dataset: pd.DataFrame, model_type: str, folds: int) -> dict[str, Any] | None:
+    def _walk_forward_cv(
+        self, dataset: pd.DataFrame, model_type: str, folds: int,
+        *, checkpoint: Callable[[float], None] | None = None,
+    ) -> dict[str, Any] | None:
         """Validazione walk-forward a finestra espansiva: media metriche su piu periodi futuri."""
         fold_data = self.dataset_service.walk_forward_folds(dataset, folds)
         if not fold_data:
@@ -119,7 +148,9 @@ class MLEngine:
         accuracies: list[float] = []
         f1_values: list[float] = []
         auc_values: list[float] = []
-        for train, test in fold_data:
+        for index, (train, test) in enumerate(fold_data):
+            if checkpoint:
+                checkpoint(0.45 + 0.35 * index / len(fold_data))
             validate_split_no_lookahead(train, test)
             if train["target"].nunique() < 2 or test.empty:
                 continue
@@ -140,36 +171,53 @@ class MLEngine:
             "roc_auc_mean": round(statistics.fmean(auc_values), 6) if auc_values else None,
         }
 
-    def save_model(self, model: Pipeline, model_id: int, config: MLTrainIn, metrics: dict[str, Any]) -> Path:
+    def save_model(self, model: Pipeline, model_id: int | None, config: MLTrainIn, metrics: dict[str, Any]) -> Path:
         model_dir = get_settings().database_path.parent / "ml_models"
         model_dir.mkdir(parents=True, exist_ok=True)
-        model_path = model_dir / f"ml_model_{model_id}.joblib"
-        joblib.dump(
-            {
-                "model": model,
-                "features": FEATURE_COLUMNS,
-                "metadata": {
-                    "model_id": model_id,
-                    "model_name": config.model_name,
-                    "model_type": config.model_type,
-                    "target_type": config.target_type,
-                    "horizon_days": config.horizon_days,
-                    "metrics": metrics,
-                },
-            },
-            model_path,
-        )
+        model_path = model_dir / (f"ml_model_{model_id}.joblib" if model_id is not None
+                                  else f"ml_candidate_{uuid.uuid4().hex}.joblib")
+        temporary = model_dir / f".ml_model_{model_id}_{uuid.uuid4().hex}.tmp"
+        try:
+            joblib.dump(
+                {"model": model, "features": FEATURE_COLUMNS, "pipeline_version": PIPELINE_VERSION,
+                 "data_mode": config.data_mode,
+                 "metadata": {"model_name": config.model_name,
+                              "model_type": config.model_type, "target_type": config.target_type,
+                              "horizon_days": config.horizon_days, "metrics": metrics}},
+                temporary,
+            )
+            temporary.replace(model_path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return model_path
 
     def load_model(self, connection: sqlite3.Connection, model_id: int) -> tuple[Pipeline, dict[str, Any]]:
         model_row = connection.execute("SELECT * FROM ml_models WHERE id = ?", (model_id,)).fetchone()
         if model_row is None:
             raise ValueError("Modello ML non trovato.")
+        metadata = self._model_row_to_dict(model_row)
+        self._validate_model_pipeline(metadata)
         model_path = model_row["model_path"]
         if not model_path or not Path(model_path).exists():
             raise ValueError("File modello ML non disponibile. Riaddestra il modello.")
-        bundle = joblib.load(model_path)
-        return bundle["model"], self._model_row_to_dict(model_row)
+        try:
+            bundle = joblib.load(model_path)
+        except Exception:
+            raise ValueError("File modello ML non leggibile. Riaddestra il modello.") from None
+        if (not isinstance(bundle, dict) or bundle.get("pipeline_version") != PIPELINE_VERSION
+                or bundle.get("features") != FEATURE_COLUMNS or bundle.get("data_mode") != metadata["data_mode"]
+                or "model" not in bundle):
+            raise self._pipeline_mismatch()
+        return bundle["model"], metadata
+
+    @staticmethod
+    def _pipeline_mismatch() -> LabError:
+        return LabError("MODEL_PIPELINE_MISMATCH", "Modello creato con una pipeline incompatibile: riaddestra il modello.")
+
+    def _validate_model_pipeline(self, metadata: dict[str, Any]) -> None:
+        if (metadata.get("pipeline_version") != PIPELINE_VERSION or metadata.get("features") != FEATURE_COLUMNS
+                or metadata.get("data_mode") not in {"REAL", "DEMO"}):
+            raise self._pipeline_mismatch()
 
     def predict_for_symbol(
         self,
@@ -182,10 +230,10 @@ class MLEngine:
             raise ValueError("Nessun modello ML disponibile. Addestra un modello da AI Lab.")
 
         model, metadata = self.load_model(connection, int(selected_model["id"]))
-        features = self.dataset_service.build_features_for_symbol(connection, symbol)
+        features = self.dataset_service.build_features_for_symbol(connection, symbol, metadata["data_mode"])
         if not features:
             raise ValueError(f"Feature ML non disponibili per {symbol.upper()}.")
-        x_frame = pd.DataFrame([{column: features.get(column, 0.0) for column in FEATURE_COLUMNS}])
+        x_frame = pd.DataFrame([{column: features.get(column, np.nan) for column in FEATURE_COLUMNS}])
         probability = float(self._positive_probabilities(model, x_frame)[0])
         predicted_label = self._label_from_probability(metadata["target_type"], probability)
         confidence, warnings = self._confidence(probability, metadata["metrics"])
@@ -218,7 +266,7 @@ class MLEngine:
                 probabilities["probability_drawdown"],
                 predicted_label,
                 confidence,
-                json.dumps(features),
+                json.dumps(features, allow_nan=False),
                 json.dumps(explanation),
                 now,
             ),
@@ -227,6 +275,8 @@ class MLEngine:
             "id": int(cursor.lastrowid),
             "symbol": symbol.upper(),
             "model_id": metadata["id"],
+            "pipeline_version": metadata["pipeline_version"],
+            "data_mode": metadata["data_mode"],
             "horizon_days": metadata["horizon_days"],
             "target_type": metadata["target_type"],
             "prediction_date": now[:10],
@@ -244,6 +294,8 @@ class MLEngine:
         selected_model = self.get_model(connection, model_id) if model_id else self._latest_model(connection)
         if selected_model is None:
             raise ValueError("Nessun modello ML disponibile. Addestra un modello da AI Lab.")
+        # Verifica globale prima del fail-soft per asset: mismatch resta un errore 409.
+        self.load_model(connection, int(selected_model["id"]))
         symbols = [
             row["symbol"]
             for row in connection.execute("SELECT symbol FROM assets ORDER BY asset_type, symbol").fetchall()
@@ -253,6 +305,8 @@ class MLEngine:
         for symbol in symbols:
             try:
                 predictions.append(self.predict_for_symbol(connection, symbol, int(selected_model["id"])))
+            except LabError:
+                raise
             except ValueError as exc:
                 warnings.append(f"{symbol}: {exc}")
         return {"model_id": int(selected_model["id"]), "predictions": predictions, "warnings": warnings}
@@ -272,8 +326,10 @@ class MLEngine:
                     SELECT DISTINCT a.symbol
                     FROM assets a
                     JOIN price_history ph ON ph.asset_id = a.id
+                    WHERE ph.is_real_data = ?
                     ORDER BY a.symbol
-                    """
+                    """,
+                    (1 if config.data_mode == "REAL" else 0,),
                 ).fetchall()
             ]
             warnings.append("Training su tutti gli asset con storico prezzi locale.")
@@ -296,7 +352,7 @@ class MLEngine:
         negative = metrics.get("top_features_negative", [])
         important_names = [item["feature"] for item in positive[:5] if isinstance(item, dict) and "feature" in item]
         important_names += [item["feature"] for item in negative[:5] if isinstance(item, dict) and "feature" in item]
-        feature_values = {name: round(float(features.get(name, 0.0)), 6) for name in dict.fromkeys(important_names)}
+        feature_values = {name: round(float(features[name]), 6) for name in dict.fromkeys(important_names) if name in features}
         return {
             "probability": round(probability, 6),
             "top_features_positive": positive[:6],
@@ -331,10 +387,10 @@ class MLEngine:
     def latest_predictions(self, connection: sqlite3.Connection, symbol: str, limit: int = 10) -> list[dict[str, Any]]:
         rows = connection.execute(
             """
-            SELECT *
-            FROM ml_predictions
-            WHERE UPPER(symbol) = UPPER(?)
-            ORDER BY created_at DESC, id DESC
+            SELECT p.*, m.pipeline_version, m.data_mode
+            FROM ml_predictions p LEFT JOIN ml_models m ON m.id = p.model_id
+            WHERE UPPER(p.symbol) = UPPER(?)
+            ORDER BY p.created_at DESC, p.id DESC
             LIMIT ?
             """,
             (symbol, max(1, min(limit, 50))),
@@ -345,7 +401,7 @@ class MLEngine:
         if model_type == "LOGISTIC_REGRESSION":
             return Pipeline(
                 steps=[
-                    ("imputer", SimpleImputer(strategy="median")),
+                    ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
                     ("scaler", StandardScaler()),
                     ("model", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
                 ]
@@ -353,7 +409,7 @@ class MLEngine:
         if model_type == "RANDOM_FOREST":
             return Pipeline(
                 steps=[
-                    ("imputer", SimpleImputer(strategy="median")),
+                    ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
                     (
                         "model",
                         RandomForestClassifier(
@@ -549,9 +605,9 @@ class MLEngine:
             """
             INSERT INTO ml_models (
                 model_name, model_type, target_type, horizon_days, symbols_scope,
-                features_json, metrics_json, model_path, trained_at, created_at
+                features_json, metrics_json, model_path, trained_at, created_at, pipeline_version, data_mode
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 config.model_name,
@@ -564,6 +620,8 @@ class MLEngine:
                 "",
                 now,
                 now,
+                PIPELINE_VERSION,
+                config.data_mode,
             ),
         )
         return int(cursor.lastrowid)
@@ -586,7 +644,9 @@ class MLEngine:
             "symbols_scope": self._json_value(row["symbols_scope"], []),
             "features": self._json_value(row["features_json"], []),
             "metrics": self._json_value(row["metrics_json"], {}),
-            "model_path": row["model_path"],
+            "model_path": None,
+            "pipeline_version": row["pipeline_version"],
+            "data_mode": row["data_mode"],
             "trained_at": row["trained_at"],
             "created_at": row["created_at"],
         }
@@ -628,6 +688,8 @@ class MLEngine:
             **probabilities,
             "predicted_label": row["predicted_label"],
             "confidence": row["confidence"] or "LOW",
+            "pipeline_version": row["pipeline_version"],
+            "data_mode": row["data_mode"],
             "features_snapshot": self._json_value(row["features_snapshot_json"], {}),
             "explanation": explanation,
             "warnings": explanation.get("warnings", []) if isinstance(explanation, dict) else [],

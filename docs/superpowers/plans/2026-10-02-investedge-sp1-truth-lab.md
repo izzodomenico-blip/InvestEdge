@@ -1293,9 +1293,11 @@ MLEngine.predict_for_symbol(...)  # modello senza pipeline_version o con version
 
 Il bundle `joblib` salva `pipeline_version`, `data_mode` e `features`; la previsione usa le feature dell'asset nel `data_mode` del modello (asset senza righe in quel modo → avviso per asset in `predict-all`). Nessuna feature news o di portafoglio.
 
-- [ ] **Step 1: Test RED**: `test_dataset_columns_are_pipeline_v1_only` (nessuna colonna `news_*`, `portfolio_weight`, `current_recommendation_encoded`); `test_ml_row_equals_features_daily_row` (score e `rsi_14` alla data *t* uguali alla riga di `features_daily`); `test_targets_do_not_cross_segments`; `test_model_without_pipeline_version_is_rejected` (409 `MODEL_PIPELINE_MISMATCH`); `test_demo_model_predicts_only_demo_features`; API `POST /ml/train` → 202 e job `SUCCEEDED` con `model_id`; i test esistenti di look-ahead e walk-forward ML restano verdi.
+- [x] **Step 1: Test RED**: `test_dataset_columns_are_pipeline_v1_only` (nessuna colonna `news_*`, `portfolio_weight`, `current_recommendation_encoded`); `test_ml_row_equals_features_daily_row` (score e `rsi_14` alla data *t* uguali alla riga di `features_daily`); `test_targets_do_not_cross_segments`; `test_model_without_pipeline_version_is_rejected` (409 `MODEL_PIPELINE_MISMATCH`); `test_demo_model_predicts_only_demo_features`; API `POST /ml/train` → 202 e job `SUCCEEDED` con `model_id`; i test esistenti di look-ahead e walk-forward ML restano verdi.
 - [ ] **Step 2: RED**, **Step 3: implementare**, **Step 4: GREEN** (`tests\test_ml_dataset.py`, `tests\test_lab_boundaries.py`, suite completa, Ruff).
 - [ ] **Step 5: Chiusura**
+
+**Stato 2026-10-10:** implementazione e review pronte; 69 test mirati verdi, 1002 backend passati e un test storico news fallito per metodo ML rimosso. Richiesta estensione al solo test in `tests/test_news_providers.py`, candidato offline verificato in memoria ma non applicato. Task IN CORSO fino al gate completo verde.
 
 Commit: `feat: train ML on the shared feature pipeline`
 

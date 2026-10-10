@@ -751,6 +751,8 @@ CREATE TABLE IF NOT EXISTS ml_models (
     features_json TEXT,
     metrics_json TEXT,
     model_path TEXT,
+    pipeline_version TEXT,
+    data_mode TEXT CHECK(data_mode IN ('REAL', 'DEMO')),
     trained_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -1395,6 +1397,10 @@ MIGRATIONS = {
         ("exposure", "ALTER TABLE backtest_runs ADD COLUMN exposure REAL"),
         # R2: niente backfill sui run storici; NULL significa snapshot mai registrato.
         ("benchmark_snapshot_json", "ALTER TABLE backtest_runs ADD COLUMN benchmark_snapshot_json TEXT"),
+    ],
+    "ml_models": [
+        ("pipeline_version", "ALTER TABLE ml_models ADD COLUMN pipeline_version TEXT"),
+        ("data_mode", "ALTER TABLE ml_models ADD COLUMN data_mode TEXT CHECK(data_mode IN (\'REAL\', \'DEMO\'))"),
     ],
     "backtest_trades": [
         ("commission", "ALTER TABLE backtest_trades ADD COLUMN commission REAL"),

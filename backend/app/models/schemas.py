@@ -370,6 +370,7 @@ class ImportStatusOut(BaseModel):
 
 
 class MLTrainIn(BaseModel):
+    data_mode: DataMode = "REAL"
     model_name: str = Field(..., min_length=1, max_length=120)
     model_type: MLModelType = "HIST_GRADIENT_BOOSTING"
     target_type: MLTargetType = "POSITIVE_RETURN"
@@ -404,6 +405,8 @@ class MLTrainingRunOut(BaseModel):
 
 
 class MLModelSummaryOut(BaseModel):
+    pipeline_version: str | None = None
+    data_mode: DataMode | None = None
     id: int
     model_name: str
     model_type: str
@@ -422,6 +425,8 @@ class MLModelDetailOut(MLModelSummaryOut):
 
 
 class MLPredictionOut(BaseModel):
+    pipeline_version: str | None = None
+    data_mode: DataMode | None = None
     id: int | None = None
     symbol: str
     model_id: int
@@ -441,6 +446,8 @@ class MLPredictionOut(BaseModel):
 
 
 class MLTrainOut(BaseModel):
+    pipeline_version: str | None = None
+    data_mode: DataMode | None = None
     model_id: int
     training_run: MLTrainingRunOut
     metrics: dict[str, Any]

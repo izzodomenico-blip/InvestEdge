@@ -2,18 +2,19 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (SP1 Task 12 verificato e chiuso; prossimo passo Task 13; R1–R4 chiuse).
+Ultimo aggiornamento: 2026-10-10 (SP1 Task 13 IN CORSO; R1–R4 e Task 12 chiusi).
 
 ## Prossimo passo
 
-**SP1 Task 13 — ML sulla pipeline condivisa.**
+**SP1 Task 13 — completare il gate offline della migrazione ML.**
 
-- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer. Task 13 NON INIZIATO.
-- Branch previsto: `investedge/sp1-task-13` da `origin/investedge/sp1-task-12`, dopo verifica SHA remoto e working tree pulito. Registrare lo SHA Task 12 nel commit successivo. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente; checkout locale Task 6 e `origin/main` Task 10 restano preservati.
-- Ingressi Task 12: harness REAL con orizzonti 1/5/21 sedute, report immutabili, job `EVIDENCE` e API. Verifiche: **56 regressioni Task 12**, **955 backend passati + 1 xfail strict atteso Task 13**, Ruff e pip check verdi; due review indipendenti PASS.
-- Task 13: feature e score esclusivamente da `features_daily`; target senza attraversare segmenti, modello versionato e separato REAL/DEMO, job `ML_TRAIN` e 409 per pipeline incompatibile. Rimuovere l'xfail di confine ML quando la migrazione è verificata.
-- Ordine vincolante: **P → R1 → R2 → R3 → R4 → Task 12 → 13 → 14 → 15 → 16**. P, R1–R4 e Task 12 FATTI. Il gate audit R4 resta l'evidenza frontend: 0 high/critical/moderate, 1 low dev; frontend non modificato né riverificato nel Task 12.
-- I report D/W/M di SP1 e le fixture predittive sintetiche verificano il software: non validano strategie intraday 15–30 minuti. Alpaca paper senza leva e la leva eventuale richiedono i gate successivi.
+- IN CORSO, owner Codex; stessa chat autorizzata dall'utente. Branch remoto `investedge/sp1-task-13` pubblicato dalla base Task 12 `23d9b86503e6a98ec096d84b9ad31b6ca26b4fd2` verificata.
+- Implementazione pronta: 31 feature condivise, target rettificati per segmento, REAL/DEMO isolati, bundle/DB versionati, job `ML_TRAIN` e 409 per modello incompatibile. Due review indipendenti PASS.
+- **69 test mirati verdi**, Ruff/pip check/diff check verdi. Gate completo: `pytest -o addopts= -q -p no:cacheprovider` = **1002 passati, 1 fallito, 0 errori/xfail**. Unico fallimento: test storico news che chiama il metodo ML eliminato.
+- Conferma richiesta per il solo test `tests/test_news_providers.py`, fuori dall'elenco Task 13. Candidato verificato in memoria con rete bloccata: conserva sentiment REAL/DEMO e verifica l'assenza di colonne news nel dataset ML non vuoto. Non applicato senza risposta.
+- Dopo la conferma: aggiornare quel test e il perimetro del piano, ripetere il gate completo e chiudere Task 13 con commit, push e verifica SHA remoto. Solo dopo avviare il Task 14.
+- **Limite di sequenza:** la pagina ML usa ancora il training sincrono; adattamento a `202 JobOut` e messaggio di riaddestramento nel Task 15. Il flusso frontend ML resta da completare.
+- Nessun merge, provider live, trading o database reale. Intraday e Alpaca paper senza leva restano ai gate successivi.
 
 ## Legenda
 
@@ -275,8 +276,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | R2 | Benchmark congelato e impronta completa | FATTO | `caf388c`; evidenza sotto | 2026-10-10 | Codex |
 | R3 | Contratti asincroni frontend e indicatori Analisi | FATTO | `75cef429023e9badfe239e9895c6f7fa31a16816`; evidenza/deroga audit sotto | 2026-10-10 | Codex |
 | R4 | Correzione dipendenze frontend e gate audit | FATTO | `4f8f28052d3e3323a83f9f2bab3a06d1d35bebe1`; branch `investedge/sp1-remediation-4`; 68 frontend, 897 backend + 1 xfail, audit 0 high/critical | 2026-10-10 | Codex |
-| 12 | Harness di valutazione, report di evidenza e verdetto | FATTO | branch `investedge/sp1-task-12`; pytest 56 mirati, 955 backend + 1 xfail; Ruff/pip check; review PASS | 2026-10-10 | Codex |
-| 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
+| 12 | Harness di valutazione, report di evidenza e verdetto | FATTO | `23d9b86503e6a98ec096d84b9ad31b6ca26b4fd2`; pytest 56 mirati, 955 backend + 1 xfail; Ruff/pip check; review PASS | 2026-10-10 | Codex |
+| 13 | ML sulla pipeline condivisa | IN CORSO | `investedge/sp1-task-13` | 2026-10-10 | Codex |
 | 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
 | 15 | Evidenza, badge del verdetto e pagina ML | NON INIZIATO | — | — | — |
 | 16 | Prestazioni, documentazione e verifica finale SP1 | NON INIZIATO | — | — | — |
@@ -759,7 +760,7 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 
 ## Note di ripresa
 
-- Riprendere dal solo `origin/investedge/sp1-task-12` per SP1 Task 13, verificando SHA remoto e working tree pulito; registrare lo SHA Task 12 nel commit successivo. P, R1–R4 e Task 12 chiusi; Task 12 = 56 regressioni mirate, 955 backend + 1 xfail strict atteso Task 13, Ruff/pip check e review PASS. Task 13–16 NON INIZIATI. R4 SHA `4f8f28052d3e3323a83f9f2bab3a06d1d35bebe1` registrato; checkout originale Task 6 preservato.
+- Checkpoint `chore: checkpoint sp1 task 13 shared ML pending legacy news test`; riprendere dal solo `origin/investedge/sp1-task-13`, owner Codex, dopo conferma sull'aggiornamento del solo test news fuori perimetro. Codice e review pronti; 69 mirati verdi, gate completo 1002 passati/1 fallito per il metodo news legacy rimosso. Task 13 IN CORSO, Task 14–16 NON INIZIATI. SHA Task 12 registrato; checkout originale Task 6 preservato.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
@@ -769,3 +770,14 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 - `npm audit` dipende da advisory pubblicati dopo l'ultimo task: il gate puo fallire senza modifiche al codice.
 - `pytest.ini` imposta gia `addopts = -q`: aggiungere `-q` nasconde la riga di riepilogo; usare `--junitxml` per i conteggi.
 - Lo script di secret scan del piano Fase 2 segnala come candidati anche riferimenti a codice (assegnazioni di token calcolati da metodi o letti dalle settings): classificare ogni candidato rispetto alla riga sorgente prima di trattarlo come segreto.
+
+Evidenza SP1 Task 13 in corso (2026-10-10, Codex):
+
+- richiesta utente: pipeline ML condivisa con isolamento REAL/DEMO, verifiche offline, review, commit, push e programma; stessa chat autorizzata;
+- base Task 12 `23d9b86503e6a98ec096d84b9ad31b6ca26b4fd2` e branch lock verificati. RED iniziale **22 falliti/22 passati**; RED lista31 **1 fallito**, staging/cancel **2 falliti/1 passato**, sanitizzazione joblib **1 fallito**;
+- eliminati indicatori/score duplicati, news, portafoglio e raccomandazioni. Training/inference leggono `features_daily` D complete. Null imputati solo nel train, snapshot JSON finito, predizione corrente senza righe pre-split;
+- target su close rettificati e barre proprie entro segmento; drawdown di almeno8% rispetto al prezzo iniziale con finestra finita/positiva; OUTPERFORM disponibile al massimo degli endpoint asset/benchmark; target futuri esclusi. Split/purge/CV conservati. Due mutazioni delle guardie falliscono, sorgente ripristinato;
+- migrazione additive/nullable senza assegnare versione ai legacy. Bundle/DB richiedono `features-v1`, modo coerente e lista31 ordinata: 409 per mismatch su entrambe le API, warning per asset senza dati nel modo del modello. Path interno non esposto;
+- `ML_TRAIN`: 202, risultato/model_id e checkpoint cooperativi. Staging prima del write lock, checkpoint successivo, rollback e file cleanup su errore/cancel prima del commit. Una chiamata sklearn iniziata termina prima del checkpoint seguente;
+- `pytest tests/test_ml_dataset.py tests/test_lab_boundaries.py tests/test_api.py -k 'ml or model_without or demo_model or imputer or model_metadata or unreadable_model' -o addopts= -q -p no:cacheprovider` = **69 passati**; suite completa = **1002 passati/1 fallito**, solo vecchio test news fuori perimetro. Ruff, pip check, diff check verdi; due review PASS; due deprecazioni Starlette preesistenti;
+- JUnit/log/candidato patch nello scratch `C:/Users/izzod/.codex/visualizations/2026/10/10/01a12426-1877-7ea2-86f8-9a7c6a04e505/task13-verification`. Candidato news PASS in memoria, senza scrivere il sorgente; conferma richiesta. Task 13 IN CORSO, Task 14–16 NON INIZIATI. Frontend ML previsto nel Task 15.

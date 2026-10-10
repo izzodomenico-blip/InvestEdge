@@ -20,8 +20,8 @@ GUARDED_SERVICES = (
     "signals_service.py",
     "market_data_service.py",
 )
-# Riscritto nel Task 13 (ML), che rimuove la propria voce (il Task 10 ha rimosso `backtest_engine.py`).
-PENDING_BOUNDARY = {"ml_dataset_service.py"}
+# Task 13: migrazione ML completata; nessuna deroga al confine rimasta.
+PENDING_BOUNDARY: set[str] = set()
 
 
 def _guarded_files() -> list[Path]:

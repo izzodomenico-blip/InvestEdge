@@ -23,9 +23,10 @@ from backend.app.lab.evidence import run_evidence
 from backend.app.lab.feature_store import FeatureStore
 from backend.app.lab.jobs import JobContext, JobOutcome, register_job_handler
 from backend.app.lab.series import preferred_data_mode
-from backend.app.models import BacktestCompareIn, BacktestRunIn, EvidenceIn, WalkForwardIn
+from backend.app.models import BacktestCompareIn, BacktestRunIn, EvidenceIn, MLTrainIn, WalkForwardIn
 from backend.app.services.backtest_engine import BacktestEngine
 from backend.app.services.fx_service import FXService
+from backend.app.services.ml_engine import MLEngine
 
 _REFRESH_COUNTS = ("inserted", "updated", "deleted", "unchanged")
 
@@ -149,3 +150,29 @@ def evidence_job(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
 
 
 register_job_handler("EVIDENCE", evidence_job)
+
+
+def train_ml(context: JobContext, params: Mapping[str, Any]) -> JobOutcome:
+    config = MLTrainIn.model_validate(dict(params))
+    connection = get_connection()
+    try:
+        result = MLEngine().train_model(connection, config, checkpoint=_checkpoint(context))
+        connection.commit()
+    except LabError:
+        connection.rollback()
+        raise
+    except ValueError as exc:
+        connection.rollback()
+        # Solo errori applicativi noti; nessun testo sklearn/joblib o percorso nel job.
+        message = str(exc)
+        allowed = ("Pochi dati per il training:", "Split train/test insufficiente dopo la purga temporale.",
+                   "Target con una sola classe nel training set;", "Nessun asset con dati prezzo",
+                   "Look-ahead bias rilevato:", "Simbolo ambiguo:")
+        safe = message if message.startswith(allowed) else "Training ML non riuscito: controlla dati e configurazione."
+        raise LabError("ML_TRAIN_FAILED", safe) from None
+    finally:
+        connection.close()
+    return JobOutcome(result_ref=str(result["model_id"]), result=result)
+
+
+register_job_handler("ML_TRAIN", train_ml)
