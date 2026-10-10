@@ -2,16 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-05.
+Ultimo aggiornamento: 2026-10-10 (priorità intraday e Alpaca approvata dall'utente).
 
 ## Prossimo passo
 
-**SP1 Task 12 — Harness di valutazione, report di evidenza e verdetto.**
+**SP1 R1 — Correggere la causalità della selezione walk-forward.**
 
-- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente.
-- Branch `investedge/sp1-task-12` da `origin/investedge/sp1-task-11` (verifica della base con il protocollo del piano).
-- Ingressi: spec `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md` §8.1–§8.7, §10, §13 e §16, piano `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md` (Task 12), registro SP1 qui sotto (note del Task 10 su universo, `adjustment_basis`, `split_events`, `fx_excluded_bars` e `limits_json`; note del Task 11 su `run_walk_forward`, griglia TOP_N per orizzonte, `deflated_sharpe`, `spearman_ic`, `newey_west_tstat` e `LAB_PERIOD_TOO_SHORT`).
-- Il Task 12 registra nel registro SP1 lo SHA del Task 11.
+- Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer.
+- Branch `investedge/sp1-remediation-1` da `origin/investedge/sp1-program-intraday`, dopo il gate remoto della revisione documentale P. Base scelta dall'utente: ultimo lavoro pubblicato SP1 Task 11, `c19c8d8`; il checkout locale su Task 6 e `origin/main` su Task 10 non sono la base dei nuovi lavori.
+- Ingressi: review del 2026-10-10 e criteri R1 qui sotto; spec SP1 §6.2, §8.3, §14–§15; piano SP1, sezione *Remediation approvate il 2026-10-10*.
+- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. Il Task 12 riparte solo dopo le tre correzioni verificate.
+- Questa revisione pianifica i lavori: i difetti restano aperti fino ai relativi test RED/GREEN e gate. Nessun trading è attivato.
 
 ## Legenda
 
@@ -27,7 +28,7 @@ Lo SHA di un task viene scritto dal commit successivo: un commit non può conten
 
 ## Quadro dei sottoprogetti
 
-Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 → SP8 → SP9.
+Percorso prioritario: **SP0 → SP2a → SP1 (correzioni e gate finale) → SP2b (gate dati intraday) → SP3 (gate strategie intraday) → SP6a (Alpaca paper) → completamento SP2b/SP3 → SP4 → SP5 → SP6b (reale e leva opzionali) → SP7 → SP8 → SP9.**
 
 | SP | Titolo | Stato | Spec | Piano | Branch finale | In `main` |
 |---|---|---|---|---|---|---|
@@ -38,12 +39,73 @@ Ordine: SP0 → SP2a → SP1 → SP2b → SP3 → SP4 → SP5 → SP6 → SP7 �
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP5 | Radar e società appena quotate | NON INIZIATO | da scrivere | da scrivere | — | no |
-| SP6 | Esecuzione paper e reale | NON INIZIATO | da scrivere | da scrivere | — | no |
+| SP6a | Esecuzione Alpaca paper senza leva | NON INIZIATO | da scrivere | da scrivere | — | no |
+| SP6b | Reale e leva opzionali dopo validazione | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP7 | Telegram bidirezionale | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP8 | Redesign UI | NON INIZIATO | spec 2026-08-16 §7–§8 + da scrivere | da scrivere | — | no |
 | SP9 | Mobile | NON INIZIATO | spec 2026-08-16 §9 + da scrivere | da scrivere | — | no |
 
-Ogni SP senza spec parte con brainstorming → spec → piano, approvati dall'utente, prima di scrivere codice.
+Ogni SP senza spec parte con brainstorming → spec → piano, approvati dall'utente, prima di scrivere codice. Le spec di SP2b e SP3 distingueranno il gate intraday dal backlog restante, con task e branch sequenziali: superare il gate prioritario non rende FATTO l'intero SP. SP6a richiede quei due gate, non ML o radar; SP6b resta successivo al track record paper e ai propri gate.
+
+## Priorità approvata — intraday 15–30 minuti e Alpaca
+
+### Correzioni obbligatorie prima della nuova operatività
+
+Review in sola lettura sul Task 11 `c19c8d8` (2026-10-10): suite offline `pytest -p no:cacheprovider --junitxml=<scratch>/junit.xml` = **857 passati, 1 xfail strict atteso per il confine ML del Task 13**, 0 falliti; `ruff check backend scripts tests --no-cache` verde; `pip check` pulito. Questi risultati non chiudono i difetti riprodotti:
+
+| ID | Problema osservato | Correzione e gate |
+|---|---|---|
+| R1 | Il confine di segmento usa la barra seguente: uno split alla prima barra OOS cambia l'ultimo rendimento IS e può cambiare i parametri scelti. Fixture sintetica: IS 40/OOS 20, seed 137/1137, sola prima barra OOS dimezzata; buy/sell 75/35 → 75/40, input IS invariati. | Ogni Sharpe IS e la scelta devono restare identici modificando, aggiungendo o rimuovendo OOS, compresi split e gap al cutoff. La griglia globale per il registro non alimenta la selezione; OOS resta una simulazione continua. |
+| R2 | Il benchmark esterno all'universo non entra nell'hash dei dati; una revisione modifica la curva riletta ma lascia summary e fingerprint precedenti. Riproduzione in DB in memoria: benchmark 23,32% → 35,65%, stessa impronta e strategia invariata. | Congelare input/curva benchmark e includerli nell'impronta. Una revisione crea una nuova impronta; un run salvato conserva curva, rendimento e alpha coerenti. Compatibilità esplicita per v0 e v1 pre-correzione. |
+| R3 | Backtest, confronto e walk-forward trattano 202 `JobOut` come risultato sincrono e possono causare una pagina bianca; Analisi usa nomi di indicatori superati e i 409 non sono spiegati. | Adeguare contratti, polling, risultati, annullamento, errori e smontaggio; correggere nomi/unità degli indicatori. Test frontend su risposte attuali e tutti gli stati terminali. Riutilizzare poi questo lavoro nei Task 14–15. |
+
+### Fasi e condizioni di passaggio
+
+| Gate | Lavoro prioritario | Evidenza richiesta |
+|---|---|---|
+| G0 — SP1 | R1–R3, poi Task 12–16 nella sequenza del registro | Test di regressione offline, suite/lint/build pertinenti e review finale senza rilievi Critical/Important aperti. L'evidenza D/W/M di SP1 non valida l'intraday. |
+| G1 — SP2b intraday | Provider ufficiali Alpaca Market Data e news; identità listing, calendario USA, barre 1 minuto, quote bid/ask, revisioni, eventi e universo storico | Replay point-in-time riproducibile; feed, copertura, ritardo e lacune espliciti; test con barre/news tardive, split, halt e cambi d'ora. Nessun seed usato per la validazione. |
+| G2 — SP3 intraday | Due famiglie candidate, confronti tecnica/news, harness e walk-forward per holding 15 e 30 minuti | Regole e soglie fissate prima dei test; risultati OOS netti, holdout intatto, costi stressati, stabilità e registro dei tentativi. Se nessuna strategia passa, nessuna viene promossa. |
+| G3 — SP6a | Alpaca Trading API paper, long-only, limite interno 1×, capitale rappresentativo e risk engine | Limiti configurati, ordini idempotenti, riconciliazione, uscite temporizzate, kill switch e recupero da riavvio/disconnessione verificati; track record paper e scarto dal replay misurati. |
+| G4 — SP6b | Valutare trading reale; valutare separatamente la leva, prima in paper con stress di margine | G3 superato, validazione economica e operativa, idoneità conto/paese/strumento e margine verificati, costi e limiti di perdita approvati. Attivazione reale e leva restano azioni esplicite dell'utente. |
+
+**15–30 minuti = durata prevista della posizione dal fill**, non frequenza del polling né timeframe della candela. Prima fase: azioni/ETF USA liquidi e tradabili, sessione regolare, sole posizioni long, uscita a stop/target o al limite temporale 15/30 minuti, chiusura entro fine seduta. Il piano deve gestire separatamente fill parziali, timeout d'ingresso, halt e uscite non eseguibili: il tempo massimo non garantisce un fill. Nessuna apertura vicino alla chiusura se non resta tempo per l'orizzonte e il margine d'uscita.
+
+### Strategie da consolidare con le prove
+
+Le due famiglie iniziali sono **candidate**, non strategie già dimostrate migliori. Per ogni famiglia si congelano ingresso, invalidazione, stop, target, uscita temporale, finestre, universo e piccolo insieme di parametri prima della selezione IS.
+
+| Famiglia | Setup da verificare | Analisi tecnica e ruolo delle news |
+|---|---|---|
+| Trend e pullback | Trend intraday coerente, ritracciamento controllato e recupero di VWAP/livello; ingresso solo dopo conferma su barra chiusa | Pendenza e posizione rispetto a EMA/VWAP, momentum ROC o RSI, ATR normalizzato, volumi relativi e forza rispetto a mercato/settore. News pertinenti come filtro di contesto; evitare inseguimento dopo uno spike. |
+| Breakout e continuazione | Rottura confermata dell'opening range o di una consolidazione, volume sufficiente e spread accettabile | Livelli di apertura/prior sessione, compressione ed espansione del range, ATR, volume relativo per fascia oraria e forza relativa. Catalizzatori verificabili possono confermare il setup; spread, halt o evento ad alta incertezza possono impedirlo. |
+
+Feature su barre **complete** 1/5 minuti, contesto 15 minuti e daily disponibile as-of; VWAP reset a inizio seduta. Ogni indicatore dichiara unità, finestra e warm-up. Volume relativo confrontato con la stessa fascia oraria delle sedute precedenti; IEX non rappresenta il volume consolidato USA. Spread, liquidità, volatilità e calendario sono filtri obbligatori. MACD/ADX o altre feature entrano solo come challenger registrati se aggiungono valore OOS: nessuna somma indiscriminata di indicatori né riuso automatico dello score daily come segnale intraday.
+
+### News ed eventi che possono influenzare il setup
+
+- Classificare utili e guidance, revisioni, acquisizioni, finanziamenti/diluizione, comunicazioni SEC/8-K, eventi regolatori, notizie settoriali e macro (tassi, inflazione, occupazione). Sorprese rispetto alle attese si usano solo se anche le attese sono disponibili point-in-time; il segno del titolo non basta a predire la reazione.
+- Usare news Alpaca/Benzinga se disponibili nel piano dati configurato, comunicati dell'emittente e SEC come riscontri, calendari ufficiali macro. Salvare ID, fonte, mapping a instrument/listing, pubblicazione, prima ricezione, aggiornamento e versione del contenuto; deduplicare lo stesso evento e distinguere rilevanza, novità, affidabilità e decadimento.
+- In replay usare solo la versione già disponibile al timestamp del segnale. Lo storico con testo aggiornato non prova quale testo fosse noto allora: senza archivio delle versioni, dichiarare il limite ed escludere la parte non riproducibile dalla validazione.
+- Confrontare tecnica sola, news sole e combinazione sullo stesso universo e periodo. News mancanti o stale sono uno stato esplicito; nessuna correzione positiva inventata. Sentiment/riassunti automatici non autorizzano da soli un ordine; ogni segnale mostra evento, motivi, invalidazione e condizioni che lo bloccano.
+
+### Validazione economica e integrazione Alpaca
+
+1. **Dati:** storico e streaming ufficiali, timestamp UTC e calendario `America/New_York`; conservare `event_time`, `received_at`, `available_at`, feed e revisioni. Replay senza rettifiche/news future, universo as-of con delisting e controlli di qualità. Feed storico e operativo coerenti; passare da IEX a SIP richiede nuova validazione.
+2. **Esperimenti:** split temporali per seduta, selezione solo IS, purge degli esempi le cui etichette attraversano il cutoff ed embargo coerente con il massimo holding/label e le dipendenze; holdout finale mai usato per scegliere. Registrare anche tentativi scartati. Definire nella spec SP3, prima dell'esperimento, minimi di sedute/trade e soglie di rendimento netto, incertezza, drawdown e stabilità.
+3. **Esecuzione simulata:** decisione su dati disponibili e fill al primo evento successivo idoneo, con bid/ask, commissioni/fee correnti Alpaca, slippage, latenza, liquidità, fill parziali e mancati; stress dei costi e ambiguità stop/target gestita conservativamente. Profilo Alpaca separato dai costi TR; contabilità USD e rendicontazione EUR con FX dichiarato e fiscalità stimata separata.
+4. **Confronto:** P&L netto, rendimento medio per trade con intervalli di incertezza robusti alla dipendenza temporale (metodo fissato ex ante, per esempio bootstrap a blocchi di sedute), drawdown, code delle perdite, turnover, esposizione, fill rate e stabilità per periodo/regime/titolo. Benchmark intraday comparabile e cassa; Sharpe/DSR su rendimenti aggregati per seduta, con dipendenza temporale dichiarata. Non moltiplicare il numero di minuti per trattarli come osservazioni giornaliere indipendenti.
+5. **Paper:** adapter Trading API con endpoint paper consentiti, separazione account/portafogli e ambiente esplicito. Dati di mercato REAL con esecuzione PAPER è diverso da DEMO/seed. Il risk engine limita esposizione complessiva e ordini pendenti entro equity/cassa interna disponibile, anche se il broker mostra buying power superiore; nessun prestito, short o strumento a leva nella prima fase.
+6. **Affidabilità:** `client_order_id` univoco; su timeout interrogare stato prima del retry; stream ordini più riconciliazione periodica di ordini, fill, posizioni e cassa. Gestire riavvii, ordini duplicati, cancellazioni in corsa e fill parziali; stop/take profit broker dove supportati, uscita temporale coordinata senza sovravendere. Bracket/OCO non garantiscono mutua esclusione istantanea in mercati rapidi. Dati stale/disconnessione bloccano nuove entrate; monitoraggio e protezioni delle posizioni aperte restano prioritari.
+7. **Promozione:** capitale paper vicino al capitale previsto, stessi limiti e strategia congelata; niente reset per cancellare perdite. Raccomandazione preesistente di almeno 3–6 mesi di paper, con campione e regimi adeguati: il solo tempo trascorso non basta. Paper Alpaca non simula pienamente impatto, coda, slippage da latenza e fee: confronto con replay conservativo e misura delle discrepanze obbligatori. Leva solo dopo validazione, stress di margine e nuova valutazione; non compensa un'aspettativa netta negativa.
+
+### Decisioni necessarie prima di avviare il paper
+
+Le spec future fisseranno con l'utente capitale, perdita massima per trade/giorno e drawdown, concentrazione/posizioni simultanee, budget dati/news e runtime sempre acceso. Assenza di questi limiti impedisce l'avvio degli ordini paper. Gli agenti non inseriscono credenziali, non comprano abbonamenti e non attivano trading reale.
+
+Fonti primarie verificate il 2026-10-10: [copertura e piani Alpaca](https://docs.alpaca.markets/us/docs/about-market-data-api) (Basic: IEX realtime; SIP realtime richiede abilitazione; delayed SIP a 15 minuti non è adatto a ingressi realtime 15–30 minuti), [stream e revisioni barre](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data), [news storiche](https://docs.alpaca.markets/us/docs/historical-news-data), [schema news realtime](https://docs.alpaca.markets/us/docs/streaming-real-time-news), [SEC EDGAR](https://www.sec.gov/search-filings/edgar-application-programming-interfaces), [limiti paper](https://docs.alpaca.markets/us/docs/paper-trading), [ordini Alpaca](https://docs.alpaca.markets/us/docs/orders-at-alpaca). Specifiche e condizioni commerciali vanno ricontrollate all'implementazione.
+
+Per SP6b usare capacità correnti del conto e `buying_power`, senza assumere un moltiplicatore fisso. Alpaca dichiara adottato il nuovo quadro intraday dal 4 giugno 2026: evitare nuove regole basate sul precedente vincolo PDT/$25.000 o sui campi rimossi. Fonti: [aggiornamento Alpaca](https://alpaca.markets/blog/finra-retires-the-pdt-rule-introducing-alpacas-new-intraday-margin-framework/), [FINRA 26-10](https://www.finra.org/rules-guidance/notices/26-10). Disponibilità del conto live personale per residenza e autorizzazioni di margine restano da verificare; il paper non le dimostra.
 
 ## Registro SP0 — Fase 1 (fondamenta)
 
@@ -191,7 +253,7 @@ Evidenza Task 18 (2026-10-01, Claude):
 
 ## Registro SP1 — Laboratorio di verità
 
-Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Piano: `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md`. Branch per task: `investedge/sp1-task-N`, ciascuno dal precedente; il Task 1 parte da `origin/investedge/sp1-task-0`.
+Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Piano: `docs/superpowers/plans/2026-10-02-investedge-sp1-truth-lab.md`. Branch numerici: `investedge/sp1-task-N`; il Task 1 parte da `origin/investedge/sp1-task-0`. Eccezione approvata il 2026-10-10: Task 11 → revisione P → R1 → R2 → R3 → Task 12; basi e branch delle remediation nel piano.
 
 | Task | Titolo | Stato | Commit | Data | Owner |
 |---|---|---|---|---|---|
@@ -206,12 +268,25 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 8 | Job asincroni del laboratorio | FATTO | `346596a` | 2026-10-03 | Claude |
 | 9 | Costi Trade Republic, strategie e simulatore | FATTO | `c0f7bc2` | 2026-10-03 | Claude |
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | FATTO | `a23aa62` | 2026-10-05 | Claude |
-| 11 | Statistiche, walk-forward vero e DSR | FATTO | branch `investedge/sp1-task-11` | 2026-10-05 | Claude |
+| 11 | Statistiche, walk-forward vero e DSR | FATTO | `c19c8d8` | 2026-10-05 | Claude |
+| P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | branch `investedge/sp1-program-intraday` | 2026-10-10 | Codex |
+| R1 | Causalità della selezione walk-forward | NON INIZIATO | branch previsto `investedge/sp1-remediation-1` | — | — |
+| R2 | Benchmark congelato e impronta completa | NON INIZIATO | branch previsto `investedge/sp1-remediation-2` | — | — |
+| R3 | Contratti asincroni frontend e indicatori Analisi | NON INIZIATO | branch previsto `investedge/sp1-remediation-3` | — | — |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
 | 13 | ML sulla pipeline condivisa | NON INIZIATO | — | — | — |
 | 14 | Pagina Backtest su job, costi TR ed EUR | NON INIZIATO | — | — | — |
 | 15 | Evidenza, badge del verdetto e pagina ML | NON INIZIATO | — | — | — |
 | 16 | Prestazioni, documentazione e verifica finale SP1 | NON INIZIATO | — | — | — |
+
+Evidenza revisione P (2026-10-10, Codex):
+
+- richiesta utente: aggiornare il programma per intraday 15–30 minuti, Alpaca paper senza leva, leva solo dopo validazione; prima correggere i difetti trovati;
+- quattro soli Markdown modificati: programma, spec generale, spec e piano SP1. Nessuna modifica di codice, configurazione, credenziali o database;
+- controlli documentali via Python su diff/perimetro, branch/base, ordine, stati, dipendenze, gate, riferimenti e Markdown: **12 PASS**; `git diff --check` verde;
+- due review indipendenti read-only: metodologia/operatività e sequenza/scope. Rilievo sullo scope dei modelli R2 corretto (`schemas.py` autorizzato solo se necessario); nessun altro rilievo concreto aperto;
+- suite di codice non rieseguita per il solo aggiornamento documentale. L'audit Task 11 riportato sopra è evidenza distinta, non verifica delle correzioni future;
+- commit sul branch `investedge/sp1-program-intraday`, push e confronto SHA remoto richiesti dal protocollo; nessun merge su `main`. Il proprio SHA sarà registrato da R1.
 
 Evidenza Task 0 (2026-10-01/02, Claude):
 
@@ -536,7 +611,7 @@ Evidenza Task 11 (2026-10-05, Claude, sottoagente con contesto pulito avviato da
 
 ## Backlog per i sottoprogetti futuri
 
-Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
+Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Ogni voce entra nella spec del proprio SP; i gate intraday SP2b/SP3 descritti sopra precedono il backlog restante.
 
 - **SP2a Task 12:** news demo mai incluse in sentiment, `news_score` o feature ML; nessun rinnovo della data di pubblicazione delle news demo.
 - **SP1 (efficienza test):** assorbita nella spec SP1 (Task 1, insieme alla guardia di rete globale, Minor 15 Fase 2).
@@ -545,7 +620,8 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 - **SP3:** famiglie tecniche "trend di qualità" e "breakout" per orizzonte; forza relativa; volatilità che si comprime; news classificate per tipo di evento, deduplicate, pesate per fonte e tempo; pesi stimati dai dati.
 - **SP4:** feature di training identiche a quelle di previsione; obiettivo di ranking cross-sezionale; purge ed embargo; calibrazione; champion/challenger; verifica ex-post delle previsioni live.
 - **SP5:** radar con tasso storico dei profili simili, rischio, condizione di invalidazione; schede IPO con prospetto, management, soci, finanziatori, lock-up.
-- **SP6:** portafogli paper multipli, paper broker, profili di rischio a scelta dell'utente, adapter broker ufficiali disattivati, kill switch, runtime sempre acceso, riconciliazione, aggiornamento automatico schedulato.
+- **SP6a:** Alpaca paper prioritario dopo i gate intraday SP2b/SP3; long-only, 1×, capitale e limiti rappresentativi, kill switch, runtime, uscita 15/30 minuti, riconciliazione e track record. Portafogli paper multipli solo dopo il primo percorso verificato.
+- **SP6b:** adapter reale disattivato, verifica idoneità, promozione dal paper; leva opzionale con stress e limiti dedicati dopo validazione, prima in paper. Attivazione esplicita dell'utente.
 - **SP7:** Telegram bidirezionale con whitelist chat, codici di conferma e limiti.
 - **Da assegnare:** minori aperti nel report Fase 2, sezione *Residual risks* (il Minor 15 è coperto dal Task 1 SP1).
 
@@ -598,9 +674,13 @@ Raccolto dalla review del 2026-09-30. Ogni voce entra nella spec del proprio SP.
 | 2026-10-05 | Merge fast-forward su `main` del Task 10 su richiesta esplicita dell'utente (`main` = `a23aa62`) | utente |
 | 2026-10-05 | SP1 Task 11 eseguito da un sottoagente con contesto pulito avviato dalla chat dei Task 7–8, su richiesta dell'utente | utente |
 | 2026-10-05 | Walk-forward v1: `POST /backtests/walk-forward` risponde 202 con il `JobOut` (409 `LAB_PERIOD_TOO_SHORT` prima di accodare); selezione sui rendimenti datati in `[is_start, is_end]`; Sharpe in uscita annualizzati, DSR e registro giornalieri; asimmetria e curtosi con i momenti di popolazione; in DEMO nessun tentativo né DSR; N = configurazioni distinte della famiglia dopo la registrazione della griglia corrente | Claude, motivata nel Task 11 |
+| 2026-10-10 | Base scelta per review e aggiornamento: ultimo pubblicato SP1 Task 11 `c19c8d8`, anziché checkout locale Task 6 o `origin/main` Task 10. Nessuna modifica della storia né merge implicito. | utente |
+| 2026-10-10 | Priorità: correggere rilievi R1–R3, completare SP1, validare intraday holding 15–30 minuti con tecnica e news, Alpaca paper senza leva; leva prevista solo dopo validazione e gate dedicati. | utente |
+| 2026-10-10 | SP6 diviso in SP6a paper prioritario dopo i gate intraday SP2b/SP3 e SP6b reale/leva opzionali successivi; ML/radar non bloccano il primo paper. Dettagli e soglie nelle spec future; nessuna strategia dichiarata profittevole in anticipo. | Codex, attuazione della priorità utente |
 
 ## Note di ripresa
 
+- Riprendere da `origin/investedge/sp1-program-intraday` per R1, poi dalla catena R1 → R2 → R3 → Task 12 del piano; la revisione documentale non chiude i difetti. Registrare lo SHA di P nel commit R1.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.

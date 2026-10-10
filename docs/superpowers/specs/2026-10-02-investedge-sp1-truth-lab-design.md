@@ -1,6 +1,6 @@
 # InvestEdge — SP1 "Laboratorio di verità"
 
-**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; spec in revisione.
+**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. Requisiti aggiornati; implementazione delle correzioni ancora da eseguire.
 
 **Relazione:** attua SP1 della spec di programma `2026-09-30-investedge-profit-engine-program-design.md` (§4, principi §5, difetti §7). Dove questa spec è più precisa, prevale per SP1.
 
@@ -10,7 +10,9 @@
 
 Un laboratorio che, per ogni segnale o strategia e per ogni orizzonte, produce **evidenza riproducibile fuori campione, al netto dei costi, solo su dati reali**, e un **verdetto** dichiarato. Lo score è uno solo e ha lo stesso valore in interfaccia, backtest e ML.
 
-SP1 misura e dichiara; non blocca decisioni. L'applicazione del verdetto ad action board, alert e ordini arriva con il risk engine di SP6.
+SP1 misura e dichiara; non blocca decisioni. L'applicazione del verdetto ad action board, alert e ordini arriva con il risk engine di SP6a/SP6b.
+
+La priorità intraday approvata il 2026-10-10 non modifica timeframe D/W/M e orizzonti 1/5/21 di SP1. Dati/news intraday e validazione holding 15/30 minuti appartengono ai gate SP2b/SP3; Alpaca paper senza leva a SP6a. I verdetti daily non autorizzano il paper intraday.
 
 ## 2. Decisioni approvate
 
@@ -238,6 +240,8 @@ L'evento apre un nuovo segmento e compare nel report con data e rapporto. Un cro
 
 In modalità REAL il benchmark è una serie reale convertita in EUR; altrimenti "benchmark non disponibile". Mai seed in un run REAL.
 
+R2: per ogni nuovo run congelare gli input benchmark e FX effettivamente usati, anche se il benchmark è esterno all'universo tradato. Curva, rendimento e alpha letti devono riferirsi allo stesso snapshot del calcolo. Se uno storico v0/v1 non ha snapshot, dichiarare la non riproducibilità e la fonte di eventuali valori ricalcolati; non presentare curva nuova e summary vecchio come coerenti né modificare in silenzio il run.
+
 ### 6.6 Limiti dichiarati in ogni report
 
 - Universo = asset attivi oggi: bias di sopravvivenza (snapshot dell'universo in SP2b).
@@ -297,7 +301,7 @@ In EUR, con valutazione giornaliera al close rettificato × cambio:
 
 - `BacktestRunIn`: via `fee_percent`; aggiunti profilo costi, `data_mode`, `signal_name`, `signal_timeframe`.
 - `backtest_runs`: colonne additive `engine_version` (`v0` per i run esistenti, `v1` per i nuovi), `data_mode`, `signal_name`, `signal_timeframe`, `cost_profile_json`, `fingerprint`, `warnings_json`. I run `v0` restano e sono mostrati come "motore precedente".
-- **Impronta:** SHA-256 canonico di config, versioni, `data_mode`, universo e hash delle barre usate. Stessi input → stesso risultato (test).
+- **Impronta:** SHA-256 canonico di config, versioni, `data_mode`, universo e hash di tutti gli input effettivi, inclusi barre/FX del benchmark separato (§6.5). Stessi input → stesso risultato; una revisione del benchmark cambia l'impronta di un nuovo run (test R2). Risultati salvati letti dal proprio snapshot.
 
 ## 8. Harness, walk-forward, DSR e verdetto
 
@@ -328,11 +332,11 @@ Lo spread long-short è diagnostico: su TR non si va short. L'implementabilità 
   - `BUY_AND_HOLD`: nessuna griglia.
   - Stop e altri parametri restano quelli del run.
 - **Procedura:**
-  1. ogni configurazione della griglia viene simulata una volta sull'intero periodo (registrata come tentativo, §8.4);
+  1. per ogni cutoff IS, valutare la griglia con soli input disponibili entro `is_end`, inclusa la conoscenza di segmenti, split e gap; nessun costo/liquidazione IS può dipendere dalla prima barra OOS. Una simulazione globale eventualmente mantenuta per il registro dei tentativi (§8.4) è distinta e non alimenta la selezione;
   2. per ogni finestra si sceglie la configurazione con lo Sharpe netto più alto calcolato **sui soli rendimenti giornalieri dentro la finestra in-sample** (a parità vince la configurazione che precede nell'ordine della griglia);
   3. il periodo OOS è **un'unica simulazione** in cui i parametri cambiano all'inizio di ogni segmento OOS e il portafoglio prosegue senza liquidazioni forzate.
 - **Output:** parametri scelti per finestra, Sharpe in-sample medio, Sharpe OOS, degrado IS→OOS, metriche OOS complete, DSR e *N*.
-- Test: perturbare i prezzi del periodo OOS non cambia i parametri scelti.
+- Test R1: con input fino a `is_end` invariati, modifica/aggiunta/rimozione dei dati OOS lascia identici tutti gli Sharpe IS e i parametri scelti; includere perturbazioni che creano/eliminano split e gap al confine (§6.2), non solo variazioni senza segmentazione. Conservare la storia precedente e la semantica della finestra dichiarate nel run.
 
 ### 8.4 Registro dei tentativi
 
@@ -480,7 +484,8 @@ Stile attuale; test Vitest; tipi di `api.ts` omologhi agli schemi Pydantic.
   - un segnale costruito per anticipare il rendimento (rendimento futuro + rumore) → IC > 0 e `VALIDATO`;
   - un segnale casuale con seed fissi → `NON VALIDATO`;
   - un campione corto → `INSUFFICIENTE`.
-- **Walk-forward:** perturbazione OOS che non cambia i parametri; *N* che cresce solo con configurazioni nuove.
+- **Walk-forward:** R1, invarianti di tutti gli Sharpe IS e della selezione anche con split/gap al confine; *N* che cresce solo con configurazioni nuove.
+- **Benchmark:** R2, revisione della sola serie esterna cambia l'impronta nuova; rilettura del run conserva curva/summary/alpha coerenti; compatibilità storici esplicita.
 - **Separazione demo/reale:** run DEMO mai in `lab_trials` né in `lab_evidence_reports`; run REAL senza righe seed.
 - **Job:** 202, deduplica, annullamento, `INTERRUPTED` al riavvio, errori sanitizzati.
 - **Frontend:** Vitest per Backtest (modalità, job, Evidenza), `EvidenceBadge`, ML.
@@ -494,7 +499,7 @@ Stile attuale; test Vitest; tipi di `api.ts` omologhi agli schemi Pydantic.
 3. Scenario del simulatore calcolato a mano verde; nessun fill sulla barra del segnale.
 4. Harness: segnale costruito → `VALIDATO`, casuale → `NON VALIDATO`, corto → `INSUFFICIENTE`.
 5. DSR: valori di riferimento e monotonia in *N* verdi.
-6. Walk-forward: parametri invarianti alla perturbazione OOS.
+6. Walk-forward: tutti gli Sharpe IS e parametri invarianti a modifica/aggiunta/rimozione OOS, anche con split/gap al confine (R1); benchmark riproducibile con impronta completa e curva/summary/alpha coerenti (R2).
 7. DEMO mai nei tentativi né nei verdetti; report e tentativi immutabili.
 8. Job da 202, annullabili, `INTERRUPTED` al riavvio.
 9. Incrementale identico al completo; tempi misurati e registrati.

@@ -27,7 +27,7 @@
 ## Protocollo per ogni task
 
 1. Nuova chat con contesto pulito per ogni task, salvo deroga esplicita dell'utente. Leggere `AGENTS.md`, `PROGRAMMA-OPERATIVO.md`, la spec SP1 e questo piano. Eseguire solo il primo task `NON INIZIATO` con dipendenze `FATTO`.
-2. Branch: `investedge/sp1-task-N`. Base del Task 1: `origin/investedge/sp1-task-0`; base del Task N: `origin/investedge/sp1-task-(N-1)`. Pubblicare subito il branch (lock di presa in carico).
+2. Branch numerici: `investedge/sp1-task-N`. Base del Task 1: `origin/investedge/sp1-task-0`; base del Task N: `origin/investedge/sp1-task-(N-1)`. **Eccezione approvata il 2026-10-10:** Task 11 → P → R1 → R2 → R3 → Task 12; usare i branch/basi della sezione remediation, non la formula numerica. Pubblicare subito il branch (lock di presa in carico).
 3. Verifica della base (sostituire solo i due valori):
 
 ```powershell
@@ -59,6 +59,59 @@ npm --prefix frontend run test:run
 npm --prefix frontend run build
 git diff --check
 ```
+
+## Remediation approvate il 2026-10-10
+
+Ordine vincolante: **P → R1 → R2 → R3 → Task 12**. Task 1–11 restano FATTI come storia; nessuna correzione è implicita nei loro test verdi. Stato e owner nel programma operativo. Ogni remediation applica TDD offline e protocollo di test/lint/review/commit/push; chiude il precedente SHA nel registro.
+
+### P: Revisione documentale programma intraday/Alpaca
+
+**Branch:** `investedge/sp1-program-intraday` — **Base:** `origin/investedge/sp1-task-11` (`c19c8d8`, scelto dall'utente).
+**Files:** solo `PROGRAMMA-OPERATIVO.md`, questa spec di programma `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`, spec SP1 e questo piano.
+**Verifica proporzionata:** coerenza ordine/basi/stati, requisiti e fonti, perimetro di soli quattro Markdown, `git diff --check` e review read-only. Nessun test di codice richiesto per questa revisione documentale; nessuna attivazione Alpaca.
+
+- [x] Allineare programma, spec generale, spec e piano SP1 alla richiesta utente.
+- [x] Verificare diff e coerenza, registrare evidenza e pubblicare il solo branch.
+
+Commit: `docs: prioritize Alpaca paper and 15-30 minute intraday`
+
+### R1: Causalità della selezione walk-forward
+
+**Branch:** `investedge/sp1-remediation-1` — **Base:** `origin/investedge/sp1-program-intraday`.
+**Files:** `backend/app/lab/walk_forward.py`, `tests/test_lab_walk_forward.py`; solo se necessario per la causa `backend/app/lab/simulator.py`, `backend/app/services/backtest_engine.py`, `tests/test_lab_simulator.py`; spec SP1, piano e programma.
+**Contratto:** con dati <= `is_end` invariati, tutti gli Sharpe IS e la scelta invarianti a modifica, aggiunta e rimozione OOS, incluse segmentazioni al confine. Isolare gli input della selezione al cutoff; run globali per registro/DSR distinti. Mantenere OOS continuo e compatibilità dei risultati v1; niente liquidazioni ai cambi finestra.
+
+- [ ] RED: riprodurre fixture 60 barre seed 137, segnali seed 1137, IS40/OOS20, prima barra OOS dimezzata; aggiungere casi gap, rimozione e aggiunta al cutoff e asserzioni su tutti gli Sharpe IS.
+- [ ] GREEN: soluzione minima, test WFO/simulatore e regressioni pertinenti, suite completa e Ruff secondo protocollo; documentare la semantica di segmenti e finestra scelta.
+- [ ] Review indipendente e chiusura con evidenza fresca nel registro.
+
+Commit: `fix: make walk-forward selection causal at segment boundaries`
+
+### R2: Benchmark congelato e impronta completa
+
+**Branch:** `investedge/sp1-remediation-2` — **Base:** `origin/investedge/sp1-remediation-1`.
+**Files:** `backend/app/services/backtest_engine.py`, `backend/app/lab/universe.py`, `tests/test_lab_backtest.py`; per migrazione/contratto additivo se necessario `backend/app/database.py`, `backend/app/models/schemas.py`, `backend/app/models/__init__.py`, `tests/test_database.py`, `tests/test_api.py`; spec SP1, piano e programma.
+**Contratto:** benchmark e FX usati sono inclusi nell'impronta anche fuori dall'universo; input/curva salvati riferiti allo stesso snapshot di rendimento/alpha. Un benchmark rivisto cambia l'impronta del nuovo run senza cambiare il risultato di quello salvato. Definire comportamento v0 e v1 pre-snapshot; non inventare lo snapshot storico mancante né sovrascrivere summary esistenti.
+
+- [ ] RED: DB temporaneo, asset tradato A/benchmark B esterno; modificare solo B e verificare impronta nuova e rilettura coerente del run vecchio; coprire revisioni FX, benchmark assente e storici.
+- [ ] GREEN: persistenza minima e migrazione solo additiva; regressioni backtest/API/schema, suite completa e Ruff secondo protocollo.
+- [ ] Review indipendente e chiusura con evidenza fresca nel registro.
+
+Commit: `fix: freeze benchmark inputs and results for reproducible backtests`
+
+### R3: Contratti asincroni frontend e indicatori Analisi
+
+**Branch:** `investedge/sp1-remediation-3` — **Base:** `origin/investedge/sp1-remediation-2`.
+**Files:** `frontend/src/lib/api.ts`, `frontend/src/lib/jobs.ts`, `frontend/src/pages/BacktestPage.tsx`, `frontend/src/pages/AnalysisPage.tsx`, `frontend/src/pages/BacktestPage.test.tsx`, `frontend/src/pages/AnalysisPage.test.tsx`, `frontend/src/lib/jobs.test.ts`; piano e programma.
+**Contratto:** run/confronto/WFO ricevono `JobOut` 202, attendono esito e leggono risultato/riferimento corretto; nullability e campi coerenti con backend corrente. Coprire FAILED/CANCELLED/INTERRUPTED, errori 409, annullamento e abort allo smontaggio. Analisi usa nomi/unità `features-v1` e spiega storico REAL insufficiente. Nessun render del job come risultato né pagina bianca.
+
+- [ ] RED: fixture fetch offline per run, confronto e WFO (202 → stato terminale), errore/annullamento/smontaggio; indicatori e 409 Analisi.
+- [ ] GREEN: contratti e helper job condivisi, test frontend completi, build e audit secondo protocollo; verifiche backend previste dal protocollo.
+- [ ] Review indipendente, check dei tipi rispetto agli schemi e chiusura con evidenza fresca.
+
+R3 anticipa solo il ripristino dei contratti già pubblicati e degli indicatori. Il selettore `GET /lab/signals` richiede Task 12: resta nel Task 14 insieme a form costi/segnale/timeframe e presentazione completa. Task 15 conserva Evidenza, badge e ML. R3 crea `jobs.ts` e test Backtest, poi riusati: nessuna duplicazione né marcatura anticipata dei Task 14–15.
+
+Commit: `fix: restore frontend contracts for asynchronous lab results`
 
 ## Mappa della baseline e confini
 
@@ -1089,7 +1142,7 @@ Commit: `feat: add true walk-forward with deflated Sharpe`
 
 ### Task 12: Harness di valutazione, report di evidenza e verdetto
 
-**Branch:** `investedge/sp1-task-12` — **Base:** `origin/investedge/sp1-task-11`
+**Branch:** `investedge/sp1-task-12` — **Base:** `origin/investedge/sp1-remediation-3` (R1–R3 FATTI).
 
 **Files:**
 - Create: `backend/app/lab/harness.py`, `backend/app/lab/evidence.py`, `tests/test_lab_harness.py`, `tests/test_lab_evidence.py`
@@ -1220,11 +1273,13 @@ Commit: `feat: train ML on the shared feature pipeline`
 
 ### Task 14: Pagina Backtest su job, costi TR ed EUR
 
+**Scope residuo dopo R3:** completare form costi/segnale/timeframe, EUR, costi per voce, avvisi/esclusi, storico v0 e dettaglio finestre/DSR. Polling/annullamento, contratti correnti e test di regressione sono già la responsabilità R3: riusarli ed estenderli, senza una seconda implementazione.
+
 **Branch:** `investedge/sp1-task-14` — **Base:** `origin/investedge/sp1-task-13`
 
 **Files:**
 - Modify: `frontend/src/lib/api.ts` (tipi e client), `frontend/src/pages/BacktestPage.tsx`
-- Create: `frontend/src/lib/jobs.ts`, `frontend/src/pages/BacktestPage.test.tsx`
+- Modify: `frontend/src/lib/jobs.ts`, `frontend/src/pages/BacktestPage.test.tsx` (creati in R3, riusare helper e test).
 - Modify: piano, `PROGRAMMA-OPERATIVO.md`
 
 **Interfaces — Produces:**
@@ -1256,6 +1311,8 @@ Commit: `feat: adapt the backtest page to lab jobs and costs`
 ---
 
 ### Task 15: Evidenza, badge del verdetto e pagina ML
+
+**Scope residuo dopo R3:** Evidenza, badge/marcatori e ML. Conservare la correzione nomi/unità e messaggi di Analisi di R3; riusare il client job condiviso.
 
 **Branch:** `investedge/sp1-task-15` — **Base:** `origin/investedge/sp1-task-14`
 
