@@ -2,19 +2,19 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (SP1 VERIFICATO con fast-forward su main; SP2b Task 0 documentale, spec/piano proposti da approvare).
+Ultimo aggiornamento: 2026-10-10 (SP2b Task 1 FATTO; prossimo Task 2).
 
 ## Prossimo passo
 
-**SP1 VERIFICATO su main — SP2b Task 0: spec e piano proposti, da approvare.**
+**Prossimo: SP2b Task 2 — trasporto Alpaca, capacità e budget sicuri.**
 
 - Merge fast-forward SP1 confermato dall'utente il 2026-10-10: verificata ascendenza di `origin/main` `a23aa6247a673e70f66420f080cd9e440897c1bf`; push non forzato a `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`, gate `git ls-remote origin refs/heads/main` uguale al Task 16.
 - Gate SP1 già verificato sul medesimo codice: **1010 backend + 134 frontend + 5 contratti smoke** verdi, build/Ruff/pip check, audit HC0 (1 low), review PASS. Nessun codice cambiato dopo quel gate; le prove restano quelle del Task 16.
-- SP2b Task 0 sul branch `investedge/sp2b-task-0`, base main/Task 16; lock pubblicato subito. Spec `docs/superpowers/specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md` e piano `docs/superpowers/plans/2026-10-10-investedge-sp2b-intraday-data-news.md`: **proposta da approvare prima del Task 1**, nessuna implementazione o raccolta live avviata.
-- Proposta: archivio separato con tempi/versioni/as-of, raw barre 1 minuto e aggregati 5/15, quote, identità/calendario/universo, news/corporate/halt/eventi, collector bounded e snapshot. IEX per ricerca; SIP realtime come requisito proposto del primo gate di promozione, secondo diritti e budget che configura l'utente.
+- Spec e piano SP2b approvati dall'utente il 2026-10-10 con «Procedi con il piano». Task 1 FATTO sul branch `investedge/sp2b-task-1`: contratti versionati, 16 tabelle additive, evidenza immutabile, disponibilità causale e configurazione Alpaca disabilitata.
+- Gate Task 1: **178 test mirati + 1156 backend** verdi, Ruff/pip check/diff check e 3 review indipendenti PASS; scan 0 segreti inattesi, compatibilità SP1 6/6. Task 2 NON INIZIATO parte dal remoto Task 1 verificato; nessun client o collector live implementato dal Task 1.
 - **G1_TECH offline distinto da G1_DATA reale**. Storico corrente precedente alla cattura RESEARCH_ONLY; dati sintetici non certificano idoneità o profitto. Dopo il gate tecnico: spec/piano SP3; promozione strategie e primo Alpaca paper senza leva richiedono anche G1_DATA e G2.
 - SP2b intero resta IN CORSO anche dopo il gate intraday Task 12; backlog restante dopo SP3/SP6a tramite addendum Task 13. REAL/DEMO separati; reale e leva solo ai gate successivi.
-- Checkout originale Task 6 preservato e pulito. La preparazione documentale non modifica software, stili, credenziali, account o database dell'utente.
+- Checkout originale Task 6 preservato e pulito. Schema, indici e migrazione SP1 invariati; upgrade/backup/rerun su fixture temporanea conservano dati, cache e risultati REAL/DEMO. Stili, credenziali, account e database dell'utente non modificati.
 
 ## Legenda
 
@@ -37,7 +37,7 @@ Percorso prioritario: **SP0 → SP2a → SP1 (correzioni e gate finale) → SP2b
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
 | SP1 | Laboratorio di verità | VERIFICATO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | `investedge/sp1-task-16` | sì, `d9a43ee` (2026-10-10, fast-forward confermato) |
-| SP2b | Dati per l'alpha | IN CORSO (solo documenti Task 0) | `2026-10-10-investedge-sp2b-intraday-data-news-design.md` proposta | `2026-10-10-investedge-sp2b-intraday-data-news.md` proposto | `investedge/sp2b-task-0` documentale | no |
+| SP2b | Dati per l'alpha | IN CORSO (Task 1 FATTO) | `2026-10-10-investedge-sp2b-intraday-data-news-design.md` approvata | `2026-10-10-investedge-sp2b-intraday-data-news.md` approvato | `investedge/sp2b-task-1` | no |
 | SP3 | Segnali v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP5 | Radar e società appena quotate | NON INIZIATO | da scrivere | da scrivere | — | no |
@@ -686,12 +686,12 @@ Evidenza Task 11 (2026-10-05, Claude, sottoagente con contesto pulito avviato da
 
 ## Registro SP2b — Dati e news intraday
 
-Spec proposta: `docs/superpowers/specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md`. Piano proposto: `docs/superpowers/plans/2026-10-10-investedge-sp2b-intraday-data-news.md`. **Approvazione spec/piano ancora da acquisire; nessun codice del Task 1 autorizzato da questa sola proposta.**
+Spec: `docs/superpowers/specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md`. Piano: `docs/superpowers/plans/2026-10-10-investedge-sp2b-intraday-data-news.md`. **Spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano». Task 1 FATTO; Task 2–12 sequenziali.**
 
 | Task | Titolo | Stato | Dipendenze | Branch | Base | Data / owner |
 |---|---|---|---|---|---|---|
-| 0 | Merge SP1 e proposta spec/piano | FATTO (proposta da approvare) | — | `investedge/sp2b-task-0` | main SP1 verificato | 2026-10-10 / Codex; verifica documentale 12/12 PASS, 2 review PASS, diff check PASS |
-| 1 | Contratti, schema e fixture | NON INIZIATO | 0 + approvazione spec/piano | `investedge/sp2b-task-1` | origin/investedge/sp2b-task-0 | — |
+| 0 | Merge SP1 e proposta spec/piano | FATTO; commit ee6f0a0658ec07bb01f55294f5a54b26b4c80117 | — | `investedge/sp2b-task-0` | main SP1 verificato | 2026-10-10 / Codex; verifica documentale 12/12 PASS, 2 review PASS, diff check PASS |
+| 1 | Contratti, schema e fixture | FATTO | 0 + approvazione spec/piano acquisita | `investedge/sp2b-task-1` | origin/investedge/sp2b-task-0 | 2026-10-10 / Codex; pytest mirata 178, suite 1156, Ruff/pip/diff e 3 review PASS |
 | 2 | Trasporto Alpaca e budget | NON INIZIATO | 1 | `investedge/sp2b-task-2` | origin/investedge/sp2b-task-1 | — |
 | 3 | Identità, calendario e universo | NON INIZIATO | 2 | `investedge/sp2b-task-3` | origin/investedge/sp2b-task-2 | — |
 | 4 | Barre, quote e aggregazioni | NON INIZIATO | 3 | `investedge/sp2b-task-4` | origin/investedge/sp2b-task-3 | — |
@@ -705,7 +705,7 @@ Spec proposta: `docs/superpowers/specs/2026-10-10-investedge-sp2b-intraday-data-
 | 12 | Audit e gate intraday parziale | NON INIZIATO | 11 | `investedge/sp2b-task-12` | origin/investedge/sp2b-task-11 | — |
 | 13 | Addendum backlog restante SP2b | NON INIZIATO | Gate SP3 + SP6a completati | da fissare nell'addendum | remoto da verificare al ritorno da SP6a | — |
 
-G1_TECH NON INIZIATO; G1_DATA INSUFFICIENTE (nessuna cattura reale verificata/diritti configurati in questa consegna). Il gate intraday non completa il backlog SP2b, e non valida strategie/holding 15–30 minuti. Spec e piano sono reviewable sul branch documentale, prima dell'approvazione e dell'implementazione sequenziale.
+G1_TECH non ancora superato: completate le fondamenta Task 1, restano Task 2–12. G1_DATA INSUFFICIENTE (nessuna cattura reale verificata/diritti configurati in questa consegna). Il gate intraday non completa il backlog SP2b e non valida strategie/holding 15–30 minuti. Spec/piano approvati; implementazione soltanto sequenziale.
 
 ## Backlog per i sottoprogetti futuri
 
@@ -785,10 +785,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | SP1 Task 15: autorizzati Evidenza, badge, ML su job, test/build offline, review, commit, push e programma nella stessa chat. Codex unico writer; reviewer in sola lettura. | utente |
 | 2026-10-10 | SP1 Task 16: autorizzati smoke prestazioni, audit cumulativo, documentazione, verifica finale, review, commit, push e programma nella stessa chat. Codex unico writer; review read-only. Merge su main dopo conferma utente, come piano. | utente |
 | 2026-10-10 | Utente conferma merge fast-forward SP1 su main, verifica remoto e aggiornamento programma; richiede preparare spec e piano SP2b dati/news intraday. Merge eseguito a `d9a43ee`; proposta documentale Task 0, nessun codice/raccolta/ordine avviato. | utente / Codex |
+| 2026-10-10 | «Procedi con il piano»: approvazione spec/piano SP2b e avvio sequenziale Task 1; contratti/schema/fixture offline, review e consegna sul solo branch task. G1_DATA e trading restano ai gate successivi. | utente / Codex |
 
 ## Note di ripresa
 
-- SP1 VERIFICATO: main remoto `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`, fast-forward confermato/verificato. Ripresa sul `investedge/sp2b-task-0`: proposta spec/piano pronta per approvazione prima del Task 1. G1_TECH da implementare offline, G1_DATA reale non acquisito; nessun ordine, dato live o credenziale. Checkout originale Task 6 preservato.
+- SP1 VERIFICATO: main remoto `d9a43eee2f35fcda558a1b8d58bacc08a4cd8994`, fast-forward confermato/verificato. SP2b Task 1 FATTO sul `investedge/sp2b-task-1`, gate remoto uguale HEAD; ripresa Task 2 dal remoto Task 1. G1_TECH non ancora superato, G1_DATA reale non acquisito; nessun ordine, dato live o credenziale. Checkout originale Task 6 preservato.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.
@@ -864,3 +865,15 @@ Evidenza merge SP1 e proposta SP2b Task 0 (2026-10-10, Codex):
 - due review indipendenti read-only PASS, nessun Critical/Important residuo. Corretti nei documenti: occurrence A→B→A, admission durable live/replay, timeline completa e capture log immutabile, bootstrap metadata/API e status con raccordo checkpoint/stream dopo ack, griglia G1 non vacua;
 - verifica documentale offline con Python: **12/12 controlli PASS** su scope, integrità UTF-8, link, branch/basi/registro, approvazione/backlog, allowlist sequenziale, bootstrap, causalità, policy qualità, sicurezza, tabelle e stato SP1. `git diff --check` e `git diff --cached --check` PASS. Secret/placeholder scan con pattern e self-test Fase 2 PASS sui sei documenti: 0 letterali inattesi, 0 sentinelle, 0 marcatori incompleti. Script/output nel workspace scratch, non dipendenza del prodotto;
 - Task 0 documentale FATTO con commit/push del solo branch e gate `git ls-remote origin refs/heads/investedge/sp2b-task-0` uguale a HEAD, main invariato al Task 16 verificato. SHA proprio da registrare nel Task 1. Spec/piano restano **da approvare**, niente codice o raccolta live anticipati.
+
+Evidenza SP2b Task 1 chiuso (2026-10-10, Codex):
+
+- autorizzazione «Procedi con il piano» nella stessa chat; base Task 0 locale/remota ee6f0a0658ec07bb01f55294f5a54b26b4c80117 verificata prima del lock, branch investedge/sp2b-task-1 pubblicato subito. Unico writer root, 15 file nella allowlist (compresa spec per chiarimenti tecnici non materiali); nessun Task 2 anticipato;
+- EventEnvelope puro/frozen: UTC ns senza coercizioni, ricezione/persistenza/admission, clock/skew espliciti, cutoff e hash JSON canonico UTF-8 bounded/finito. FeedProfile pubblico senza auth, capacità note non vuote/attestate, budget positivi per cattura, ritardo coerente; QualityPolicy v1 fissa ex ante. REAL/DEMO e provenance/grade distinti; SYNTHETIC anche sul percorso REAL rimane RESEARCH_ONLY e non prova G1_DATA;
+- schema SQLite additivo con 16 tabelle, indici as-of, FK RESTRICT/namespace/ownership e trigger anti UPDATE/DELETE/REPLACE anche con recursive_triggers OFF. RAW non ammesso resta indisponibile; ADMISSION tipizzata, stessa fonte/run/capture, mai prima della durabilità/floor del target. Provider ufficiale BLS/Fed distinto dal profilo operativo SIP. Membri tipizzati e capacità congelata; pubblicazione completa/atomica dei manifest nel Task 9;
+- TDD: RED iniziale 100 fail/4 pass per modulo/schema/config assenti; GREEN iniziale 133. RED review 33 fail/2 pass per clock, Unicode, delay/capability, SCHEMA, feed/ownership e admission; fix e riesame indipendente. Review finale: intero JSON enorme convertito da SQLite in infinito, RED3/GREEN3 positivo/negativo/nested; guard basato su typeof(atom), 6 sonde indipendenti INSERT/UPDATE PASS. Ultimo controllo root: chiavi TEXT PRIMARY KEY NULL/vuote rifiutate con NOT NULL/CHECK, RED3/GREEN3 e 6 sonde indipendenti PASS. Nuova fixture SP1 adeguata a row_factory, score obbligatorio e normalizzazione precedente al baseline; nessuna modifica alla migrazione SP1;
+- mirata finale pytest tests/test_intraday_contracts.py tests/test_intraday_schema.py tests/test_config.py tests/test_database.py -o addopts= -q -p no:cacheprovider = **178 passati**, zero failure/error/skip. Suite completa finale con gli stessi flag/JUnit = **1156 passati**, zero failure/error/skip, 432.92 s. Prima esecuzione completa interrotta dopo il fix review, non usata come gate. Wrapper scratch: **0 chiamate esterne inattese**, 2 sonde intenzionali della guardia bloccate; PYTHON_DOTENV_DISABLED=1, flag live disabilitati, sole fixture/DB temporanei, nessun database reale o .env aperto;
+- preservazione su fixture SP1: upgrade preceduto da backup consistente, rerun idempotente e confronto integrale di 9 tabelle (assets, prezzi, segnali/features REAL/DEMO, news, cache, job/report/trial); backup senza tabelle intraday, guasto backup impedisce init_db e lascia file intatto. Verifica compatibilità offline Python **6/6 PASS**: BASE_SCHEMA/INDEX_SCHEMA/migrate_db SP1 invariati, 4 guardie rete invariate, esempi env solo aggiunte disabilitate, contratti senza IO;
+- Ruff backend/scripts/tests, pip check, diff check e scanner/self-test Fase 2 PASS, **0 segreti letterali inattesi, 0 sentinelle statiche, 0 placeholder**. Nessuna dipendenza o frontend modificato; test/build UI non pertinenti. 2 warning Starlette preesistenti;
+- tre review indipendenti read-only (schema, causalità/config, finale con contesto fresco) PASS senza Critical/Important residui dopo correzioni; programma, spec §4/§8 e checkbox Task 1 aggiornati. Artefatti JUnit/log/check nello scratch C:/Users/izzod/.codex/visualizations/2026/10/10/01a12426-1877-7ea2-86f8-9a7c6a04e505 (sp2b-task1-*);
+- commit esatto feat: define versioned intraday data contracts, push solo branch Task 1, gate SHA remoto uguale HEAD e worktree pulito. SHA proprio da registrare nel Task 2; main resta SP1 d9a43eee2f35fcda558a1b8d58bacc08a4cd8994. Prossimo Task 2 NON INIZIATO. Task 1 non completa G1_TECH; G1_DATA INSUFFICIENTE, nessuna raccolta live/ordine/paper/reale/leva.

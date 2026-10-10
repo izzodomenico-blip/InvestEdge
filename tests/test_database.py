@@ -1379,3 +1379,90 @@ def test_init_db_creates_traceable_fx_rates_and_lookup_index(tmp_path, monkeypat
                 VALUES ('USD', 'EUR', 0, '2026-08-14', 'test', 'reference')
                 """
             )
+
+def test_intraday_backup_failure_never_runs_migration_or_changes_file(tmp_path,monkeypatch):
+    path=tmp_path/"legacy-intraday.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE sentinel(value TEXT)")
+        connection.execute("INSERT INTO sentinel VALUES ('kept')")
+    monkeypatch.setenv("INVESTEDGE_DB_PATH",str(path))
+    get_settings.cache_clear()
+    original=path.read_bytes()
+    calls=[]
+    from backend.app import database
+
+    def fail_backup(*,reason):
+        calls.append("backup")
+        raise OSError("TEST_BACKUP_FAILURE")
+
+    monkeypatch.setattr(backup_service,"create_backup",fail_backup)
+    monkeypatch.setattr(database,"init_db",lambda:calls.append("migration"))
+    try:
+        with pytest.raises(OSError,match="TEST_BACKUP_FAILURE"):
+            backup_service.prepare_database()
+        assert calls==["backup"]
+        assert path.read_bytes()==original
+    finally:
+        get_settings.cache_clear()
+
+def test_intraday_upgrade_backup_and_rerun_preserve_sp1_data(tmp_path, monkeypatch):
+    from backend.app import database
+
+    path = tmp_path/"sp1-upgrade.db"
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(path))
+    get_settings.cache_clear()
+    tables = ("assets", "price_history", "signals", "features_daily", "news_items",
+              "api_cache", "lab_jobs", "lab_evidence_reports", "lab_trials")
+
+    def contents(connection):
+        return {table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY id")]
+                for table in tables}
+
+    try:
+        with sqlite3.connect(path) as connection:
+            connection.row_factory = sqlite3.Row
+            # Full pre-SP2b SP1 schema, never the user's database.
+            connection.executescript(database.BASE_SCHEMA.removesuffix(database.INTRADAY_SCHEMA))
+            database.migrate_db(connection)
+            connection.executescript(database.INDEX_SCHEMA)
+            connection.execute("INSERT INTO assets(id,symbol,name,asset_type,currency) VALUES (1,'PRESERVE','Fixture','stock','USD')")
+            connection.execute("INSERT INTO price_history(asset_id,date,close,is_real_data) VALUES (1,'2024-01-02',100,1)")
+            for mode in ("REAL", "DEMO"):
+                connection.execute("INSERT INTO signals(asset_id,signal,score,data_mode) VALUES (1,'HOLD',50,?)", (mode,))
+                connection.execute("""
+                    INSERT INTO features_daily(asset_id,timeframe,date,segment_id,pipeline_version,
+                        score_version,data_mode,window_hash,warmup_complete,features_json,computed_at)
+                    VALUES(1,'D','2024-01-02',0,'features-v1','score-v1',?, ?,1,'{}','2024-01-03')
+                """, (mode, "a"*64))
+            connection.execute("INSERT INTO news_items(title,provider,raw_json) VALUES ('Kept','fixture','{}')")
+            connection.execute("INSERT INTO api_cache(cache_key,provider,payload) VALUES ('kept','fixture','{}')")
+            connection.execute("""
+                INSERT INTO lab_jobs(id,kind,status,params_json,params_hash,result_json,created_at)
+                VALUES(1,'EVIDENCE','SUCCEEDED','{}',?,'{}','2024-01-03')
+            """, ("a"*64,))
+            connection.execute("""
+                INSERT INTO lab_evidence_reports(job_id,signal_name,timeframe,horizon,verdict,
+                    metrics_json,config_json,universe_json,limits_json,fingerprint,created_at)
+                VALUES(1,'fixture','D',1,'INSUFFICIENTE','{}','{}','[]','[]',?,'2024-01-03')
+            """, ("a"*64,))
+            connection.execute("""
+                INSERT INTO lab_trials(family_key,kind,config_hash,fingerprint,sharpe_daily,n_obs,job_id,created_at)
+                VALUES('fixture','BACKTEST',?,?,0,3,1,'2024-01-03')
+            """, ("a"*64, "b"*64))
+            connection.commit()
+            # Normalize via the unchanged SP1 migration before freezing the baseline.
+            database.migrate_db(connection)
+            before = contents(connection)
+        backup = backup_service.prepare_database()
+        assert backup["created"]
+        with sqlite3.connect(path.parent/"backups"/backup["file"]) as connection:
+            assert contents(connection) == before
+            assert not connection.execute("SELECT 1 FROM sqlite_master WHERE name='intraday_observations'").fetchone()
+        for _ in range(2):
+            database.init_db()
+            with sqlite3.connect(path) as connection:
+                assert contents(connection) == before
+                assert connection.execute("SELECT COUNT(*) FROM intraday_observations").fetchone()[0] == 0
+                assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        get_settings.cache_clear()

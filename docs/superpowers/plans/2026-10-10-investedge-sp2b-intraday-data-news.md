@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** proposta 2026-10-10 da approvare prima del Task 1. Task 0 solo documenti; nessun codice intraday implementato.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1 FATTO e pubblicato, prossimo Task 2 NON INIZIATO.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -50,10 +50,10 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 **Files create:** backend/app/intraday/__init__.py, backend/app/intraday/contracts.py, tests/intraday_fixtures.py, tests/test_intraday_contracts.py, tests/test_intraday_schema.py.
 **Files modify:** backend/app/database.py, backend/app/config.py, .env.example, backend/.env.example, tests/conftest.py, tests/test_database.py, tests/test_config.py.
 **Produces:** EventEnvelope versionato (tempi UTC ns, kind, profilo, provenance/grade, modalità, payload hash, admission), FeedProfile/QualityPolicy, reason codes; tabelle della spec §8 con CHECK/indici/trigger e metadati operativi collector. Freeze policy iniziale §11.
-- [ ] RED: nanosecondi distinti, timestamp invalidi/futuri, modalità incompatibili, capture log append-only/tabella assente e UPDATE/DELETE/REPLACE bloccati, FK RESTRICT, JSON non finito.
-- [ ] Implementare minimi contratti/schema. Clock/server skew esplicito; timestamp ricevuto prima della coda; nessun segreto nel profilo. Default ENABLE_ALPACA_DATA=false, collector disabilitato, cap/quote disco/budget attestati prima di live; nomi config documentati, chiavi vuote.
-- [ ] GREEN: DB nuovo e migrazione da fixture legacy, rerun idempotente/backup fallito, preservazione dati/cache SP1; guardia rete esistente invariata.
-- [ ] Review e chiusura con suite/lint/protocollo.
+- [x] RED: nanosecondi distinti, timestamp invalidi/futuri, modalità incompatibili, capture log append-only/tabella assente e UPDATE/DELETE/REPLACE bloccati, FK RESTRICT, JSON non finito. RED iniziale 100 fail/4 pass; RED review 33 fail/2 pass + interi SQLite RED3/GREEN3 e chiavi NULL/vuote RED3/GREEN3.
+- [x] Implementare minimi contratti/schema. Clock/server skew esplicito; timestamp ricevuto prima della coda; nessun segreto nel profilo. Default ENABLE_ALPACA_DATA=false, collector disabilitato, cap/quote disco/budget attestati prima di live; nomi config documentati, chiavi vuote. 16 tabelle, SCHEMA/init_db con medesime protezioni, scope e admission causali.
+- [x] GREEN: DB nuovo e migrazione da fixture legacy, rerun idempotente/backup fallito, preservazione dati/cache SP1; guardia rete esistente invariata. Mirata 178/178, compatibilità 6/6; backup e confronto integrale 9 tabelle SP1.
+- [x] Review e chiusura con suite/lint/protocollo. Suite finale 1156/1156 offline, rete esterna inattesa 0; Ruff/pip/diff/scan PASS, 3 review senza rilievi Critical/Important; commit/push solo Task 1 e gate remoto uguale HEAD.
 **Commit:** feat: define versioned intraday data contracts
 
 ## Task 2 — Trasporto Alpaca, capacità e budget sicuri

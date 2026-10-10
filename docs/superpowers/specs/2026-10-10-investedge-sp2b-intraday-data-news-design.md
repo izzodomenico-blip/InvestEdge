@@ -1,6 +1,6 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
-**Stato:** proposta preparata il 2026-10-10, da approvare prima del codice. Nessun task di implementazione avviato.
+**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1 FATTO (contratti/schema/fixture offline), restano Task 2–12 per G1_TECH. G1_DATA INSUFFICIENTE.
 **Base:** SP1 VERIFICATO, main remoto = d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
@@ -47,6 +47,8 @@ Usare API personali Trading/Market Data, non Broker API. Configurazione disabili
 Al 2026-10-10, Basic offre IEX realtime, copertura parziale; la documentazione indica limiti di sottoscrizione e accesso allo storico recente dipendenti dal piano. SIP realtime richiede diritti configurati. delayed_sip ha 15 minuti di ritardo. **Feed esplicito su ogni richiesta**, senza default implicito o fallback silenzioso. IEX non è NBBO né volume consolidato; gli esperimenti IEX non si confrontano con SIP come se fossero gli stessi dati. [Piani e autenticazione Alpaca](https://docs.alpaca.markets/us/docs/about-market-data-api).
 
 Proposta per la promozione iniziale: **SIP realtime con quote consolidate**, dopo configurazione dell'utente. IEX resta supportato per raccolta e ricerca dichiarata; delayed SIP può essere consultato ma non sblocca ingressi realtime 15/30 minuti. Questo requisito non acquista un abbonamento. Un cambio di feed/diritti/versione crea un nuovo profilo e richiede nuova verifica.
+
+Contratto Task 1: almeno una capacità richiesta, nomi noti e attestazioni esplicite; tutti i limiti necessari positivi prima di ready_for_capture. Zero significa non attestato, mai illimitato. Ritardo derivato dal feed e dichiarazioni contrastanti rifiutate: SIP/IEX 0, delayed SIP 900 secondi. [Feed ufficiali Alpaca](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data).
 
 Profilo pubblico versionato: feed, capacità richieste/attestate, delay dichiarato, max simboli (benchmark compresi), max connessioni, quote condizioni ammesse, limiti HTTP minuto/giorno/mese, limite bytes/disco e policy_version. Credenziali e identificativi personali esclusi. Contatori/connettività distinti dal profilo; 401/403 -> capacità indisponibile, mai upgrade automatico. Status/LULD possono avere diritti ulteriori: disponibilità non presunta dal solo accesso a SIP.
 
@@ -116,11 +118,13 @@ Calendari macro ufficiali BLS (CPI, employment) e Fed (FOMC), più import locale
 
 ## 8. Persistenza e replay condiviso
 
-Schema additivo proposto; durante Task 1 definire CHECK/FK/indici esatti senza cambiare i contratti di questo documento:
+Schema additivo definito dal Task 1; i servizi dei task successivi applicheranno questi vincoli senza cambiare i contratti del documento:
 
 | Tabella | Contenuto |
 |---|---|
+| intraday_feed_profiles / intraday_quality_policies | Configurazioni pubbliche canoniche e digest immutabili; feed e policy congelati, nessun segreto |
 | intraday_ingest_runs | Metadati operativi, chunk/cursore, stato COMPLETE/PARTIAL/FAILED, contatori/limiti; nessun segreto |
+| intraday_collector_state | Stato corrente, owner nonce e lease per profilo/modalità, mutabile; gestione del lease nel Task 7 |
 | intraday_observations | Versioni BAR/QUOTE/STATUS/LULD con envelope §3, chiave evento, payload whitelist e qualità |
 | intraday_capture_events | Log append-only CAPTURE_START/ACK/ADMISSION/GAP/BOOTSTRAP/CLOCK/STOP con tempi, lease/capture_id e scope listing/canali; nessuna auth frame |
 | intraday_identity_versions | Relazione UUID/listing/ticker/validità/conoscenza e attestazioni |
@@ -132,6 +136,10 @@ Schema additivo proposto; durante Task 1 definire CHECK/FK/indici esatti senza c
 | intraday_quality_reports | Report congelato, metriche, policy, esito G1 e limiti |
 
 Versioni, snapshot, membri e report append-only con trigger anti UPDATE/DELETE/REPLACE, FK RESTRICT rispetto alle identità. Gli ingest runs e stato corrente collector sono metadati operativi mutabili, non evidenza. Nessun purge a cascata dell'evidenza da assets legacy; cleanup/retention non inclusi nel gate (stop raccolta se quota disco superata). Backup pre-migrazione obbligatorio come prepare_database, smoke solo DB temporanei.
+
+Dettagli schema Task 1 (chiarimento tecnico della §3): identificativi profilo/policy obbligatori e non vuoti (profilo 64 hex minuscoli, nome policy massimo 256 caratteri); tempi INTEGER ns con tipo/ordine verificati; payload JSON object finito, canonico UTF-8 e bounded nel contratto, digest SHA-256. Le protezioni append-only e finite JSON valgono sia per init_db/prepare_database sia per SCHEMA. Namespace evidence coerente col run su profilo, provider, feed, modalità, provenance e grade; il feed del run deve coincidere col profilo congelato. Il provider del run è la fonte effettiva e può differire da quello del profilo operativo: un calendario BLS/Fed resta attribuito alla propria fonte sotto il profilo SIP. Manifest e replay conserveranno entrambe le identità, senza fingere una risposta Alpaca.
+
+RAW persistito con admitted_at/available_at NULL resta indisponibile. L'admission successiva è una nuova riga del capture log, riferita con FK tipizzata a observation/news/event, stesso run/capture/namespace e listing coerente se dichiarato. I suoi tempi non anticipano la persistenza o il floor di disponibilità del target; la riga RAW non viene aggiornata. Listing e instrument delle identità/news concordano col proprietario canonico; i membri dell'universo concordano con il listing della versione identità. I dataset member hanno esattamente un riferimento tipizzato. Il member_count immutabile impedisce aggiunte oltre la capacità dichiarata; il Task 9 pubblicherà header/membri/report atomicamente solo dopo aver verificato completezza e digest, senza considerare completo un header isolato.
 
 Logical event key include provider, feed, modalità, listing, kind e identità evento; BAR include start/end, QUOTE include timestamp + fingerprint/sequence fonte se disponibile. Il payload può essere deduplicato per hash, ma **le occurrence della timeline sono distinte**. Duplicato con event/revision ID fonte identico -> stessa occurrence; senza revision ID deduplicare soltanto ripetizioni consecutive invarianti della stessa logical key e posizione del capture. A→B→A conserva tre occurrence con le tre availability, anche se la prima e l'ultima condividono payload hash. Backfill e capture appartengono a provenance diverse; non usare un ID inventato come ID fonte. First_received immutato per occurrence; un backfill corrente non sostituisce l'originale catturato.
 

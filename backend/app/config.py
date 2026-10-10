@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,6 +24,24 @@ def _unique(values: list[str]) -> list[str]:
         if value not in result:
             result.append(value)
     return result
+
+
+
+def _alpaca_cap(name: str) -> int:
+    try:
+        value = int(os.getenv(name, "0"))
+        if not 0 <= value <= 2**63 - 1:
+            raise ValueError
+        return value
+    except (ValueError, TypeError):
+        raise ValueError("ALPACA_CONFIG_INVALID") from None
+
+
+def _alpaca_feed() -> str | None:
+    value = os.getenv("ALPACA_FEED", "").strip() or None
+    if value not in (None, "iex", "sip", "delayed_sip"):
+        raise ValueError("ALPACA_CONFIG_INVALID")
+    return value
 
 
 @dataclass(frozen=True)
@@ -113,6 +131,22 @@ class Settings:
     lab_min_dsr: float = 0.95
     lab_reference_capital_eur: float = 10000
 
+
+    # SP2b: capability/budget zero means unattested, never unlimited.
+    enable_alpaca_data: bool = False
+    enable_alpaca_collector: bool = False
+    alpaca_api_key_id: str | None = field(default=None, repr=False)
+    alpaca_api_secret_key: str | None = field(default=None, repr=False)
+    alpaca_feed: str | None = None
+    alpaca_max_symbols: int = 0
+    alpaca_max_connections: int = 0
+    alpaca_http_minute_limit: int = 0
+    alpaca_http_daily_limit: int = 0
+    alpaca_http_monthly_limit: int = 0
+    alpaca_max_frame_bytes: int = 0
+    alpaca_max_queue_events: int = 0
+    alpaca_max_archive_bytes: int = 0
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.database_path}"
@@ -139,6 +173,20 @@ class Settings:
             cors_origin_regex=os.getenv("INVESTEDGE_CORS_ORIGIN_REGEX")
             or (r"^http://(localhost|127\.0\.0\.1):517\d+$" if app_env == "local" else None),
             enable_real_data=os.getenv("ENABLE_REAL_DATA", "false").lower() == "true",
+            enable_alpaca_data=os.getenv("ENABLE_ALPACA_DATA", "false").lower() == "true",
+            enable_alpaca_collector=os.getenv("ENABLE_ALPACA_COLLECTOR", "false").lower() == "true",
+            alpaca_api_key_id=os.getenv("ALPACA_API_KEY_ID") or None,
+            alpaca_api_secret_key=os.getenv("ALPACA_API_SECRET_KEY") or None,
+            alpaca_feed=_alpaca_feed(),
+            alpaca_max_symbols=_alpaca_cap("ALPACA_MAX_SYMBOLS"),
+            alpaca_max_connections=_alpaca_cap("ALPACA_MAX_CONNECTIONS"),
+            alpaca_http_minute_limit=_alpaca_cap("ALPACA_HTTP_MINUTE_LIMIT"),
+            alpaca_http_daily_limit=_alpaca_cap("ALPACA_HTTP_DAILY_LIMIT"),
+            alpaca_http_monthly_limit=_alpaca_cap("ALPACA_HTTP_MONTHLY_LIMIT"),
+            alpaca_max_frame_bytes=_alpaca_cap("ALPACA_MAX_FRAME_BYTES"),
+            alpaca_max_queue_events=_alpaca_cap("ALPACA_MAX_QUEUE_EVENTS"),
+            alpaca_max_archive_bytes=_alpaca_cap("ALPACA_MAX_ARCHIVE_BYTES"),
+
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY") or None,
             coingecko_api_key=os.getenv("COINGECKO_API_KEY") or None,
             fred_api_key=os.getenv("FRED_API_KEY") or None,

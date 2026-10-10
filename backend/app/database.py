@@ -866,6 +866,247 @@ CREATE TABLE IF NOT EXISTS lab_trials (
 """
 
 
+
+# SP2b tables are additive. Raw durable rows may have no admission: a later
+# append-only capture ADMISSION supplies the eligibility boundary (Tasks 4/7).
+def _intraday_schema() -> tuple[str, str]:
+    def ns(name: str, *, nullable: bool = False) -> str:
+        required = "" if nullable else " NOT NULL"
+        guard = f"({name} IS NULL OR (typeof({name})='integer' AND {name}>=0))" if nullable else f"(typeof({name})='integer' AND {name}>=0)"
+        return f"{name} INTEGER{required} CHECK({guard})"
+
+    def json_column(name: str) -> str:
+        return f"{name} TEXT NOT NULL CHECK(CASE WHEN json_valid({name}) THEN json_type({name})='object' ELSE 0 END)"
+
+    def digest(name: str) -> str:
+        return f"{name} TEXT NOT NULL CHECK(length({name})=64 AND {name} NOT GLOB '*[^a-f0-9]*')"
+
+    mode = """
+        data_mode TEXT NOT NULL CHECK(data_mode IN ('REAL','DEMO')),
+        provenance TEXT NOT NULL CHECK(provenance IN ('CAPTURED','HISTORICAL_CURRENT','SYNTHETIC')),
+        replay_grade TEXT NOT NULL CHECK(replay_grade IN ('STRICT_PIT','RESEARCH_ONLY'))
+    """
+    mode_checks = """
+        CHECK(data_mode='REAL' OR provenance='SYNTHETIC'),
+        CHECK(provenance='CAPTURED' OR replay_grade='RESEARCH_ONLY')
+    """
+    scope = f"""
+        profile_id TEXT NOT NULL REFERENCES intraday_feed_profiles(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL CHECK(length(trim(provider))>0),
+        feed TEXT NOT NULL CHECK(feed IN ('iex','sip','delayed_sip')),
+        {mode}
+    """
+    common = f"""
+        id INTEGER PRIMARY KEY,
+        ingest_run_id INTEGER NOT NULL,
+        {scope},
+        schema_version TEXT NOT NULL CHECK(schema_version='intraday-v1'),
+        listing_id INTEGER REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+        logical_key TEXT NOT NULL CHECK(length(logical_key) BETWEEN 1 AND 256),
+        capture_id TEXT NOT NULL CHECK(length(capture_id) BETWEEN 1 AND 256),
+        ingest_sequence INTEGER NOT NULL CHECK(typeof(ingest_sequence)='integer' AND ingest_sequence>0),
+        source_event_id TEXT,
+        source_revision_id TEXT,
+        {ns('event_time_ns')}, {ns('received_at_ns')}, {ns('persisted_at_ns')},
+        {ns('admitted_at_ns',nullable=True)}, {ns('available_at_ns',nullable=True)},
+        {ns('availability_floor_ns')},
+        {json_column('payload_json')}, {digest('payload_hash')}
+    """
+    common_checks = f"""
+        {mode_checks},
+        CHECK(persisted_at_ns>=received_at_ns),
+        CHECK(
+            (admitted_at_ns IS NULL AND available_at_ns IS NULL)
+            OR (admitted_at_ns IS NOT NULL AND available_at_ns IS NOT NULL
+                AND admitted_at_ns>=persisted_at_ns
+                AND available_at_ns=MAX(received_at_ns,persisted_at_ns,admitted_at_ns,availability_floor_ns))
+        ),
+        FOREIGN KEY(ingest_run_id,profile_id,data_mode,provider,feed,provenance,replay_grade)
+            REFERENCES intraday_ingest_runs(id,profile_id,data_mode,provider,feed,provenance,replay_grade)
+            ON DELETE RESTRICT ON UPDATE RESTRICT,
+        UNIQUE(id,profile_id,data_mode),
+        UNIQUE(ingest_run_id,ingest_sequence)
+    """
+    definitions: dict[str, tuple[str, list[tuple[str, ...]], list[str]]] = {}
+    # Columns, natural UNIQUE keys, JSON columns. All are static allowlisted names.
+    definitions["intraday_feed_profiles"] = (
+        f"id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64 AND id NOT GLOB '*[^a-f0-9]*'), provider TEXT NOT NULL, feed TEXT NOT NULL CHECK(feed IN ('iex','sip','delayed_sip')), {json_column('config_json')}, {ns('created_at_ns')}, UNIQUE(id,feed)",
+        [], ["config_json"])
+    definitions["intraday_quality_policies"] = (
+        f"id TEXT PRIMARY KEY NOT NULL CHECK(length(id) BETWEEN 1 AND 256), {json_column('config_json')}, {digest('policy_hash')}, {ns('created_at_ns')}",
+        [], ["config_json"])
+    definitions["intraday_ingest_runs"] = (
+        f"""id INTEGER PRIMARY KEY, {scope},
+        state TEXT NOT NULL CHECK(state IN ('RUNNING','COMPLETE','PARTIAL','FAILED','CANCELLED')),
+        {ns('started_at_ns')}, {ns('finished_at_ns',nullable=True)},
+        accepted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(accepted_count)='integer' AND accepted_count>=0),
+        rejected_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(rejected_count)='integer' AND rejected_count>=0),
+        {json_column('limits_json')}, {json_column('cursor_json')}, {mode_checks},
+        FOREIGN KEY(profile_id,feed) REFERENCES intraday_feed_profiles(id,feed)
+            ON DELETE RESTRICT ON UPDATE RESTRICT,
+        UNIQUE(id,profile_id,data_mode,provider,feed,provenance,replay_grade)""",
+        [], ["limits_json", "cursor_json"])
+    definitions["intraday_collector_state"] = (
+        f"""id INTEGER PRIMARY KEY,
+        profile_id TEXT NOT NULL REFERENCES intraday_feed_profiles(id) ON DELETE RESTRICT,
+        data_mode TEXT NOT NULL CHECK(data_mode IN ('REAL','DEMO')),
+        state TEXT NOT NULL CHECK(state IN ('STOPPED','CONNECTING','LIVE','DEGRADED','BACKOFF','FAILED')),
+        owner_nonce TEXT, {ns('lease_expires_at_ns')}, UNIQUE(profile_id,data_mode)""",
+        [("profile_id","data_mode")], [])
+
+    refs = {
+        "observation_id": "intraday_observations", "news_version_id": "intraday_news_versions",
+        "news_link_id": "intraday_news_links", "event_version_id": "intraday_event_versions",
+        "identity_version_id": "intraday_identity_versions", "calendar_version_id": "intraday_calendar_versions",
+        "universe_snapshot_id": "intraday_universe_snapshots", "capture_event_id": "intraday_capture_events",
+    }
+
+    def reference(column: str, target: str) -> str:
+        return f"FOREIGN KEY({column},profile_id,data_mode) REFERENCES {target}(id,profile_id,data_mode) ON DELETE RESTRICT ON UPDATE RESTRICT"
+
+    def evidence(table: str, extra: str, checks: str = "", unique=(), json_fields=()):
+        extra_unique = "".join(", UNIQUE("+",".join(columns)+")" for columns in unique)
+        definitions[table] = (
+            common + ", " + extra + ", " + common_checks + extra_unique + (", "+checks if checks else ""),
+            [("ingest_run_id","ingest_sequence"), *unique], ["payload_json", *json_fields])
+
+    def supersedes(table: str) -> str:
+        return "supersedes_id INTEGER, "+reference("supersedes_id",table)
+
+    evidence("intraday_identity_versions",
+        f"""instrument_id INTEGER NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        broker_asset_id TEXT NOT NULL, ticker TEXT NOT NULL, venue TEXT NOT NULL,
+        {ns('valid_from_ns',nullable=True)}, {ns('valid_to_ns',nullable=True)},
+        confirmed INTEGER NOT NULL CHECK(confirmed IN (0,1)), {supersedes('intraday_identity_versions')}""",
+        "CHECK(listing_id IS NOT NULL), CHECK(valid_to_ns IS NULL OR valid_from_ns IS NULL OR valid_to_ns>valid_from_ns)")
+    evidence("intraday_calendar_versions",
+        f"""session_date TEXT NOT NULL CHECK(length(session_date)=10),
+        {ns('open_at_ns')}, {ns('close_at_ns')},
+        timezone TEXT NOT NULL CHECK(timezone='America/New_York'), {supersedes('intraday_calendar_versions')}""",
+        "CHECK(close_at_ns>open_at_ns)")
+    evidence("intraday_observations",
+        f"""kind TEXT NOT NULL CHECK(kind IN ('BAR','QUOTE','STATUS','LULD')),
+        quality TEXT NOT NULL CHECK(quality IN ('VALID','QUARANTINED')),
+        reason_code TEXT, {ns('bar_end_ns',nullable=True)}""",
+        """CHECK(listing_id IS NOT NULL),
+        CHECK((kind='BAR' AND bar_end_ns IS NOT NULL AND bar_end_ns>event_time_ns
+               AND availability_floor_ns>=bar_end_ns) OR (kind<>'BAR' AND bar_end_ns IS NULL)),
+        CHECK(quality='VALID' OR reason_code IS NOT NULL)""")
+    evidence("intraday_news_versions",
+        f"article_id TEXT NOT NULL, {ns('published_at_ns')}, {ns('updated_at_ns')}, {supersedes('intraday_news_versions')}",
+        "CHECK(updated_at_ns>=published_at_ns)")
+    evidence("intraday_event_versions",
+        f"event_type TEXT NOT NULL CHECK(event_type IN ('CORPORATE_ACTION','EARNINGS','MACRO','HALT','RESUME','LULD')), {ns('effective_at_ns',nullable=True)}, {ns('scheduled_at_ns',nullable=True)}, {supersedes('intraday_event_versions')}")
+    capture_refs = ("observation_id", "news_version_id", "event_version_id")
+    evidence("intraday_capture_events",
+        """kind TEXT NOT NULL CHECK(kind IN ('CAPTURE_START','ACK','ADMISSION','GAP','BOOTSTRAP','CLOCK','STOP')),
+        lease_nonce TEXT NOT NULL, """ + ", ".join(col+" INTEGER" for col in capture_refs),
+        ", ".join(reference(col,refs[col]) for col in capture_refs) + ", CHECK(kind<>'ADMISSION' OR (admitted_at_ns IS NOT NULL AND "+
+        "+".join("("+col+" IS NOT NULL)" for col in capture_refs)+"=1))")
+    evidence("intraday_universe_snapshots",
+        f"{ns('cutoff_ns')}, member_count INTEGER NOT NULL CHECK(typeof(member_count)='integer' AND member_count>=0)")
+    evidence("intraday_universe_members",
+        "snapshot_id INTEGER NOT NULL, identity_version_id INTEGER NOT NULL, eligible INTEGER NOT NULL CHECK(eligible IN (0,1)), reason_code TEXT",
+        reference("snapshot_id","intraday_universe_snapshots")+", "+reference("identity_version_id","intraday_identity_versions")+
+        ", CHECK(listing_id IS NOT NULL), CHECK(eligible=1 OR reason_code IS NOT NULL)",
+        unique=[("snapshot_id","listing_id")])
+    evidence("intraday_news_links",
+        "news_version_id INTEGER NOT NULL, instrument_id INTEGER REFERENCES instruments(id) ON DELETE RESTRICT, cluster_id TEXT NOT NULL, category TEXT NOT NULL, rule_version TEXT NOT NULL",
+        reference("news_version_id","intraday_news_versions"))
+    evidence("intraday_dataset_snapshots",
+        f"""{ns('start_at_ns')}, {ns('end_at_ns')}, {ns('cutoff_ns')},
+        policy_id TEXT NOT NULL REFERENCES intraday_quality_policies(id) ON DELETE RESTRICT,
+        {digest('digest')}, member_count INTEGER NOT NULL CHECK(typeof(member_count)='integer' AND member_count>=0)""",
+        "CHECK(end_at_ns>start_at_ns)")
+    member_kinds = ("OBSERVATION","NEWS","NEWS_LINK","EVENT","IDENTITY","CALENDAR","UNIVERSE","CAPTURE_EVENT")
+    evidence("intraday_dataset_members",
+        "snapshot_id INTEGER NOT NULL, member_kind TEXT NOT NULL, "+", ".join(col+" INTEGER" for col in refs),
+        reference("snapshot_id","intraday_dataset_snapshots")+", "+", ".join(reference(col,target) for col,target in refs.items())+
+        ", CHECK("+" OR ".join("(member_kind='"+kind+"' AND "+col+" IS NOT NULL)" for kind,col in zip(member_kinds,refs,strict=True))+")"+
+        ", CHECK("+"+".join("("+col+" IS NOT NULL)" for col in refs)+"=1)",
+        unique=[("snapshot_id",col) for col in refs])
+    evidence("intraday_quality_reports",
+        f"""snapshot_id INTEGER NOT NULL, policy_id TEXT NOT NULL REFERENCES intraday_quality_policies(id) ON DELETE RESTRICT,
+        outcome TEXT NOT NULL CHECK(outcome IN ('READY','INSUFFICIENTE','NON_IDONEO')),
+        {json_column('metrics_json')}, {json_column('limits_json')}""",
+        reference("snapshot_id","intraday_dataset_snapshots"), json_fields=("metrics_json","limits_json"))
+
+    sql = []
+    indexes = []
+    mutable = {"intraday_ingest_runs","intraday_collector_state"}
+    for table, (columns, unique, json_fields) in definitions.items():
+        sql.append(f"CREATE TABLE IF NOT EXISTS {table} ({columns});")
+        if table not in mutable:
+            for operation in ("UPDATE","DELETE"):
+                indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_no_{operation.lower()}
+                    BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+            collisions = ["id=NEW.id"] + [" AND ".join(col+"=NEW."+col for col in columns) for columns in unique]
+            indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_no_replace
+                BEFORE INSERT ON {table} WHEN EXISTS(SELECT 1 FROM {table} WHERE
+                {" OR ".join("("+condition+")" for condition in collisions)})
+                BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+        for column in json_fields:
+            # json_valid alone accepts 1e999. JSON tree exposes it as +/-Infinity.
+            finite = f"""EXISTS(SELECT 1 FROM json_tree(CASE WHEN json_valid(NEW.{column})
+                THEN NEW.{column} ELSE '{{}}' END) WHERE typeof(atom)='real' AND abs(atom)>1.7976931348623157e308)"""
+            operations = ("INSERT","UPDATE") if table in mutable else ("INSERT",)
+            for operation in operations:
+                indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_{column}_finite_{operation.lower()}
+                    BEFORE {operation} ON {table} WHEN {finite}
+                    BEGIN SELECT RAISE(ABORT,'INTRADAY_INVALID_JSON'); END;""")
+    for table, parent in (("intraday_universe_members","intraday_universe_snapshots"),
+                          ("intraday_dataset_members","intraday_dataset_snapshots")):
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_capacity
+            BEFORE INSERT ON {table} WHEN (SELECT COUNT(*) FROM {table} WHERE snapshot_id=NEW.snapshot_id)
+                >=(SELECT member_count FROM {parent} WHERE id=NEW.snapshot_id)
+            BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+
+    # Versioned mappings must agree with the canonical listing owner.
+    for table in ("intraday_identity_versions", "intraday_news_links"):
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_ownership
+            BEFORE INSERT ON {table} WHEN NEW.listing_id IS NOT NULL
+            AND NEW.instrument_id IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM instrument_listings
+                WHERE id=NEW.listing_id AND instrument_id=NEW.instrument_id)
+            BEGIN SELECT RAISE(ABORT,'INTRADAY_IDENTITY_MISMATCH'); END;""")
+    indexes.append("""CREATE TRIGGER IF NOT EXISTS trg_intraday_universe_members_identity
+        BEFORE INSERT ON intraday_universe_members WHEN NOT EXISTS(
+            SELECT 1 FROM intraday_identity_versions
+            WHERE id=NEW.identity_version_id AND listing_id=NEW.listing_id
+              AND profile_id=NEW.profile_id AND data_mode=NEW.data_mode)
+        BEGIN SELECT RAISE(ABORT,'INTRADAY_IDENTITY_MISMATCH'); END;""")
+    # RAW rows remain immutable. Admission is separate evidence for exactly that
+    # captured source and cannot move its durability/availability into the past.
+    for column in capture_refs:
+        target = refs[column]
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_intraday_admission_{column}
+            BEFORE INSERT ON intraday_capture_events
+            WHEN NEW.kind='ADMISSION' AND NEW.{column} IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM {target} raw
+                WHERE raw.id=NEW.{column}
+                  AND raw.ingest_run_id=NEW.ingest_run_id
+                  AND raw.profile_id=NEW.profile_id AND raw.data_mode=NEW.data_mode
+                  AND raw.provider=NEW.provider AND raw.feed=NEW.feed
+                  AND raw.provenance=NEW.provenance AND raw.replay_grade=NEW.replay_grade
+                  AND raw.capture_id=NEW.capture_id
+                  AND (NEW.listing_id IS NULL OR NEW.listing_id IS raw.listing_id)
+                  AND NEW.persisted_at_ns>=raw.persisted_at_ns
+                  AND NEW.admitted_at_ns>=raw.persisted_at_ns
+                  AND NEW.available_at_ns>=MAX(raw.received_at_ns,raw.persisted_at_ns,
+                      raw.availability_floor_ns,COALESCE(raw.available_at_ns,0)))
+            BEGIN SELECT RAISE(ABORT,'INTRADAY_INVALID_ADMISSION'); END;""")
+    for name,table,columns in (
+        ("observations_asof","intraday_observations","profile_id,data_mode,listing_id,kind,available_at_ns,event_time_ns"),
+        ("news_asof","intraday_news_versions","profile_id,data_mode,article_id,available_at_ns"),
+        ("capture_asof","intraday_capture_events","capture_id,kind,available_at_ns"),
+    ):
+        indexes.append(f"CREATE INDEX IF NOT EXISTS idx_intraday_{name} ON {table}({columns});")
+    return "\n".join(sql), "\n".join(indexes)
+
+
+INTRADAY_SCHEMA, INTRADAY_INDEX_SCHEMA = _intraday_schema()
+BASE_SCHEMA += INTRADAY_SCHEMA
+
 INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
 CREATE INDEX IF NOT EXISTS idx_assets_instrument_listing ON assets(instrument_listing_id);
@@ -1264,7 +1505,7 @@ END;
 """
 
 
-SCHEMA = BASE_SCHEMA + INDEX_SCHEMA
+SCHEMA = BASE_SCHEMA + INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA
 
 
 MIGRATIONS = {
@@ -1664,4 +1905,4 @@ def init_db() -> None:
     with get_connection() as connection:
         connection.executescript(BASE_SCHEMA)
         migrate_db(connection)
-        connection.executescript(INDEX_SCHEMA)
+        connection.executescript(INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA)

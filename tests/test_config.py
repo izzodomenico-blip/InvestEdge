@@ -75,3 +75,43 @@ def test_config_process_values_override_dotenv_files(tmp_path, monkeypatch) -> N
     assert settings.database_path == process_database_path
     assert settings.app_env == "process"
     assert settings.cors_origins[-1] == "https://process.example.test"
+
+# SP2b Task 1: no provider or collector is enabled by legacy REAL_DATA.
+def test_alpaca_config_defaults_and_independent_opt_in(monkeypatch):
+    for name in ("ENABLE_ALPACA_DATA","ENABLE_ALPACA_COLLECTOR","ALPACA_FEED",
+                 "ALPACA_API_KEY_ID","ALPACA_API_SECRET_KEY"):
+        monkeypatch.delenv(name,raising=False)
+    monkeypatch.setenv("ENABLE_REAL_DATA","true")
+    settings=Settings.from_env()
+    assert not settings.enable_alpaca_data
+    assert not settings.enable_alpaca_collector
+    assert settings.alpaca_feed is None
+    assert settings.alpaca_api_key_id is None and settings.alpaca_api_secret_key is None
+    assert settings.alpaca_max_symbols==0 and settings.alpaca_max_archive_bytes==0
+
+
+def test_alpaca_process_config_and_secret_repr(monkeypatch):
+    sentinel="SENTINEL_"+"LOCAL_CREDENTIAL_12345"
+    for name,value in {"ENABLE_ALPACA_DATA":"true","ENABLE_ALPACA_COLLECTOR":"false",
+        "ALPACA_FEED":"sip","ALPACA_API_KEY_ID":sentinel,"ALPACA_API_SECRET_KEY":sentinel,
+        "ALPACA_MAX_SYMBOLS":"30","ALPACA_MAX_CONNECTIONS":"2","ALPACA_HTTP_MINUTE_LIMIT":"100",
+        "ALPACA_HTTP_DAILY_LIMIT":"1000","ALPACA_HTTP_MONTHLY_LIMIT":"10000",
+        "ALPACA_MAX_FRAME_BYTES":"1048576","ALPACA_MAX_QUEUE_EVENTS":"5000",
+        "ALPACA_MAX_ARCHIVE_BYTES":"1073741824"}.items():
+        monkeypatch.setenv(name,value)
+    settings=Settings.from_env()
+    assert settings.enable_alpaca_data and not settings.enable_alpaca_collector
+    assert settings.alpaca_feed=="sip" and settings.alpaca_max_symbols==30
+    assert sentinel not in repr(settings)
+
+
+def test_alpaca_invalid_config_errors_do_not_echo_values(monkeypatch):
+    import pytest
+
+    for name,value in (("ALPACA_MAX_SYMBOLS","-1"),("ALPACA_MAX_ARCHIVE_BYTES","inf"),
+                       ("ALPACA_FEED","automatic"),("ALPACA_MAX_QUEUE_EVENTS","SECRET_"+"CONFIG_VALUE_123456")):
+        with monkeypatch.context() as scoped:
+            scoped.setenv(name,value)
+            with pytest.raises(ValueError,match="ALPACA_CONFIG_INVALID") as caught:
+                Settings.from_env()
+            assert value not in str(caught.value)
