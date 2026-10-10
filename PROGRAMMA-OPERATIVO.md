@@ -2,17 +2,17 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-10 (priorità intraday e Alpaca approvata dall'utente).
+Ultimo aggiornamento: 2026-10-10 (R1 verificata e chiusa; prossimo passo R2).
 
 ## Prossimo passo
 
-**SP1 R1 — Correggere la causalità della selezione walk-forward.**
+**SP1 R2 — Congelare benchmark e impronta completa dei risultati.**
 
 - Esecuzione: nuova chat con contesto pulito, salvo deroga dell'utente; un solo writer.
-- Branch `investedge/sp1-remediation-1` da `origin/investedge/sp1-program-intraday`, dopo il gate remoto della revisione documentale P. Base scelta dall'utente: ultimo lavoro pubblicato SP1 Task 11, `c19c8d8`; il checkout locale su Task 6 e `origin/main` su Task 10 non sono la base dei nuovi lavori.
-- Ingressi: review del 2026-10-10 e criteri R1 qui sotto; spec SP1 §6.2, §8.3, §14–§15; piano SP1, sezione *Remediation approvate il 2026-10-10*.
-- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. Il Task 12 riparte solo dopo le tre correzioni verificate.
-- Questa revisione pianifica i lavori: i difetti restano aperti fino ai relativi test RED/GREEN e gate. Nessun trading è attivato.
+- Branch `investedge/sp1-remediation-2` da `origin/investedge/sp1-remediation-1`, dopo verifica del gate remoto R1. La catena parte dall'ultimo SP1 Task 11 pubblicato scelto dall'utente, `c19c8d8`; il checkout locale Task 6 e `origin/main` Task 10 non sono la base dei nuovi lavori.
+- Ingressi: rilievo R2 e criteri qui sotto; spec SP1 §6.5, §7.6, §14–§15; piano SP1, sezione *Remediation approvate il 2026-10-10*.
+- Ordine vincolante: **P → R1 → R2 → R3 → Task 12 → 13 → 14 → 15 → 16**. P e R1 FATTI; il Task 12 riparte solo dopo le tre correzioni verificate.
+- R2 e R3 restano aperte. Intraday e Alpaca richiedono i gate successivi; nessun trading è attivato.
 
 ## Legenda
 
@@ -55,7 +55,7 @@ Review in sola lettura sul Task 11 `c19c8d8` (2026-10-10): suite offline `pytest
 
 | ID | Problema osservato | Correzione e gate |
 |---|---|---|
-| R1 | Il confine di segmento usa la barra seguente: uno split alla prima barra OOS cambia l'ultimo rendimento IS e può cambiare i parametri scelti. Fixture sintetica: IS 40/OOS 20, seed 137/1137, sola prima barra OOS dimezzata; buy/sell 75/35 → 75/40, input IS invariati. | Ogni Sharpe IS e la scelta devono restare identici modificando, aggiungendo o rimuovendo OOS, compresi split e gap al cutoff. La griglia globale per il registro non alimenta la selezione; OOS resta una simulazione continua. |
+| R1 | Il confine di segmento usa la barra seguente: uno split alla prima barra OOS cambia l'ultimo rendimento IS e può cambiare i parametri scelti. Fixture sintetica: IS 40/OOS 20, seed 137/1137, sola prima barra OOS dimezzata; buy/sell 75/35 → 75/40, input IS invariati. | Ogni Sharpe IS e la scelta devono restare identici modificando, aggiungendo o rimuovendo OOS, compresi split e gap al cutoff. La griglia globale per il registro non alimenta la selezione; OOS resta una simulazione continua. **Chiuso R1 il 2026-10-10:** prefissi al cutoff, eleggibilità e calendario prima di `NO_FEATURES`; 32 test WFO e suite 875 passati + 1 xfail atteso. |
 | R2 | Il benchmark esterno all'universo non entra nell'hash dei dati; una revisione modifica la curva riletta ma lascia summary e fingerprint precedenti. Riproduzione in DB in memoria: benchmark 23,32% → 35,65%, stessa impronta e strategia invariata. | Congelare input/curva benchmark e includerli nell'impronta. Una revisione crea una nuova impronta; un run salvato conserva curva, rendimento e alpha coerenti. Compatibilità esplicita per v0 e v1 pre-correzione. |
 | R3 | Backtest, confronto e walk-forward trattano 202 `JobOut` come risultato sincrono e possono causare una pagina bianca; Analisi usa nomi di indicatori superati e i 409 non sono spiegati. | Adeguare contratti, polling, risultati, annullamento, errori e smontaggio; correggere nomi/unità degli indicatori. Test frontend su risposte attuali e tutti gli stati terminali. Riutilizzare poi questo lavoro nei Task 14–15. |
 
@@ -269,8 +269,8 @@ Spec: `docs/superpowers/specs/2026-10-02-investedge-sp1-truth-lab-design.md`. Pi
 | 9 | Costi Trade Republic, strategie e simulatore | FATTO | `c0f7bc2` | 2026-10-03 | Claude |
 | 10 | Backtest onesto in EUR come job, con registro dei tentativi | FATTO | `a23aa62` | 2026-10-05 | Claude |
 | 11 | Statistiche, walk-forward vero e DSR | FATTO | `c19c8d8` | 2026-10-05 | Claude |
-| P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | branch `investedge/sp1-program-intraday` | 2026-10-10 | Codex |
-| R1 | Causalità della selezione walk-forward | NON INIZIATO | branch previsto `investedge/sp1-remediation-1` | — | — |
+| P | Revisione programma intraday e Alpaca (solo documenti) | FATTO | `1ae5a9e` | 2026-10-10 | Codex |
+| R1 | Causalità della selezione walk-forward | FATTO | branch `investedge/sp1-remediation-1`; evidenza sotto | 2026-10-10 | Codex |
 | R2 | Benchmark congelato e impronta completa | NON INIZIATO | branch previsto `investedge/sp1-remediation-2` | — | — |
 | R3 | Contratti asincroni frontend e indicatori Analisi | NON INIZIATO | branch previsto `investedge/sp1-remediation-3` | — | — |
 | 12 | Harness di valutazione, report di evidenza e verdetto | NON INIZIATO | — | — | — |
@@ -287,6 +287,19 @@ Evidenza revisione P (2026-10-10, Codex):
 - due review indipendenti read-only: metodologia/operatività e sequenza/scope. Rilievo sullo scope dei modelli R2 corretto (`schemas.py` autorizzato solo se necessario); nessun altro rilievo concreto aperto;
 - suite di codice non rieseguita per il solo aggiornamento documentale. L'audit Task 11 riportato sopra è evidenza distinta, non verifica delle correzioni future;
 - commit sul branch `investedge/sp1-program-intraday`, push e confronto SHA remoto richiesti dal protocollo; nessun merge su `main`. Il proprio SHA sarà registrato da R1.
+
+Evidenza R1 (2026-10-10, Codex):
+
+- base remota P `1ae5a9e17d0c8086735e5ecee518cd8abb300c90` verificata; branch `investedge/sp1-remediation-1` pubblicato subito come lock. Lo SHA di P è registrato nella sua riga; lo SHA di R1 sarà registrato da R2;
+- TDD offline: split/gap/rimozione/aggiunta OOS = **6 falliti, 3 passati** prima della correzione; finestre mobili/cancellazione = **3 falliti, 1 passato**; ammissione di un asset grazie al solo warm-up OOS = **1 fallito**; regressione DB sul calendario con una seduta IS presente solo nell'asset poi escluso = **1 fallito, 2 passati**. Ogni failure ha riprodotto la causa prevista;
+- correzione in `walk_forward.py`: per ogni cutoff simulare dal primo giorno del run a `is_end`, conservare lo storico pre-`is_start`, selezionare sui rendimenti IS completi, incluso l'ultimo. Un confine osservabile solo OOS non genera costi/liquidazioni IS. Asset ammessi solo con un segnale finito su una propria barra EUR entro cutoff;
+- causa aggiuntiva verificata nella review: `NO_FEATURES` globale poteva cambiare il calendario passato. `backtest_engine.py` recupera le date EUR degli esclusi con la stessa pipeline/periodo/modalità; finestre e unica OOS usano il calendario pre-filtro. La griglia globale per `WF_GRID`, impronte e DSR resta sugli input originali;
+- `pytest tests/test_lab_walk_forward.py -p no:cacheprovider -W error::RuntimeWarning` = **32 passati** (18 regressioni nuove), 0 falliti; coperti tutti gli Sharpe delle 12 configurazioni, confini di segmento, finestre successive, rendimento terminale, storico, calendario, eleggibilità su barre proprie, prefisso vuoto, progressione e cancellazione;
+- suite completa `pytest -p no:cacheprovider --basetemp=<scratch>/pytest-temp --junitxml=<scratch>/junit.xml` = **875 passati, 1 xfail strict atteso** (`test_module_does_not_import_technical_analysis[services/ml_dataset_service.py]`, Task 13), **0 falliti, 0 errori**, 140,81 s; conteggi verificati nel JUnit XML. Guardia di rete attiva, DB temporanei, provider live disattivati; database reale mai aperto;
+- `ruff check backend scripts tests --no-cache` verde; `pip check` pulito; `git diff --check` verde. Due warning di deprecazione Starlette; nessun warning numerico nei test mirati. Frontend test/build non richiesti per questo task backend;
+- due review indipendenti read-only: esecuzione/confini e metodologia/regressioni. Corretti i rilievi su eleggibilità, calendario e formulazione degli errori nella spec; nessun rilievo Critical/Important aperto;
+- spec §6.2/§8.3 e piano aggiornati. Invarianza verificata sui run validi; un IS vuoto usa Sharpe `None` e prima configurazione, mentre la validazione globale (`LAB_EMPTY_UNIVERSE` se `NO_FEATURES` svuota tutto) resta invariata. La selezione richiede simulazioni aggiuntive per ciascuna finestra; callback di avanzamento/annullamento preservata. Nessuna nuova dipendenza, modifica del simulatore, attivazione Alpaca o merge su `main`;
+- chiusura sul solo branch R1 con commit del piano, push e confronto SHA remoto; working tree pulito richiesto dal gate. Prossimo passo R2; R3 e Task 12–16 restano NON INIZIATI.
 
 Evidenza Task 0 (2026-10-01/02, Claude):
 
@@ -677,10 +690,11 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-10 | Base scelta per review e aggiornamento: ultimo pubblicato SP1 Task 11 `c19c8d8`, anziché checkout locale Task 6 o `origin/main` Task 10. Nessuna modifica della storia né merge implicito. | utente |
 | 2026-10-10 | Priorità: correggere rilievi R1–R3, completare SP1, validare intraday holding 15–30 minuti con tecnica e news, Alpaca paper senza leva; leva prevista solo dopo validazione e gate dedicati. | utente |
 | 2026-10-10 | SP6 diviso in SP6a paper prioritario dopo i gate intraday SP2b/SP3 e SP6b reale/leva opzionali successivi; ML/radar non bloccano il primo paper. Dettagli e soglie nelle spec future; nessuna strategia dichiarata profittevole in anticipo. | Codex, attuazione della priorità utente |
+| 2026-10-10 | SP1 R1: selezione su prefissi dal primo giorno al cutoff con rendimento terminale incluso; eleggibilità sulle barre EUR proprie e calendario prima di NO_FEATURES. Griglia globale distinta, OOS continuo, validazione globale invariata. Autorizzati review, commit, push e aggiornamento del programma; R2 prossimo passo. | utente (esecuzione), Codex (correzione verificata) |
 
 ## Note di ripresa
 
-- Riprendere da `origin/investedge/sp1-program-intraday` per R1, poi dalla catena R1 → R2 → R3 → Task 12 del piano; la revisione documentale non chiude i difetti. Registrare lo SHA di P nel commit R1.
+- Riprendere da `origin/investedge/sp1-remediation-1` per R2, verificando SHA remoto e working tree pulito; poi R3 → Task 12 del piano. R1 chiusa con 875 passati + 1 xfail atteso; R2/R3 restano aperte. P = `1ae5a9e` registrato in R1; registrare lo SHA di R1 nel commit R2.
 - Spec e piano SP1 sono in `main` (`53fe614`, fast-forward confermato dall'utente il 2026-10-02); il 2026-10-03, su richiesta dell'utente, `main` è avanzato con fast-forward a `b76fff5` (Task 0–3), poi a `96f7299` (Task 4–6), a `bcd7179` (Task 7), a `346596a` (Task 8), a `c0f7bc2` (Task 9) e a `a23aa62` (Task 10). I task SP1 partono dal branch remoto del task precedente, non da `main`; altri merge su `main` solo su richiesta esplicita dell'utente (al più tardi al gate finale).
 - Test: `tests/conftest.py` blocca la rete (solo loopback ammesso) e fornisce la fixture `client` su copia di un DB seed creato una volta per sessione; un test che deve parlare con un provider usa `httpx.MockTransport` o fixture locali.
 - I worktree Codex `C:\Users\izzod\.codex\worktrees\f80e` (Task 10) ed `e139` (Task 6) sono superati: non riprendere da lì.

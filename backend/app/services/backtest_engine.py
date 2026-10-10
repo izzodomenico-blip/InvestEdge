@@ -7,8 +7,9 @@
   famiglia (`signal_name`, `signal_timeframe`); i run DEMO sono etichettati e mai registrati.
 - Imposte e bollo restano nell'analisi netta, in EUR (utili e perdite di cambio inclusi).
 - I run `v0` del motore precedente restano leggibili e cancellabili ("motore precedente").
-- `walk_forward` (spec §8.3-§8.5): griglia simulata sull'intero periodo, parametri scelti sui soli rendimenti
-  in-sample di ogni finestra, un'unica simulazione fuori campione con il calendario dei parametri; in REAL ogni
+- `walk_forward` (spec §8.3-§8.5): griglia globale per il registro, selezione con simulazioni troncate al cutoff
+  IS e finestre sul calendario delle barre utilizzabili prima del filtro NO_FEATURES; un'unica simulazione fuori
+  campione con il calendario dei parametri; in REAL ogni
   configurazione della griglia e un tentativo `WF_GRID` e il DSR usa gli Sharpe della famiglia.
 """
 
@@ -29,13 +30,14 @@ import pandas as pd
 from backend.app.config import get_settings
 from backend.app.lab.contracts import PERIODS_PER_YEAR, PIPELINE_VERSION, SCORE_VERSION, DataMode, LabError
 from backend.app.lab.costs import CostProfile
-from backend.app.lab.series import available_data_modes
+from backend.app.lab.series import EurConverter, available_data_modes, load_series
 from backend.app.lab.simulator import SimulationConfig, SimulationResult, compute_metrics, simulate
 from backend.app.lab.stats import DsrResult, deflated_sharpe, sharpe_daily
 from backend.app.lab.strategies import StrategyParams
 from backend.app.lab.trials import canonical_hash, family_key, family_trial_sharpes, record_trial, trial_config
 from backend.app.lab.universe import (
     UniverseInputs,
+    _market_bars,
     benchmark_curve,
     build_universe_inputs,
     no_real_series_error,
@@ -245,8 +247,8 @@ class BacktestEngine:
     ) -> dict[str, Any]:
         """Walk-forward vero sullo stesso universo del backtest; risultato `WalkForwardOut` serializzato.
 
-        Griglia della strategia simulata sull'intero periodo, parametri scelti sui soli rendimenti in-sample di ogni
-        finestra, un'unica simulazione fuori campione con il calendario dei parametri. In REAL ogni configurazione
+        Griglia globale per il registro; per la selezione, simulazioni dal primo giorno al cutoff IS di ogni
+        finestra e calendario delle barre EUR prima del filtro NO_FEATURES; un'unica simulazione fuori campione con il calendario dei parametri. In REAL ogni configurazione
         della griglia e un tentativo `WF_GRID` (stesso `config_hash` di backtest e confronto) e il DSR usa gli Sharpe
         della famiglia (N = configurazioni distinte); i run DEMO non registrano tentativi e non hanno DSR.
         Tentativi e DSR si scrivono in un savepoint dopo l'ultimo punto di annullamento.
@@ -262,6 +264,7 @@ class BacktestEngine:
             parameter_grid(payload.strategy_name, params),
             is_sessions=is_sessions,
             oos_sessions=oos_sessions,
+            selection_calendar=_walk_forward_calendar(connection, payload, inputs, step),
             progress=lambda value: step(0.4 + 0.5 * value),
         )
         benchmark = benchmark_curve(
@@ -972,6 +975,25 @@ def _run_fingerprint(config: BacktestSettings, trial: dict[str, Any], inputs: Un
             "inputs_hash": inputs.inputs_hash,
         }
     )
+
+
+def _walk_forward_calendar(
+    connection: sqlite3.Connection, payload: WalkForwardIn, inputs: UniverseInputs, checkpoint: Checkpoint
+) -> list[str]:
+    """Ripristina le date EUR pre-NO_FEATURES: il warm-up OOS non puo' cambiare i confini IS."""
+    days = set(inputs.calendar)
+    excluded = [symbol for symbol, reason in inputs.excluded.items() if reason == "NO_FEATURES"]
+    if not excluded:
+        return inputs.calendar
+    converter = EurConverter(connection, max_age_days=get_settings().ecb_fx_max_age_days)
+    for symbol in excluded:
+        rows = connection.execute("SELECT id FROM assets WHERE UPPER(symbol) = ?", (symbol,)).fetchall()
+        if len(rows) == 1 and (series := load_series(connection, int(rows[0][0]), payload.data_mode)) is not None:
+            reason, bars, _missing = _market_bars(series, converter, payload.start_date, payload.end_date)
+            if reason is None:
+                days.update(str(day) for day in bars.index)
+        checkpoint(0.4)
+    return sorted(days)
 
 
 def _window_sessions(payload: WalkForwardIn) -> tuple[int, int]:

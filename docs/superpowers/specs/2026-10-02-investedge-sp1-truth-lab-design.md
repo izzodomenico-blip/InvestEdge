@@ -1,6 +1,6 @@
 # InvestEdge — SP1 "Laboratorio di verità"
 
-**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. Requisiti aggiornati; implementazione delle correzioni ancora da eseguire.
+**Stato:** design approvato dall'utente per sezioni nel brainstorming del 1–2 ottobre 2026; correzioni R1–R3 prioritarie approvate il 10 ottobre 2026. R1 implementata e verificata il 10 ottobre 2026; R2 e R3 ancora da eseguire.
 
 **Relazione:** attua SP1 della spec di programma `2026-09-30-investedge-profit-engine-program-design.md` (§4, principi §5, difetti §7). Dove questa spec è più precisa, prevale per SP1.
 
@@ -210,7 +210,7 @@ Una serie si divide in segmenti:
 - a ogni buco di più di `LAB_SEGMENT_MAX_GAP_SESSIONS` (5) sedute: giorni lavorativi per azioni/ETF, giorni di calendario per le crypto;
 - a ogni split sospetto (§6.3).
 
-Ogni segmento ha il proprio warm-up. Rendimenti futuri ed etichette non attraversano mai il confine di un segmento. Una posizione del simulatore aperta al confine viene chiusa alla chiusura dell'ultima barra valida del segmento, con i costi, e marcata `SEGMENT_EXIT` nel run: dopo uno split sospetto il prezzo successivo non è confrontabile.
+Ogni segmento ha il proprio warm-up. Rendimenti futuri ed etichette non attraversano mai il confine di un segmento. Una posizione del simulatore aperta al confine viene chiusa alla chiusura dell'ultima barra valida del segmento, con i costi, e marcata `SEGMENT_EXIT` nel run: dopo uno split sospetto il prezzo successivo non è confrontabile. Nelle simulazioni di selezione IS il calendario termina a `is_end`: un confine rilevabile soltanto oltre il cutoff non anticipa una liquidazione nell'IS. Le posizioni alla fine del prefisso restano valorizzate all'ultimo prezzo noto, includendo il rendimento terminale; i confini già interni al prefisso mantengono la chiusura con costi.
 
 ### 6.3 Base di rettifica e guardia split
 
@@ -326,17 +326,18 @@ Lo spread long-short è diagnostico: su TR non si va short. L'implementabilità 
 ### 8.3 Walk-forward
 
 - Finestre mobili: in-sample `LAB_WF_IS_SESSIONS` (504), OOS `LAB_WF_OOS_SESSIONS` (126), passo = OOS.
+- Calendario delle finestre = unione delle date delle barre EUR utilizzabili dei candidati, prima del filtro `NO_FEATURES`. Un warm-up maturato soltanto OOS non può aggiungere o cancellare retroattivamente sedute IS. Il calendario governa anche l'unica simulazione OOS; ogni asset opera sulle proprie barre.
 - **Griglie:**
   - `SCORE_THRESHOLD`: buy ∈ {60, 65, 70, 75} × sell ∈ {35, 40, 45};
   - `TOP_N_SCORE`: N ∈ {3, 5, 8} × ribilanciamento ∈ {settimanale, mensile};
   - `BUY_AND_HOLD`: nessuna griglia.
   - Stop e altri parametri restano quelli del run.
 - **Procedura:**
-  1. per ogni cutoff IS, valutare la griglia con soli input disponibili entro `is_end`, inclusa la conoscenza di segmenti, split e gap; nessun costo/liquidazione IS può dipendere dalla prima barra OOS. Una simulazione globale eventualmente mantenuta per il registro dei tentativi (§8.4) è distinta e non alimenta la selezione;
+  1. per ogni cutoff IS, simulare la griglia dal primo giorno del run fino a `is_end`, conservando lo storico precedente a `is_start` senza azzerare il portafoglio a ogni finestra. Ammettere un asset solo se ha almeno un segnale finito su una sua barra EUR entro il cutoff. Limitare la conoscenza di segmenti, split e gap al prefisso; nessun costo/liquidazione IS può dipendere dalla prima barra OOS. Le simulazioni globali sull'universo originale restano distinte per il registro dei tentativi (§8.4) e non alimentano la selezione;
   2. per ogni finestra si sceglie la configurazione con lo Sharpe netto più alto calcolato **sui soli rendimenti giornalieri dentro la finestra in-sample** (a parità vince la configurazione che precede nell'ordine della griglia);
   3. il periodo OOS è **un'unica simulazione** in cui i parametri cambiano all'inizio di ogni segmento OOS e il portafoglio prosegue senza liquidazioni forzate.
 - **Output:** parametri scelti per finestra, Sharpe in-sample medio, Sharpe OOS, degrado IS→OOS, metriche OOS complete, DSR e *N*.
-- Test R1: con input fino a `is_end` invariati, modifica/aggiunta/rimozione dei dati OOS lascia identici tutti gli Sharpe IS e i parametri scelti; includere perturbazioni che creano/eliminano split e gap al confine (§6.2), non solo variazioni senza segmentazione. Conservare la storia precedente e la semantica della finestra dichiarate nel run.
+- Test R1: nei run validi, con input fino a `is_end` invariati, modifica/aggiunta/rimozione dei dati OOS lascia identici tutti gli Sharpe IS e i parametri scelti; coprire split/gap al confine (§6.2), finestre successive, warm-up soltanto OOS e una seduta IS presente solo nell'asset poi escluso per `NO_FEATURES`. Un prefisso senza asset eleggibili produce rendimenti piatti, Sharpe `None` e scelta della prima configurazione. La validazione globale resta invariata: se il filtro `NO_FEATURES` rende vuoto l'universo dell'intero periodo il job fallisce con `LAB_EMPTY_UNIVERSE`, senza produrre risultati IS/OOS; gli altri errori di validazione mantengono il proprio codice.
 
 ### 8.4 Registro dei tentativi
 

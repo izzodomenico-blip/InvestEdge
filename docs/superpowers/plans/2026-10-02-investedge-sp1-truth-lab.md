@@ -81,9 +81,13 @@ Commit: `docs: prioritize Alpaca paper and 15-30 minute intraday`
 **Files:** `backend/app/lab/walk_forward.py`, `tests/test_lab_walk_forward.py`; solo se necessario per la causa `backend/app/lab/simulator.py`, `backend/app/services/backtest_engine.py`, `tests/test_lab_simulator.py`; spec SP1, piano e programma.
 **Contratto:** con dati <= `is_end` invariati, tutti gli Sharpe IS e la scelta invarianti a modifica, aggiunta e rimozione OOS, incluse segmentazioni al confine. Isolare gli input della selezione al cutoff; run globali per registro/DSR distinti. Mantenere OOS continuo e compatibilità dei risultati v1; niente liquidazioni ai cambi finestra.
 
-- [ ] RED: riprodurre fixture 60 barre seed 137, segnali seed 1137, IS40/OOS20, prima barra OOS dimezzata; aggiungere casi gap, rimozione e aggiunta al cutoff e asserzioni su tutti gli Sharpe IS.
-- [ ] GREEN: soluzione minima, test WFO/simulatore e regressioni pertinenti, suite completa e Ruff secondo protocollo; documentare la semantica di segmenti e finestra scelta.
-- [ ] Review indipendente e chiusura con evidenza fresca nel registro.
+- [x] RED: riprodurre fixture 60 barre seed 137, segnali seed 1137, IS40/OOS20, prima barra OOS dimezzata; aggiungere casi gap, rimozione e aggiunta al cutoff e asserzioni su tutti gli Sharpe IS.
+- [x] GREEN: soluzione minima, test WFO/simulatore e regressioni pertinenti, suite completa e Ruff secondo protocollo; documentare la semantica di segmenti e finestra scelta.
+- [x] Review indipendente e chiusura con evidenza fresca nel registro.
+
+**Semantica verificata (2026-10-10):** simulazioni dal primo giorno al cutoff, Sharpe sui soli rendimenti della finestra inclusa la barra terminale; ammissione con feature finite su una barra EUR propria entro cutoff. Il calendario pre-`NO_FEATURES` impedisce al warm-up OOS di spostare le finestre. Griglia globale per registro/DSR distinta, OOS continuo; prefisso IS vuoto ammesso, validazione globale invariata.
+
+**Evidenza:** RED riprodotti per segmentazione, selezione, cancellazione, eleggibilità e calendario; `pytest tests/test_lab_walk_forward.py -p no:cacheprovider -W error::RuntimeWarning` = **32 passati**; suite completa = **875 passati, 1 xfail strict atteso Task 13, 0 falliti/0 errori** (JUnit, 140,81 s); Ruff e pip check verdi; due review read-only senza rilievi Critical/Important aperti. Dettagli e comandi in `PROGRAMMA-OPERATIVO.md`, evidenza R1. Test/build frontend non applicabili.
 
 Commit: `fix: make walk-forward selection causal at segment boundaries`
 

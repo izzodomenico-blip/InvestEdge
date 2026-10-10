@@ -1,10 +1,12 @@
 """Walk-forward vero (spec SP1 §8.3): finestre mobili, griglia, selezione in-sample e OOS con calendario dei parametri.
 
-1. Ogni configurazione della griglia viene simulata una volta sull'intero periodo (`simulate_grid`).
-2. Finestre mobili sul calendario dell'universo: in-sample di `is_sessions` sedute, fuori campione di `oos_sessions`,
+1. Ogni configurazione viene simulata sull'intero periodo solo per il registro dei tentativi (`simulate_grid`).
+2. Finestre mobili sul calendario delle barre utilizzabili prima del filtro NO_FEATURES: in-sample di
+   `is_sessions` sedute, fuori campione di `oos_sessions`,
    passo = OOS; l'ultima finestra OOS e troncata a fine calendario (`build_windows`).
-3. Per ogni finestra si sceglie la configurazione con lo Sharpe netto piu alto sui soli rendimenti giornalieri datati
-   dentro la finestra in-sample (`select_parameters`): nessuna informazione successiva a `is_end` entra nella scelta.
+3. Per ogni finestra si simula di nuovo la griglia dal primo giorno del run fino a `is_end`, preservando lo storico
+   precedente a `is_start`; lo Sharpe usa i rendimenti datati dentro l'IS (`select_parameters`). I dati OOS non
+   possono anticipare una liquidazione di segmento nell'IS: l'ultima barra del prefisso resta mark-to-market.
    A parita vince la configurazione che precede nella griglia; senza Sharpe definiti si sceglie la prima.
 4. Il periodo OOS e un'unica simulazione dalla prima seduta OOS a fine calendario: i parametri cambiano all'inizio di
    ogni finestra OOS (`params_schedule`) e il portafoglio prosegue senza liquidazioni forzate (`simulate_oos`).
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+
+import numpy as np
 
 from backend.app.lab.contracts import LabError
 from backend.app.lab.simulator import SimulationConfig, SimulationResult, simulate
@@ -112,7 +116,7 @@ def simulate_grid(
 def select_parameters(
     grid_results: GridResults, calendar: Sequence[str], windows: Sequence[WindowBounds]
 ) -> list[WalkForwardWindow]:
-    """Configurazione con lo Sharpe netto piu alto sui soli rendimenti datati in `[is_start, is_end]`."""
+    """Sceglie sui rendimenti IS; il chiamante deve aver simulato la griglia senza dati oltre il relativo cutoff."""
     if not grid_results:
         raise ValueError("La griglia del walk-forward e vuota.")
     days = [str(day) for day in calendar]
@@ -150,16 +154,34 @@ def run_walk_forward(
     *,
     is_sessions: int,
     oos_sessions: int,
+    selection_calendar: Sequence[str] | None = None,
     progress: Progress | None = None,
 ) -> WalkForwardRun:
-    """Griglia -> finestre -> selezione in-sample -> OOS unico. `LAB_PERIOD_TOO_SHORT` senza nessuna finestra."""
-    bounds = build_windows(inputs.calendar, is_sessions, oos_sessions)
+    """Selezione causale e OOS sul calendario pre-NO_FEATURES; griglia globale sul calendario degli input."""
+    days = [str(day) for day in selection_calendar] if selection_calendar is not None else inputs.calendar
+    bounds = build_windows(days, is_sessions, oos_sessions)
     if not bounds:
-        raise period_too_short_error(len(inputs.calendar), is_sessions)
+        raise period_too_short_error(len(days), is_sessions)
     report = progress or (lambda _value: None)
-    share = len(grid) / (len(grid) + 1)
-    grid_results = simulate_grid(inputs, base, grid, progress=lambda value: report(value * share))
-    windows = select_parameters(grid_results, inputs.calendar, bounds)
-    oos = simulate_oos(inputs, base, windows)
+    # La griglia globale resta al chiamante per WF_GRID/DSR, separata dalle simulazioni di selezione IS.
+    steps = len(grid) * (len(bounds) + 1) + 1
+    grid_results = simulate_grid(inputs, base, grid, progress=lambda value: report(value * len(grid) / steps))
+    windows: list[WalkForwardWindow] = []
+    for number, bound in enumerate(bounds):
+        calendar = days[:bound[1] + 1]
+        signals = inputs.signals.reindex(index=calendar, columns=list(inputs.markets))
+        # NO_FEATURES deve essere noto al cutoff: un warm-up soltanto OOS non ammette l'asset nell'IS.
+        markets = {
+            asset_id: market for asset_id, market in inputs.markets.items()
+            if np.isfinite(signals.loc[market.bars.index.intersection(calendar), asset_id].to_numpy(dtype=float)).any()
+        }
+        prefix = replace(inputs, markets=markets, signals=signals, calendar=calendar)
+        offset = len(grid) * (number + 1)
+        prefix_results = simulate_grid(
+            prefix, base, grid, progress=lambda value, offset=offset: report((offset + value * len(grid)) / steps)
+        )
+        selected = select_parameters(prefix_results, days, [bound])[0]
+        windows.append(replace(selected, index=number))
+    oos = simulate_oos(replace(inputs, calendar=days), base, windows)
     report(1.0)
     return WalkForwardRun(tuple(windows), tuple(grid_results), oos)

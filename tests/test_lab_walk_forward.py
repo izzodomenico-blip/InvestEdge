@@ -17,11 +17,12 @@ from backend.app.config import get_settings
 from backend.app.database import get_connection
 from backend.app.lab.contracts import LabError
 from backend.app.lab.costs import CostProfile
-from backend.app.lab.simulator import AssetMarket, SimulationConfig, SimulationResult
+from backend.app.lab.series import split_into_segments
+from backend.app.lab.simulator import AssetMarket, SimulationConfig, SimulationResult, simulate
 from backend.app.lab.stats import EULER_MASCHERONI, sharpe_daily
 from backend.app.lab.strategies import StrategyParams
 from backend.app.lab.trials import canonical_hash, family_key, family_trial_sharpes, trial_config
-from backend.app.lab.universe import UniverseInputs
+from backend.app.lab.universe import UniverseInputs, build_universe_inputs
 from backend.app.lab.walk_forward import (
     WalkForwardWindow,
     build_windows,
@@ -200,6 +201,197 @@ def test_selection_ignores_oos_perturbation() -> None:
     oos_before = simulate_oos(inputs, base, before).daily_returns
     oos_after = simulate_oos(perturbed, base, after).daily_returns
     assert not np.allclose(oos_before.to_numpy(), oos_after.to_numpy())
+
+
+def _segmented_inputs(bars: pd.DataFrame, signals: pd.DataFrame) -> UniverseInputs:
+    segments, _events, _gaps = split_into_segments(
+        bars, asset_type="stock", basis="UNKNOWN", max_gap_sessions=5, split_tolerance=0.03
+    )
+    market = _market(1, bars)
+    for segment_id, segment in enumerate(segments):
+        market.bars.loc[segment["date"], "segment_id"] = segment_id
+    return _inputs({1: market}, signals)
+
+
+def _is_sharpes(inputs: UniverseInputs, params: StrategyParams, grid: list[StrategyParams]) -> list[float | None]:
+    # Osserviamo lo Sharpe realmente usato dal walk-forward per ogni candidato, senza leggere la griglia globale.
+    return [
+        run_walk_forward(
+            inputs, _base(params, inputs.calendar), [candidate], is_sessions=40, oos_sessions=20
+        ).windows[0].is_sharpe
+        for candidate in grid
+    ]
+
+
+@pytest.mark.parametrize("change", ["split", "gap", "remove", "add"])
+def test_is_results_ignore_oos_segment_changes(change: str) -> None:
+    bars = synthetic_bars(60, 137)
+    signals = pd.DataFrame({1: np.random.default_rng(1137).uniform(25, 85, 60)}, index=bars["date"])
+    split_bars = bars.copy()
+    split_bars.loc[40, DB_PRICES] *= 0.5
+    original_bars, changed_bars = bars, split_bars
+    if change == "gap":
+        changed_bars = bars.drop(index=range(40, 46))
+    elif change == "remove":
+        original_bars, changed_bars = split_bars, split_bars.drop(index=40)
+    elif change == "add":
+        original_bars, changed_bars = bars.drop(index=40), split_bars
+    cutoff = str(bars["date"].iloc[39])
+    original = _segmented_inputs(original_bars, signals)
+    changed = _segmented_inputs(changed_bars, signals)
+    pd.testing.assert_frame_equal(original.markets[1].bars.loc[:cutoff], changed.markets[1].bars.loc[:cutoff])
+    pd.testing.assert_frame_equal(original.signals.loc[:cutoff], changed.signals.loc[:cutoff])
+    params = StrategyParams("SCORE_THRESHOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    grid = parameter_grid(params.name, params)
+    before = run_walk_forward(original, _base(params, original.calendar), grid, is_sessions=40, oos_sessions=20)
+    after = run_walk_forward(changed, _base(params, changed.calendar), grid, is_sessions=40, oos_sessions=20)
+    before_sharpes, after_sharpes = _is_sharpes(original, params, grid), _is_sharpes(changed, params, grid)
+    assert len(set(before_sharpes)) > 1  # La selezione non e' banale.
+    assert after_sharpes == before_sharpes
+    first, second = before.windows[0], after.windows[0]
+    assert (second.is_start, second.is_end, second.chosen, second.is_sharpe) == (
+        first.is_start, first.is_end, first.chosen, first.is_sharpe
+    )
+    defined = [value for value in before_sharpes if value is not None]
+    assert first.is_sharpe == max(defined)
+    assert first.chosen == grid[before_sharpes.index(first.is_sharpe)]
+    # I run globali conservati per i tentativi vedono invece il vero cambiamento OOS.
+    assert any(
+        not left.equity.equals(right.equity)
+        for (_p, left), (_q, right) in zip(before.grid_results, after.grid_results, strict=True)
+    )
+    assert not before.oos.equity.equals(after.oos.equity)
+
+
+@pytest.mark.parametrize("split_at", [None, 30, 40])
+def test_in_sample_sharpe_includes_terminal_return_and_known_segment_exits(split_at: int | None) -> None:
+    bars = synthetic_bars(60, 137)
+    if split_at is not None:
+        bars.loc[split_at, DB_PRICES] *= 0.5
+    signals = pd.DataFrame({1: 80.0}, index=bars["date"])
+    inputs = _segmented_inputs(bars, signals)
+    params = StrategyParams("BUY_AND_HOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    base = _base(params, inputs.calendar)
+    result = run_walk_forward(inputs, base, [params], is_sessions=40, oos_sessions=20)
+    reference = simulate(inputs.markets, inputs.signals, inputs.calendar[:40], base)
+    assert reference.daily_returns.index[-1] == inputs.calendar[39]
+    expected = sharpe_daily(reference.daily_returns)
+    assert expected is not None
+    assert result.windows[0].is_sharpe == expected
+    assert expected != sharpe_daily(reference.daily_returns.iloc[:-1])
+    exits = [trade for trade in reference.trades if trade.reason == "SEGMENT_EXIT"]
+    if split_at == 30:
+        assert exits and exits[0].date == inputs.calendar[29]
+        assert exits[0].commission_eur == COSTS.commission_eur
+    else:
+        assert exits == []
+        assert reference.equity["invested_eur"].iloc[-1] > 0
+
+
+def test_rolling_is_preserves_history_before_window_start() -> None:
+    inputs = _random_universe(assets=1, sessions=80, seed=137)
+    params = StrategyParams("BUY_AND_HOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    base = _base(params, inputs.calendar)
+    run = run_walk_forward(inputs, base, [params], is_sessions=40, oos_sessions=20)
+    window = run.windows[1]
+    assert (window.index, window.is_start, window.is_end) == (1, inputs.calendar[20], inputs.calendar[59])
+    history = simulate(inputs.markets, inputs.signals, inputs.calendar[:60], base)
+    expected = sharpe_daily(history.daily_returns.loc[window.is_start:window.is_end])
+    reset = simulate(inputs.markets, inputs.signals, inputs.calendar[20:60], base)
+    assert window.is_sharpe == expected
+    assert expected != sharpe_daily(reset.daily_returns)
+    assert history.trades[0].date < window.is_start
+
+
+def test_is_ignores_next_segment_of_asset_missing_at_cutoff() -> None:
+    # Una seconda lane mantiene il calendario: l'ultimo prezzo A precede is_end di due sedute.
+    bars = synthetic_bars(60, 137).drop(index=[38, 39])
+    signals = pd.DataFrame({1: 80.0, 2: np.nan}, index=synthetic_bars(60, 138)["date"])
+    original = _segmented_inputs(bars, signals)
+    changed_bars = bars.copy()
+    changed_bars.loc[40, DB_PRICES] *= 0.5
+    changed = _segmented_inputs(changed_bars, signals)
+    calendar_market = _market(2, synthetic_bars(60, 138))
+    original = _inputs({**original.markets, 2: calendar_market}, signals)
+    changed = _inputs({**changed.markets, 2: calendar_market}, signals)
+    params = StrategyParams("SCORE_THRESHOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    first = run_walk_forward(original, _base(params, original.calendar), [params], is_sessions=40, oos_sessions=20)
+    second = run_walk_forward(changed, _base(params, changed.calendar), [params], is_sessions=40, oos_sessions=20)
+    assert second.windows[0] == first.windows[0]
+
+
+def test_oos_only_features_cannot_admit_asset_to_is() -> None:
+    inputs = _random_universe(assets=2, sessions=60, seed=137)
+    inputs.signals.loc[inputs.calendar[:40], 2] = np.nan
+    # NO_FEATURES nel builder globale puo' eliminare il secondo asset dopo una revisione solo OOS.
+    changed = _inputs({1: inputs.markets[1]}, inputs.signals)
+    params = StrategyParams("BUY_AND_HOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    first = run_walk_forward(inputs, _base(params, inputs.calendar), [params], is_sessions=40, oos_sessions=20)
+    second = run_walk_forward(changed, _base(params, changed.calendar), [params], is_sessions=40, oos_sessions=20)
+    assert first.windows[0] == second.windows[0]
+    assert not first.grid_results[0][1].equity.equals(second.grid_results[0][1].equity)
+
+
+
+
+def test_is_eligibility_requires_signal_on_an_asset_bar() -> None:
+    inputs = _random_universe(assets=2, sessions=60, seed=137)
+    inputs.markets[2] = replace(inputs.markets[2], bars=inputs.markets[2].bars.drop(inputs.calendar[11:40]))
+    inputs.signals.loc[inputs.calendar[:40], 2] = np.nan
+    inputs.signals.loc[inputs.calendar[20], 2] = 80.0  # as-of valido, ma nessuna barra EUR dell'asset quel giorno
+    changed = _inputs({1: inputs.markets[1]}, inputs.signals)
+    params = StrategyParams("BUY_AND_HOLD", max_asset_weight=0.5, rebalance_frequency="DAILY")
+    first = run_walk_forward(inputs, _base(params, inputs.calendar), [params], is_sessions=40, oos_sessions=20)
+    second = run_walk_forward(changed, _base(params, changed.calendar), [params], is_sessions=40, oos_sessions=20)
+    assert first.windows[0] == second.windows[0]
+
+def test_is_without_eligible_assets_is_flat_and_uses_first_candidate() -> None:
+    inputs = _random_universe(assets=1, sessions=60, seed=137)
+    inputs.signals.loc[inputs.calendar[:40], 1] = np.nan
+    params = StrategyParams("SCORE_THRESHOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    grid = parameter_grid(params.name, params)
+    result = run_walk_forward(inputs, _base(params, inputs.calendar), grid, is_sessions=40, oos_sessions=20)
+    assert (result.windows[0].chosen, result.windows[0].is_sharpe) == (grid[0], None)
+    assert result.oos.equity["invested_eur"].max() > 0
+
+def test_walk_forward_reports_and_cancels_during_is_simulations() -> None:
+    inputs = _random_universe(sessions=80)
+    params = StrategyParams("TOP_N_SCORE", top_n=2, rebalance_frequency="DAILY")
+    grid = parameter_grid(params.name, params)
+    progress: list[float] = []
+
+    def cancel_in_is(value: float) -> None:
+        progress.append(value)
+        if len(progress) > len(grid) and value < 1.0:
+            raise RuntimeError("CANCEL_DURING_IS")
+
+    with pytest.raises(RuntimeError, match="CANCEL_DURING_IS"):
+        run_walk_forward(
+            inputs, _base(params, inputs.calendar), grid, is_sessions=40, oos_sessions=20, progress=cancel_in_is
+        )
+    assert progress == sorted(progress)
+    assert 0 < progress[-1] < 1
+
+
+@pytest.mark.parametrize("window_index", [0, 1, 2])
+def test_each_rolling_window_ignores_data_after_its_own_cutoff(window_index: int) -> None:
+    bars = synthetic_bars(100, 137)
+    signals = pd.DataFrame({1: np.random.default_rng(1137).uniform(25, 85, 100)}, index=bars["date"])
+    inputs = _segmented_inputs(bars, signals)
+    cutoff_index = 39 + 20 * window_index
+    changed_bars = bars.copy()
+    changed_bars.loc[cutoff_index + 1, DB_PRICES] *= 0.5
+    changed = _segmented_inputs(changed_bars, signals)
+    params = StrategyParams("SCORE_THRESHOLD", max_asset_weight=1.0, rebalance_frequency="DAILY")
+    grid = parameter_grid(params.name, params)
+    before = run_walk_forward(inputs, _base(params, inputs.calendar), grid, is_sessions=40, oos_sessions=20)
+    after = run_walk_forward(changed, _base(params, changed.calendar), grid, is_sessions=40, oos_sessions=20)
+    assert before.windows[window_index] == after.windows[window_index]
+    # Non imponiamo invarianza alle finestre successive: includono legittimamente i dati modificati.
+    for candidate in grid:
+        first = run_walk_forward(inputs, _base(params, inputs.calendar), [candidate], is_sessions=40, oos_sessions=20)
+        second = run_walk_forward(changed, _base(params, changed.calendar), [candidate], is_sessions=40, oos_sessions=20)
+        assert first.windows[window_index].is_sharpe == second.windows[window_index].is_sharpe
 
 
 def test_oos_is_one_simulation_with_parameter_schedule() -> None:
@@ -428,6 +620,64 @@ def test_engine_selection_ignores_oos_price_perturbation(lab_connection: sqlite3
     assert {row[2] for row in trials[:6]}.isdisjoint({row[2] for row in trials[6:]})
     assert after["n_trials"] == 6
 
+
+
+@pytest.mark.parametrize("unique_is_date", [False, True])
+def test_engine_oos_warmup_cannot_change_is_eligibility_or_calendar(
+    lab_connection: sqlite3.Connection, unique_is_date: bool
+) -> None:
+    anchor = synthetic_bars(700, 7)
+    young = synthetic_bars(310, 8, start=str(anchor["date"].iloc[150]))
+    anchor_id = insert_asset(lab_connection, "ANCHOR")
+    young_id = insert_asset(lab_connection, "YOUNG")
+    # Questa seduta IS resta solo in YOUNG: NO_FEATURES globale non deve cancellarla dal calendario.
+    anchor_rows = anchor.drop(index=264) if unique_is_date else anchor
+    insert_bars(lab_connection, anchor_id, anchor_rows, real=True, provider="stooq")
+    insert_bars(lab_connection, young_id, young, real=True, provider="stooq")
+    lab_connection.commit()
+    payload = WalkForwardIn(**_payload_data(
+        anchor, symbols=["ANCHOR", "YOUNG"], strategy_name="BUY_AND_HOLD",
+        end_date=str(anchor["date"].iloc[459]), max_asset_weight=0.5, oos_sessions=80,
+    ))
+    engine = BacktestEngine()
+    before = engine.walk_forward(lab_connection, payload, now=NOW)
+    cutoff = str(anchor["date"].iloc[379])
+    assert before["windows"][0]["is_end"] == cutoff
+
+    def universe() -> UniverseInputs:
+        return build_universe_inputs(
+            lab_connection, payload.symbols, data_mode="REAL", signal_name="score", signal_timeframe="D",
+            start=payload.start_date, end=payload.end_date, now=NOW,
+        )
+
+    before_inputs = universe()
+    assert young_id in before_inputs.markets
+    assert not np.isfinite(before_inputs.signals.loc[:cutoff, young_id].to_numpy()).any()
+    assert np.isfinite(before_inputs.signals[young_id].to_numpy()).any()
+    raw_is = list(lab_connection.execute(
+        "SELECT asset_id, date, open, high, low, close, adjusted_close FROM price_history "
+        "WHERE date <= ? ORDER BY asset_id, date", (cutoff,),
+    ))
+    # Rapporto 2:1 esatto alla prima barra OOS: cambia il segmento e cancella il warm-up successivo.
+    factor = float(young["close"].iloc[229] / (2 * young["close"].iloc[230]))
+    lab_connection.execute(
+        "UPDATE price_history SET open=open*?1, high=high*?1, low=low*?1, close=close*?1, "
+        "adjusted_close=adjusted_close*?1 WHERE asset_id=?2 AND date=?3",
+        (factor, young_id, str(anchor["date"].iloc[380])),
+    )
+    lab_connection.commit()
+    after = engine.walk_forward(lab_connection, payload, now=NOW)
+    after_inputs = universe()
+    assert after_inputs.excluded["YOUNG"] == "NO_FEATURES"
+    assert list(lab_connection.execute(
+        "SELECT asset_id, date, open, high, low, close, adjusted_close FROM price_history "
+        "WHERE date <= ? ORDER BY asset_id, date", (cutoff,),
+    )) == raw_is
+    assert after["windows"][0] == before["windows"][0]
+    assert [(w["is_start"], w["is_end"], w["oos_start"], w["oos_end"]) for w in after["windows"]] == [
+        (w["is_start"], w["is_end"], w["oos_start"], w["oos_end"]) for w in before["windows"]
+    ]
+    assert after["oos_metrics"] != before["oos_metrics"]
 
 def test_real_grid_without_variation_records_no_trial_and_declares_it(lab_connection: sqlite3.Connection) -> None:
     bars = [_real_asset(lab_connection, symbol, seed) for seed, symbol in enumerate(SYMBOLS, start=7)][0]
