@@ -546,3 +546,64 @@ it("non conserva la guida REAL/DEMO quando fallisce una successiva apertura dell
   expect(screen.getByRole("alert")).toHaveTextContent("Storico non disponibile.");
   expect(screen.getByRole("alert")).not.toHaveTextContent(/Carica dati reali/);
 });
+
+const evidenceReport = {"id":21,"job_id":11,"signal_name":"score","timeframe":"D","horizon":5,"verdict":"NON_VALIDATO","fingerprint":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","created_at":"2026-10-10T10:00:00Z","metrics":{"horizon":5,"ic_dates":300,"ic_mean":0.02,"ic_std":0.1,"ic_ir":0.2,"ic_positive_share":0.6,"t_nw":1.1,"mean_names":12,"bucket_count":5,"bucket_returns":[-0.02,0,0.01,0.02,0.03],"spread_gross":0.05,"spread_net":0.04,"turnover_top":0.25,"rank_autocorr":0.8},"walk_forward":{"oos_sessions":260,"oos_observations":259,"windows":[{"index":0,"is_start":"2024-01-01","is_end":"2024-12-31","oos_start":"2025-01-02","oos_end":"2025-06-30","chosen":{"name":"TOP_N_SCORE","buy_threshold":70,"sell_threshold":40,"max_asset_weight":0.15,"top_n":5,"rebalance_frequency":"WEEKLY"},"is_sharpe":0.08}],"grid_size":3,"oos_sharpe_daily":0.04,"is_sharpe_mean_daily":0.08,"degradation_daily":0.04,"oos_metrics":{"total_return_percent":5,"cagr":5,"max_drawdown":-2,"sharpe_ratio":0.635,"profit_factor":1.2,"win_rate":50,"total_trades":4,"final_value_eur":10500.12},"units":{"sharpe":"daily"},"dsr":{"dsr":0.3,"sr":0.04,"sr0":0.05,"n_trials":7,"n_obs":259,"skew":0,"kurtosis":3},"n_trials":7,"trial_sharpes":[0.02,0.04],"costs":{"commission_eur":4,"spread_cost_eur":2.35},"turnover":0.4,"exposure":0.7},"config":{"data_mode":"REAL","versions":{"pipeline":"features-v1","evidence":"v1"},"thresholds":{"min_ic_dates":252,"min_dsr":0.95},"costs":{"commission_eur":1,"cost_bps_equity":5,"cost_bps_crypto":15,"min_trade_eur":10,"fractional_shares":true},"request":{"start_date":"2024-01-01","end_date":"2026-01-01"}},"universe":{"assets":[{"asset_id":1,"symbol":"AAPL","asset_type":"stock"}],"excluded":{"MISSING":"FX mancanti"},"inputs_hash":"hash"},"limits":{"survivorship_bias":"Universo corrente, survivorship bias.","validation_scope":"D/W/M e orizzonti in sedute; non valida intraday 15-30 minuti.","diagnostic_spread":"Spread diagnostico; non eseguibile short.","fx_excluded_bars":{"AAPL":2}}};
+describe("Backtest modalità Evidenza offline", () => {
+ function evidenceRoute(extra: typeof handler) {
+   const base=handler; handler=(p,i)=>p.startsWith("/lab/evidence")||p.startsWith("/lab/jobs")?extra(p,i):base(p,i);
+ }
+ async function submitEvidence() { await mount();fireEvent.click(screen.getByRole("button",{name:"Evidenza"})); }
+ it("accoda, polla, carica report_ids e rende verdetto, unità e limiti",async()=>{
+  let polls=0;evidenceRoute(p=>p==="/lab/evidence"?response(job("QUEUED",{kind:"EVIDENCE"}),202):
+   p==="/lab/evidence/21"?response(evidenceReport):response(++polls===1?job("RUNNING",{kind:"EVIDENCE",progress:.4}):job("SUCCEEDED",{kind:"EVIDENCE",result:{report_ids:[21]}})));
+  await submitEvidence();vi.useFakeTimers();fireEvent.click(screen.getByRole("button",{name:"Valuta evidenza"}));await flush();
+  expect(screen.getByText(/Accodato/)).toBeInTheDocument();await tick();expect(screen.getByText(/40%/)).toBeInTheDocument();await tick();
+  expect(screen.getByText("NON VALIDATO · 5g")).toBeInTheDocument();
+  expect(screen.getAllByText(/non valida intraday 15-30 minuti/).length).toBeGreaterThan(0);
+  expect(screen.getByText("MISSING")).toBeInTheDocument();expect(screen.getByText("FX mancanti")).toBeInTheDocument();
+  const metric=(label:string)=>within(screen.getByText(label).parentElement!);
+  expect(metric("Sharpe OOS giornaliero").getByText("0.040")).toBeInTheDocument();
+  expect(metric("Sharpe OOS annualizzato").getByText("0.635")).toBeInTheDocument();
+  expect(metric("Degrado IS/OOS").getByText("0.040")).toBeInTheDocument();
+  expect(metric("Quota IC > 0").getByText("60.00%")).toBeInTheDocument();
+  expect(metric("Spread netto").getByText("4.00%")).toBeInTheDocument();
+  expect(metric("DSR").getByText("0.300")).toBeInTheDocument();expect(metric("Tentativi N").getByText("7")).toBeInTheDocument();
+  const payload=JSON.parse(String(fetchMock.mock.calls.find(([url])=>String(url).endsWith("/lab/evidence"))![1]!.body));
+  expect(Object.keys(payload).sort()).toEqual(["end_date","horizons","signal_name","start_date","timeframe"]);
+  expect(payload.horizons).toEqual([1,5,21]);expect(payload.timeframe).toBe("D");
+  expect(screen.queryByText("PAGE_CRASHED")).not.toBeInTheDocument();
+ });
+ it("invia simboli opzionali, timeframe e orizzonti, senza dati DEMO o costi",async()=>{
+  evidenceRoute(p=>p==="/lab/evidence"?response(job("SUCCEEDED",{kind:"EVIDENCE",result:{report_ids:[21]}}),202):response(evidenceReport));
+  await submitEvidence();fireEvent.change(screen.getByLabelText("Simboli opzionali"),{target:{value:" aapl, MSFT, aapl "}});
+  fireEvent.change(screen.getByLabelText("Timeframe del segnale"),{target:{value:"W"}});
+  fireEvent.click(screen.getByLabelText("1 seduta"));fireEvent.click(screen.getByLabelText("21 sedute"));
+  fireEvent.click(screen.getByRole("button",{name:"Valuta evidenza"}));await flush();
+  const payload=JSON.parse(String(fetchMock.mock.calls.find(([url])=>String(url).endsWith("/lab/evidence"))![1]!.body));
+  expect(payload).toMatchObject({symbols:["AAPL","MSFT"],timeframe:"W",horizons:[5]});
+  expect(payload).not.toHaveProperty("data_mode");expect(payload).not.toHaveProperty("commission_eur");
+  expect(screen.queryByLabelText("Modalità dati")).not.toBeInTheDocument();
+ });
+ it("carica tutti i report, incluso WFO nullo e metriche mancanti",async()=>{
+  evidenceRoute(p=>p==="/lab/evidence"?response(job("SUCCEEDED",{kind:"EVIDENCE",result:{report_ids:[21,22]}}),202):
+   response(p.endsWith("/22")?{...evidenceReport,id:22,horizon:21,verdict:"INSUFFICIENTE",walk_forward:null,
+    metrics:{...evidenceReport.metrics,ic_mean:null,t_nw:null,spread_net:null}}:evidenceReport));
+  await submitEvidence();fireEvent.click(screen.getByRole("button",{name:"Valuta evidenza"}));await flush();
+  expect(screen.getByText("INSUFFICIENTE · 21g")).toBeInTheDocument();
+  expect(screen.getByText("NON VALIDATO · 5g").title).not.toContain("21g: NON MISURATO");
+  expect(screen.getAllByText("N/D").length).toBeGreaterThanOrEqual(3);
+  expect(fetchMock.mock.calls.filter(([url])=>/evidence\/(21|22)$/.test(String(url)))).toHaveLength(2);
+ });
+ it.each([[],["../secret"],[0],[21.5]].map(ids => ({ ids })))("rifiuta riferimenti report non validi $ids",async({ ids })=>{
+  evidenceRoute(()=>response(job("SUCCEEDED",{kind:"EVIDENCE",result:{report_ids:ids}}),202));
+  await submitEvidence();fireEvent.click(screen.getByRole("button",{name:"Valuta evidenza"}));await flush();
+  expect(screen.getByRole("alert")).toHaveTextContent("Riferimenti report non validi");
+  expect(fetchMock.mock.calls.filter(([url])=>/evidence\//.test(String(url)))).toHaveLength(0);
+ });
+ it("non avvia senza orizzonti",async()=>{
+  await submitEvidence();for(const label of ["1 seduta","5 sedute","21 sedute"])fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button",{name:"Valuta evidenza"}));await flush();
+  expect(screen.getByRole("alert")).toHaveTextContent("Seleziona almeno un orizzonte");
+  expect(fetchMock.mock.calls.filter(([,i])=>i?.method==="POST")).toHaveLength(0);
+ });
+});

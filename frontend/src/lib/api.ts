@@ -54,6 +54,7 @@ export type Asset = {
 };
 
 export type SignalRecord = {
+  data_mode: DataMode | null;
   id: number;
   asset_id: number;
   symbol: string;
@@ -76,6 +77,7 @@ export type ActionType = "BUY" | "REDUCE" | "SELL" | "WATCH" | "RISK" | "OK";
 export type ActionPriority = "HIGH" | "MEDIUM" | "LOW";
 
 export type ActionItem = {
+  data_mode: DataMode | null;
   type: ActionType;
   priority: ActionPriority;
   symbol: string | null;
@@ -105,6 +107,7 @@ export type MLModelType = "LOGISTIC_REGRESSION" | "RANDOM_FOREST" | "HIST_GRADIE
 export type MLTargetType = "POSITIVE_RETURN" | "OUTPERFORM_BENCHMARK" | "DRAWDOWN_RISK";
 
 export type MLTrainInput = {
+  data_mode?: DataMode;
   model_name: string;
   model_type: MLModelType;
   target_type: MLTargetType;
@@ -127,6 +130,8 @@ export type MLStatus = {
 };
 
 export type MLTrainResult = {
+  data_mode: DataMode | null;
+  pipeline_version: string | null;
   model_id: number;
   training_run: Record<string, unknown> | null;
   metrics: Record<string, unknown>;
@@ -135,6 +140,8 @@ export type MLTrainResult = {
 };
 
 export type MLPrediction = {
+  data_mode: DataMode | null;
+  pipeline_version: string | null;
   id: number | null;
   symbol: string;
   model_id: number;
@@ -151,6 +158,8 @@ export type MLPrediction = {
 };
 
 export type MLModelSummary = {
+  data_mode: DataMode | null;
+  pipeline_version: string | null;
   id: number;
   model_name: string;
   model_type: string;
@@ -1429,4 +1438,55 @@ export function markListingViewed(listingId: number): Promise<{ refresh_request_
   return apiPost<{ refresh_request_id: number }>(
     `/data/refresh/viewed/${encodeURIComponent(String(listingId))}`,
   );
+}
+
+export type Verdict = "VALIDATO" | "NON_VALIDATO" | "INSUFFICIENTE";
+export type EvidenceHorizon = 1 | 5 | 21;
+export type EvidenceRequest = {
+  signal_name: string; timeframe: SignalTimeframe; horizons: EvidenceHorizon[];
+  start_date: string; end_date: string; symbols?: string[];
+};
+export type EvidenceSummary = {
+  id: number; job_id: number | null; signal_name: string; timeframe: SignalTimeframe;
+  horizon: EvidenceHorizon; verdict: Verdict; fingerprint: string; created_at: string;
+};
+export type EvidenceLatest = {
+  signal_name: string; timeframe: SignalTimeframe;
+  horizons: Record<string, EvidenceSummary | null>; best: EvidenceSummary | null;
+};
+export type EvidenceMetrics = {
+  horizon: number; ic_dates: number; ic_mean: number | null; ic_std: number | null;
+  ic_ir: number | null; ic_positive_share: number | null; t_nw: number | null;
+  mean_names: number; bucket_count: number; bucket_returns: (number | null)[];
+  spread_gross: number | null; spread_net: number | null; turnover_top: number | null;
+  rank_autocorr: number | null;
+};
+export type EvidenceWalkForward = {
+  oos_sessions: number; oos_observations: number; windows: WalkForwardWindow[]; grid_size: number;
+  oos_sharpe_daily: number | null; is_sharpe_mean_daily: number | null; degradation_daily: number | null;
+  oos_metrics: {
+    total_return_percent: number; cagr: number; max_drawdown: number; sharpe_ratio: number;
+    profit_factor: number; win_rate: number; total_trades: number; turnover: number; exposure: number;
+    commission_eur: number; spread_cost_eur: number; final_value_eur: number;
+  }; units: Record<string, string>;
+  dsr: DeflatedSharpe | null; n_trials: number; trial_sharpes: number[];
+  costs: { commission_eur: number; spread_cost_eur: number }; turnover: number; exposure: number;
+};
+export type EvidenceReport = EvidenceSummary & {
+  metrics: EvidenceMetrics; walk_forward: EvidenceWalkForward | null;
+  config: Record<string, unknown>;
+  universe: { assets: { asset_id: number; symbol: string; asset_type: string }[];
+    excluded: Record<string, string>; inputs_hash: string };
+  limits: Record<string, unknown>;
+};
+export function getEvidenceLatest(signalName: string, timeframe: SignalTimeframe, signal?: AbortSignal) {
+  return apiGet<EvidenceLatest>("/lab/evidence/latest?signal_name=" + encodeURIComponent(signalName) +
+    "&timeframe=" + encodeURIComponent(timeframe), { signal });
+}
+export function startEvidence(payload: EvidenceRequest, signal?: AbortSignal) {
+  return apiPost<JobOut>("/lab/evidence", payload, { signal });
+}
+export function getEvidenceReport(id: number, signal?: AbortSignal) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Riferimento report non valido.");
+  return apiGet<EvidenceReport>("/lab/evidence/" + id, { signal });
 }

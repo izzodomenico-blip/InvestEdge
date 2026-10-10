@@ -1,3 +1,4 @@
+import { EvidenceBadge, useScoreEvidence } from "../components/EvidenceBadge";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
@@ -58,6 +59,7 @@ function formatIndicator(value: number | null | undefined, kind: "number" | "per
 }
 
 export function AnalysisPage() {
+  const evidence = useScoreEvidence();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -244,6 +246,7 @@ export function AnalysisPage() {
             <article className="rounded-lg border border-slate-800/80 bg-slate-950/60 p-5 shadow-panel">
               <p className="text-xs font-medium uppercase text-slate-500">Score tecnico</p>
               <p className="mt-2 text-2xl font-semibold text-white">{analysis.score.toFixed(1)}/100</p>
+              <div className="mt-3"><EvidenceBadge {...evidence} dataMode={analysis.data_mode} /></div>
               <p className="mt-3 text-sm text-slate-400">{analysis.summaries.overall_technical_bias}</p>
             </article>
             <article className="rounded-lg border border-slate-800/80 bg-slate-950/60 p-5 shadow-panel">

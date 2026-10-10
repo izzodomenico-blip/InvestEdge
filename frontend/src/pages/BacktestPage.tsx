@@ -1,3 +1,4 @@
+import { EvidencePanel } from "../components/EvidencePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GitCompareArrows, RotateCcw, ShieldCheck, Trash2, Trophy } from "lucide-react";
 import {
@@ -22,6 +23,11 @@ import {
   apiPost,
   apiReasonCode,
   getLabSignals,
+  startEvidence,
+  getEvidenceReport,
+  type EvidenceRequest,
+  type EvidenceReport,
+  type EvidenceHorizon,
   type BacktestCostProfile,
   type DataMode,
   type SignalTimeframe,
@@ -41,7 +47,7 @@ import { cancelJob, getBacktestJobResult, getInlineJobResult, waitForJob } from 
 import { formatPercent } from "../lib/format";
 import { Activity, BarChart3, BadgeDollarSign, Receipt, ShieldAlert } from "lucide-react";
 
-type BacktestMode = "single" | "compare" | "walkforward";
+type BacktestMode = "single" | "compare" | "walkforward" | "evidence";
 
 const compareSeriesColors = ["#22D3EE", "#A78BFA", "#34D399"];
 const benchmarkColor = "#94A3B8";
@@ -221,6 +227,10 @@ export function BacktestPage() {
   const operationController = useRef<AbortController | null>(null);
   const [walkResult, setWalkResult] = useState<WalkForwardResult | null>(null);
   const [walking, setWalking] = useState(false);
+  const [evidencing, setEvidencing] = useState(false);
+  const [evidenceReports, setEvidenceReports] = useState<EvidenceReport[]>([]);
+  const [evidenceHorizons, setEvidenceHorizons] = useState<EvidenceHorizon[]>([1, 5, 21]);
+  const [evidenceSymbols, setEvidenceSymbols] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<BacktestSummary | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -295,6 +305,13 @@ export function BacktestPage() {
 
   function validate(): string | null {
     if (!signals.includes(form.signal_name)) return "Seleziona un segnale disponibile nel catalogo.";
+    if (mode === "evidence") {
+      if (!form.start_date || !form.end_date || form.end_date < form.start_date) return "Intervallo date non valido.";
+      if (evidenceHorizons.length === 0) return "Seleziona almeno un orizzonte.";
+      if (evidenceSymbols.trim() && evidenceSymbols.split(",").some(v => !v.trim())) return "Inserisci simboli separati da virgole, senza voci vuote.";
+      if (evidenceSymbols.split(",").length > 1000) return "Massimo 1000 simboli.";
+      return null;
+    }
     for (const [value, max] of [[form.commission_eur, 100], [form.cost_bps_equity, 1000],
       [form.cost_bps_crypto, 1000], [form.min_trade_eur, 1000000]] as const) {
       if (value.trim() !== "" && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > max)) {
@@ -349,11 +366,13 @@ export function BacktestPage() {
     setRunning(mode === "single");
     setComparing(mode === "compare");
     setWalking(mode === "walkforward");
+    setEvidencing(mode === "evidence");
     setJob(null);
     setCancelling(false);
     if (mode === "single") setResult(null);
     if (mode === "compare") setCompareResult(null);
     if (mode === "walkforward") setWalkResult(null);
+    if (mode === "evidence") setEvidenceReports([]);
     const input: BacktestRunInput = {
       data_mode: form.data_mode, signal_name: form.signal_name, signal_timeframe: form.signal_timeframe,
       commission_eur: numberOrNull(form.commission_eur), cost_bps_equity: numberOrNull(form.cost_bps_equity),
@@ -370,19 +389,30 @@ export function BacktestPage() {
         ? Number(form.top_n) : undefined,
     };
     const { strategy_name: _strategy, ...settings } = input;
-    const payload: BacktestRunInput | BacktestCompareInput | WalkForwardInput = mode === "compare"
+    const payload: BacktestRunInput | BacktestCompareInput | WalkForwardInput | EvidenceRequest = mode === "evidence"
+      ? { signal_name: form.signal_name, timeframe: form.signal_timeframe, horizons: evidenceHorizons,
+          start_date: form.start_date, end_date: form.end_date,
+          ...(evidenceSymbols.trim() ? { symbols: Array.from(new Set(evidenceSymbols.split(",").map(v => v.trim().toUpperCase()))).sort() } : {}) }
+      : mode === "compare"
       ? { ...settings, strategy_names: compareStrategies }
       : mode === "walkforward"
         ? { ...input, is_sessions: Number(isSessions), oos_sessions: Number(oosSessions) }
         : input;
     const path = mode === "single" ? "/backtests/run" : mode === "compare"
       ? "/backtests/compare" : "/backtests/walk-forward";
-    const kind = mode === "single" ? "BACKTEST" : mode === "compare" ? "COMPARE" : "WALK_FORWARD";
+    const kind = mode === "evidence" ? "EVIDENCE" : mode === "single" ? "BACKTEST" : mode === "compare" ? "COMPARE" : "WALK_FORWARD";
     try {
-      const initial = await apiPost<JobOut>(path, payload, { signal });
+      const initial = mode === "evidence" ? await startEvidence(payload as EvidenceRequest, signal) : await apiPost<JobOut>(path, payload, { signal });
       if (initial.kind !== kind) throw new Error("Tipo di elaborazione inatteso.");
       const completed = await waitForJob(initial, { signal, onUpdate: setJob });
-      if (mode === "single") {
+      if (mode === "evidence") {
+        const next = getInlineJobResult<{ report_ids: number[] }>(completed);
+        if (!Array.isArray(next.report_ids) || next.report_ids.length === 0 ||
+          next.report_ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Riferimenti report non validi.");
+        const reports = await Promise.all(next.report_ids.map(id => getEvidenceReport(id, signal)));
+        signal.throwIfAborted();
+        setEvidenceReports(reports);
+      } else if (mode === "single") {
         setResult(await getBacktestJobResult(completed, signal));
         setHistory(await apiGet<BacktestSummary[]>("/backtests", { signal }));
       } else if (mode === "compare") {
@@ -406,6 +436,7 @@ export function BacktestPage() {
         setRunning(false);
         setComparing(false);
         setWalking(false);
+        setEvidencing(false);
         setCancelling(false);
       }
       if (operationController.current === controller) operationController.current = null;
@@ -533,7 +564,7 @@ export function BacktestPage() {
         title="Backtest"
         subtitle="Valuta strategie sui dati locali con segnali condivisi, costi di esecuzione in EUR e risultati fuori campione."
         actions={
-          <div className="inline-flex rounded-lg border border-slate-800/80 bg-slate-950/60 p-1">
+          <div className="inline-flex flex-wrap rounded-lg border border-slate-800/80 bg-slate-950/60 p-1">
             <button
               type="button"
               onClick={() => setMode("single")}
@@ -573,6 +604,10 @@ export function BacktestPage() {
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               Robustezza
             </button>
+            <button type="button" onClick={() => setMode("evidence")} disabled={historyBusy}
+              className={"rounded-md px-3 py-2 text-sm font-medium " + (mode === "evidence" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-300 hover:text-white")}>
+              Evidenza
+            </button>
           </div>
         }
       />
@@ -583,7 +618,7 @@ export function BacktestPage() {
         {catalogError && <p>{catalogError} Ricarica la pagina per riprovare il catalogo.</p>}
       </div>}
 
-      {job && (running || comparing || walking) && (
+      {job && (running || comparing || walking || evidencing) && (
         <Panel title="Elaborazione">
           <div role="status" aria-live="polite" className="space-y-3">
             <p>{jobLabels[job.status]} · {Math.round(Math.max(0, Math.min(1, job.progress)) * 100)}%</p>
@@ -604,6 +639,7 @@ export function BacktestPage() {
             onSubmit={(event) => void runOperation(event)}
             className="space-y-4"
           >
+            {mode !== "evidence" && <>
             <label className="block space-y-2">
               <span className="text-sm text-slate-400">Nome backtest</span>
               <input value={form.name} onChange={(event) => updateField("name", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60" />
@@ -737,15 +773,33 @@ export function BacktestPage() {
             </div>
 
 
+            </>}
+            {mode === "evidence" && <fieldset disabled={historyBusy} className="space-y-4">
+              <p className="text-sm text-slate-300">Valutazione solo REAL. Costi e soglie provengono dalla configurazione salvata nel report.</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-2"><span className="text-sm text-slate-300">Data inizio</span>
+                  <input type="date" value={form.start_date} onChange={e => updateField("start_date", e.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white" /></label>
+                <label className="space-y-2"><span className="text-sm text-slate-300">Data fine</span>
+                  <input type="date" value={form.end_date} onChange={e => updateField("end_date", e.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white" /></label>
+              </div>
+              <fieldset><legend className="mb-2 text-sm text-slate-300">Orizzonti in sedute</legend>
+                <div className="flex flex-wrap gap-4">{([1,5,21] as const).map(h => <label key={h} className="flex items-center gap-2 text-sm text-slate-200">
+                  <input type="checkbox" checked={evidenceHorizons.includes(h)} onChange={() => setEvidenceHorizons(current => current.includes(h) ? current.filter(v => v !== h) : [...current,h].sort((a,b)=>a-b))} />
+                  {h} {h === 1 ? "seduta" : "sedute"}</label>)}</div>
+              </fieldset>
+              <label className="block space-y-2"><span className="text-sm text-slate-300">Simboli opzionali</span>
+                <input value={evidenceSymbols} onChange={e => setEvidenceSymbols(e.target.value)} placeholder="AAPL, MSFT · vuoto = universo REAL" className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white" /></label>
+              <p className="text-sm text-slate-300">D/W/M e orizzonti in sedute non validano l'intraday di 15–30 minuti.</p>
+            </fieldset>}
             <fieldset disabled={historyBusy} className="space-y-4">
               <legend className="mb-3 font-medium text-slate-200">Dati e segnale</legend>
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-2">
+                {mode !== "evidence" && <label className="space-y-2">
                   <span className="text-sm text-slate-400">Modalità dati</span>
                   <select value={form.data_mode} onChange={(event) => updateField("data_mode", event.target.value as DataMode)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white">
                     <option value="REAL">REAL · dati reali</option><option value="DEMO">DEMO · simulazione</option>
                   </select>
-                </label>
+                </label>}
                 <label className="space-y-2">
                   <span className="text-sm text-slate-400">Segnale</span>
                   <select value={form.signal_name} disabled={signals.length === 0} onChange={(event) => updateField("signal_name", event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-base text-white disabled:opacity-60">
@@ -762,7 +816,7 @@ export function BacktestPage() {
               </div>
               <p className="text-sm text-slate-400">REAL e DEMO restano separati. D/W/M descrivono il segnale; frequenza e finestre si riferiscono alle sedute.</p>
             </fieldset>
-            <fieldset disabled={historyBusy} className="space-y-4">
+            {mode !== "evidence" && <fieldset disabled={historyBusy} className="space-y-4">
               <legend className="mb-3 font-medium text-slate-200">Costi Trade Republic</legend>
               <p className="text-sm text-slate-400">Lascia vuoti i valori per usare le impostazioni configurate. Zero disattiva quel costo. 1 bps = 0,01%; spread e slippage si applicano a ogni lato.</p>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -783,9 +837,13 @@ export function BacktestPage() {
                 </label>
               </div>
               <p className="text-sm text-slate-400">Le crypto ammettono sempre quote frazionarie. Il profilo effettivo viene salvato nel risultato.</p>
-            </fieldset>
+            </fieldset>}
 
-            {mode === "compare" ? (
+            {mode === "evidence" ? (
+              <button disabled={evidencing || historyBusy || signals.length === 0} className="w-full rounded-md border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 disabled:opacity-60">
+                {evidencing ? "Valutazione in corso..." : "Valuta evidenza"}
+              </button>
+            ) : mode === "compare" ? (
               <button disabled={comparing || historyBusy || signals.length === 0} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-violet-300/30 bg-violet-400/15 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-400/25 disabled:opacity-60">
                 <GitCompareArrows className={`h-4 w-4 ${comparing ? "animate-pulse" : ""}`} aria-hidden="true" />
                 {comparing ? "Confronto in corso..." : "Confronta strategie"}
@@ -805,7 +863,10 @@ export function BacktestPage() {
         </Panel>
 
         <div className="min-w-0 space-y-6">
-          {mode === "compare" ? (
+          {mode === "evidence" ? (
+            evidenceReports.length ? evidenceReports.map(report => <EvidencePanel key={report.id} report={report} />)
+              : <Panel title="Evidenza del segnale"><p className="text-sm text-slate-300">Avvia una valutazione REAL per misurare IC, costi e risultati fuori campione. Il verdetto sarà salvato nel report.</p></Panel>
+          ) : mode === "compare" ? (
             compareResult ? (
               <>
                 <Panel

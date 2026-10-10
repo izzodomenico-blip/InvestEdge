@@ -1,3 +1,4 @@
+import { EvidenceBadge, DemoMarker, useScoreEvidence } from "../components/EvidenceBadge";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Activity, AlertTriangle, BadgeDollarSign, BarChart3, CheckCircle2, Database, FlaskConical, RefreshCw, ShieldAlert, TrendingUp } from "lucide-react";
@@ -46,6 +47,7 @@ const newsImpactTone: Record<string, string> = {
 };
 
 export function DashboardPage() {
+  const evidence = useScoreEvidence();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -297,7 +299,7 @@ export function DashboardPage() {
       </Panel>
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
-        <Panel title="Top score asset">
+        <Panel title="Top score asset" action={<EvidenceBadge {...evidence} />}>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dashboard.top_assets} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
@@ -308,6 +310,7 @@ export function DashboardPage() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-300">{dashboard.top_assets.filter(a => a.signal_data_mode === "DEMO").map(a => <span key={a.symbol}>{a.symbol} <DemoMarker dataMode={a.signal_data_mode} /></span>)}</div>
         </Panel>
 
         <Panel title="Distribuzione asset">
@@ -337,12 +340,13 @@ export function DashboardPage() {
         </Panel>
       </div>
 
-      <Panel title="Segnali recenti">
+      <Panel title="Segnali recenti" action={<EvidenceBadge {...evidence} />}>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           {dashboard.latest_signals.map((item) => (
             <article key={item.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="font-semibold text-white">{item.symbol}</p>
+                <DemoMarker dataMode={item.data_mode} />
                 <SignalBadge signal={item.signal} />
               </div>
               <p className="mt-3 line-clamp-3 text-sm text-slate-400">{item.technical_summary}</p>
@@ -356,12 +360,13 @@ export function DashboardPage() {
       </Panel>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <Panel title="Top 5 asset per score">
+        <Panel title="Top 5 asset per score" action={<EvidenceBadge {...evidence} />}>
           <div className="space-y-3">
             {dashboard.top_assets.map((asset) => (
               <div key={asset.symbol} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-4">
                 <div>
                   <p className="font-semibold text-white">{asset.symbol}</p>
+                  <DemoMarker dataMode={asset.signal_data_mode} />
                   <p className="mt-1 text-sm text-slate-500">{asset.technical_summary ?? asset.name}</p>
                 </div>
                 <div className="text-right">

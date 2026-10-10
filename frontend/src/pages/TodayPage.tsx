@@ -1,3 +1,4 @@
+import { EvidenceBadge, DemoMarker, useScoreEvidence } from "../components/EvidenceBadge";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -127,6 +128,7 @@ function ActionCard({
               </Link>
             )}
             {name && <span className="truncate text-xs text-slate-400">{name}</span>}
+            <DemoMarker dataMode={action.data_mode} />
             {action.score != null && (
               <span className="num text-xs text-slate-500">score {action.score.toFixed(0)}/100</span>
             )}
@@ -157,6 +159,7 @@ function ActionCard({
 }
 
 export function TodayPage() {
+  const evidence = useScoreEvidence();
   const [board, setBoard] = useState<ActionBoard | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,6 +279,7 @@ export function TodayPage() {
         </div>
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-medium text-white">Azioni di oggi</h2><EvidenceBadge {...evidence} /></div>
       <div className="grid gap-4 lg:grid-cols-2">
         {board?.actions.map((action, index) => {
           const asset = action.symbol ? assets.find((a) => a.symbol === action.symbol) : undefined;

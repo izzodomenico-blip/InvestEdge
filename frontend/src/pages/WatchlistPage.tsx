@@ -1,3 +1,4 @@
+import { EvidenceBadge, DemoMarker, useScoreEvidence } from "../components/EvidenceBadge";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Plus, Search, TrendingDown, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -41,6 +42,7 @@ function recommendationTone(value: string | null | undefined) {
 }
 
 export function WatchlistPage() {
+  const evidence = useScoreEvidence();
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [recommendations, setRecommendations] = useState<PortfolioRecommendation[]>([]);
@@ -157,6 +159,7 @@ export function WatchlistPage() {
       </div>
 
       <Panel>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="font-medium text-white">Score</h2><EvidenceBadge {...evidence} /></div>
         {/* Barra filtri + ricerca */}
         <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-2">
@@ -254,6 +257,7 @@ export function WatchlistPage() {
                         </div>
                         <div className="text-right">
                           <p className="eyebrow-muted">Score</p>
+                          <DemoMarker dataMode={asset.signal_data_mode} />
                           <p className="num mt-1 text-sm font-semibold text-cyan-200">
                             {asset.score == null ? "N/D" : `${asset.score.toFixed(0)}`}
                           </p>
