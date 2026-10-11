@@ -1,7 +1,7 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
 **Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–4 FATTI (contratti/schema, trasporto REST, identità/calendario/universo e archivio/aggregazioni offline), restano Task 5–12 per G1_TECH. G1_DATA INSUFFICIENTE.
-**Base:** SP1 VERIFICATO, main remoto = d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
+**Base progettuale:** SP1 VERIFICATO al commit d9a43eee2f35fcda558a1b8d58bacc08a4cd8994. Task 0–4 SP2b integrati in main con fast-forward verificato a fceb90fc6786139d9faf23379f7861c2b2016afc il 2026-10-11; chiusura del registro merge sul branch investedge/sp2b-task-4.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
 ## 1. Risultato e confini
