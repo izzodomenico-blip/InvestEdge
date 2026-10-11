@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1 FATTO e pubblicato, prossimo Task 2 NON INIZIATO.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–2 FATTI e pubblicati, prossimo Task 3 NON INIZIATO.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -62,10 +62,10 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 **Files create:** backend/app/data_providers/alpaca_market.py, backend/app/intraday/profiles.py, tests/test_alpaca_market_provider.py.
 **Files modify:** backend/app/data_providers/transport.py, backend/app/data_providers/base.py, backend/app/data_providers/provider_registry.py, backend/app/data_providers/__init__.py, backend/app/services/provider_budget_service.py, backend/app/models/market_data.py, backend/app/config.py, tests/test_provider_budget.py, tests/test_config.py.
 **Produces:** bounded REST client per host/path GET della spec; profilo pubblico/capacità e scope cache separati per feed/diritti; policy budget del singolo account.
-- [ ] RED: i due header Alpaca e response echo sentinella non protetti, missing config prima di rete, feed implicito/fallback, cache di profilo differente, host/redirect/query vietati; 401/403/429/retry.
-- [ ] Implementare riconoscimento esplicito dei due segreti prima di log/cache/risposta; payload whitelist, limiti bytes/timeout, retry fisici governati. Nessuna fingerprint del segreto/account personale.
-- [ ] GREEN su MockTransport: header auth solo in memoria, params feed/currency/adjustment/asof espliciti, budget condiviso per capacità quando previsto; caps configurati mai elevati da un errore.
-- [ ] Gate completo e review; nessuna chiamata Alpaca live né registrazione credenziali.
+- [x] RED: due header/echo e modulo assenti (55 fail iniziali), precheck prima di rete/cache, feed/fallback/profilo, host/redirect/query, 401/403/429/retry. RED di review su clock/cooldown/cache/corporate, profili e helper sensibili, quote del nuovo minuto, timeout e cache non finita; correzioni poi GREEN.
+- [x] Implementare riconoscimento esplicito dei due segreti e inventario sensibile Settings prima di profili/hash/URL/log/cache/risposta; whitelist strutturale, cap bytes anche cache/waiter, timeout 10/30s, tre tentativi fisici governati. Profili e runtime separati; nessuna fingerprint del segreto/account personale.
+- [x] GREEN su MockTransport: **243 mirati** incluse regressioni contratti/config/provider; header solo in memoria, parametri ufficiali espliciti, profili/feed/DB separati, budget unico per account, 401/403 fail-closed, cooldown condiviso e clock di ricezione/retry corretto. Cap configurati mai elevati da errori/header.
+- [x] Gate: **1281 backend offline**, 0 failure/error/skip e chiamate esterne inattese; Ruff/pip/diff/scan PASS, scope/doc 12/12, 3 review indipendenti PASS senza Critical/Important residui. Commit/push solo Task 2 e gate remoto uguale HEAD; nessuna chiamata Alpaca live o registrazione credenziali.
 **Commit:** feat: add governed Alpaca market data transport
 
 ## Task 3 — Identità Alpaca, calendario e universo prospettico
@@ -211,4 +211,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Primo passo dopo approvazione:** Task 1. La preparazione di questa proposta non è approvazione automatica, né autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 3 dal remoto Task 2 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

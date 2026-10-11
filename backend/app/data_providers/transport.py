@@ -5,13 +5,14 @@ import csv
 import hashlib
 import io
 import json
+import math
 import re
 import sqlite3
 import threading
 import time
 import zlib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -29,7 +30,20 @@ from backend.app.services.provider_budget_service import (
 HttpMethod = Literal["GET", "POST"]
 Decoder = Literal["json", "csv", "bytes"]
 
-_SENSITIVE_QUERY_KEYS = frozenset({"apikey", "api_key", "token", "access_token", "key"})
+_SENSITIVE_QUERY_KEYS = frozenset({
+    "apikey", "api_key", "token", "access_token", "key",
+    "apca-api-key-id", "apca-api-secret-key", "alpaca_api_key_id", "alpaca_api_secret_key",
+    "secret", "secret_key", "api_secret", "api_secret_key",
+})
+_ALPACA_SECRET_HEADERS = frozenset({"apcaapikeyid", "apcaapisecretkey"})
+_ALPACA_ROUTES = frozenset({
+    ("data.alpaca.markets", "/v2/stocks/bars"),
+    ("data.alpaca.markets", "/v2/stocks/quotes"),
+    ("data.alpaca.markets", "/v1beta1/news"),
+    ("data.alpaca.markets", "/v1/corporate-actions"),
+    ("paper-api.alpaca.markets", "/v2/assets"),
+    ("paper-api.alpaca.markets", "/v2/calendar"),
+})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 _SAFE_SCOPE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,200}$")
 _CONTENT_TYPES: dict[Decoder, tuple[str, ...]] = {
@@ -176,7 +190,16 @@ class SafeProviderTransport:
         now: datetime,
         sleeper: Callable[[float], None],
         bypass_cache: bool = False,
+        payload_filter: Callable[[object], object] | None = None,
+        request_clock: Callable[[], datetime] | None = None,
     ) -> ProviderResponse:
+        safe_headers = self._validate_headers(headers, "provider", "operation")
+        # Check before labels, URL/fingerprint preparation or persistence.
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "scope": cache_scope,
+             "base": base_url, "path": path, "params": params, "body": json_body},
+            safe_headers, "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         normalized_provider, normalized_operation, normalized_scope = self._validate_labels(
             provider,
             operation,
@@ -195,8 +218,8 @@ class SafeProviderTransport:
             params,
             json_body,
             enforce_allowlist=True,
+            alpaca_auth=any(re.sub(r"[-_]", "", key).lower() in _ALPACA_SECRET_HEADERS for key in safe_headers),
         )
-        safe_headers = self._validate_headers(headers, normalized_provider, normalized_operation)
 
         if not bypass_cache:
             cached = self._lookup_cache(
@@ -217,6 +240,11 @@ class SafeProviderTransport:
                         normalized_provider,
                         normalized_operation,
                     )
+                    self._check_cached_size(cached.payload, max_response_bytes, normalized_provider, normalized_operation)
+                    cached = replace(cached, payload=self._filter_payload(
+                        cached.payload, payload_filter, normalized_provider, normalized_operation,
+                    ))
+                    self._reject_secret_echo(cached.payload, safe_headers, normalized_provider, normalized_operation)
                 except SafeProviderTransportError:
                     self._purge_cache(
                         connection,
@@ -240,7 +268,11 @@ class SafeProviderTransport:
                 "CLIENT_CLOSED",
             )
 
-        entry, owner = self._acquire_inflight(prepared.request_fingerprint)
+        # Profiles and independent DBs must not share a response or skip quota.
+        database = connection.execute("PRAGMA database_list").fetchone()[2]
+        namespace = database or f"memory:{id(connection)}"
+        inflight_key = f"{namespace}:{self._cache_key(normalized_provider, normalized_scope, prepared.request_fingerprint)}"
+        entry, owner = self._acquire_inflight(inflight_key)
         if not owner:
             entry.event.wait()
             if entry.error is not None:
@@ -251,7 +283,13 @@ class SafeProviderTransport:
                     normalized_operation,
                     "INFLIGHT_FAILED",
                 )
-            return entry.response
+            self._reject_secret_echo(entry.response.payload, safe_headers, normalized_provider, normalized_operation)
+            self._check_cached_size(entry.response.payload, max_response_bytes, normalized_provider, normalized_operation)
+            payload = self._filter_payload(
+                entry.response.payload, payload_filter, normalized_provider, normalized_operation,
+            )
+            self._reject_secret_echo(payload, safe_headers, normalized_provider, normalized_operation)
+            return replace(entry.response, payload=payload)
 
         try:
             response = self._send_with_retries(
@@ -261,16 +299,18 @@ class SafeProviderTransport:
                 operation=normalized_operation,
                 cache_scope=normalized_scope,
                 prepared=prepared,
-                headers=headers,
+                headers=safe_headers,
                 json_body=json_body,
+                payload_filter=payload_filter,
                 cache_ttl_seconds=cache_ttl_seconds,
                 max_response_bytes=max_response_bytes,
                 decoder=decoder,
                 now=now,
                 sleeper=sleeper,
+                request_clock=request_clock,
             )
         except (SafeProviderTransportError, ProviderBudgetExceeded) as exc:
-            self._publish(prepared.request_fingerprint, entry, error=exc)
+            self._publish(inflight_key, entry, error=exc)
             raise
         except Exception:
             error = SafeProviderTransportError(
@@ -278,9 +318,9 @@ class SafeProviderTransport:
                 normalized_operation,
                 "TRANSPORT_FAILED",
             )
-            self._publish(prepared.request_fingerprint, entry, error=error)
+            self._publish(inflight_key, entry, error=error)
             raise error from None
-        self._publish(prepared.request_fingerprint, entry, response=response)
+        self._publish(inflight_key, entry, response=response)
         return response
 
     def cached_response_for_url(
@@ -296,6 +336,11 @@ class SafeProviderTransport:
         decoder: Decoder = "json",
         bypass_cache: bool = False,
     ) -> ProviderResponse | None:
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "scope": cache_scope, "url": request_url},
+            self._validate_headers(headers or {}, "provider", "operation"),
+            "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         normalized_provider, normalized_operation, normalized_scope = self._validate_labels(
             provider,
             operation,
@@ -366,6 +411,10 @@ class SafeProviderTransport:
         now: datetime,
         decoder: Decoder = "json",
     ) -> str:
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "scope": cache_scope, "url": request_url},
+            {}, "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         normalized_provider, normalized_operation, normalized_scope = self._validate_labels(
             provider,
             operation,
@@ -415,6 +464,11 @@ class SafeProviderTransport:
         sleeper: Callable[[float], None] = time.sleep,
         bypass_cache: bool = False,
     ) -> ProviderResponse:
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "scope": cache_scope, "url": request_url},
+            self._validate_headers(headers, "provider", "operation"),
+            "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         prepared = self.prepare_legacy_url(
             provider,
             operation,
@@ -455,6 +509,10 @@ class SafeProviderTransport:
         *,
         enforce_allowlist: bool,
     ) -> _PreparedRequest:
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "url": request_url, "body": json_body},
+            {}, "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         parsed = urlsplit(request_url)
         if parsed.fragment:
             raise SafeProviderTransportError(provider, operation, "INVALID_BASE_URL")
@@ -490,7 +548,13 @@ class SafeProviderTransport:
         json_body: Mapping[str, object] | Sequence[Mapping[str, object]] | None,
         *,
         enforce_allowlist: bool,
+        alpaca_auth: bool = False,
     ) -> _PreparedRequest:
+        self._reject_secret_echo(
+            {"provider": provider, "operation": operation, "base": base_url, "path": path,
+             "params": params, "body": json_body},
+            {}, "provider", "operation", code="SECRET_IN_REQUEST",
+        )
         normalized_method = method.upper()
         if normalized_method not in {"GET", "POST"}:
             raise SafeProviderTransportError(provider, operation, "METHOD_NOT_ALLOWED")
@@ -527,6 +591,11 @@ class SafeProviderTransport:
             or any(ord(character) < 32 for character in path)
         ):
             raise SafeProviderTransportError(provider, operation, "INVALID_PATH")
+
+        if (provider == "alpaca" or alpaca_auth) and (
+            normalized_method != "GET" or (host, path) not in _ALPACA_ROUTES or json_body is not None
+        ):
+            raise SafeProviderTransportError(provider, operation, "ROUTE_NOT_ALLOWED")
 
         normalized_params: dict[str, str] = {}
         for raw_key, raw_value in params.items():
@@ -598,25 +667,27 @@ class SafeProviderTransport:
         prepared: _PreparedRequest,
         headers: Mapping[str, str],
         json_body: Mapping[str, object] | Sequence[Mapping[str, object]] | None,
+        payload_filter: Callable[[object], object] | None,
         cache_ttl_seconds: int,
         max_response_bytes: int,
         decoder: Decoder,
         now: datetime,
         sleeper: Callable[[float], None],
+        request_clock: Callable[[], datetime] | None,
     ) -> ProviderResponse:
         max_attempts = min(policy.max_attempts, self._settings.provider_default_max_attempts, 3)
         attempts = 0
-        elapsed_seconds = 0.0
-        timeout = httpx.Timeout(
-            connect=self._settings.provider_http_connect_timeout_seconds,
-            read=self._settings.provider_http_read_timeout_seconds,
-            write=self._settings.provider_http_read_timeout_seconds,
-            pool=self._settings.provider_http_connect_timeout_seconds,
-        )
+        timeline = _as_utc(now)
+        connect_timeout = self._settings.provider_http_connect_timeout_seconds
+        read_timeout = self._settings.provider_http_read_timeout_seconds
+        if provider == "alpaca":
+            connect_timeout = min(connect_timeout, 10.0)
+            read_timeout = min(read_timeout, 30.0)
+        timeout = httpx.Timeout(connect=connect_timeout, read=read_timeout, write=read_timeout, pool=connect_timeout)
         safe_headers = self._validate_headers(headers, provider, operation)
 
         while attempts < max_attempts:
-            attempt_now = _as_utc(now) + timedelta(seconds=elapsed_seconds)
+            attempt_now = max(timeline, _as_utc(request_clock())) if request_clock else timeline
             attempts += 1
             try:
                 response_stream = self._client.stream(
@@ -640,6 +711,7 @@ class SafeProviderTransport:
             )
             try:
                 with response_stream as response:
+                    response_now = max(attempt_now, _as_utc(request_clock())) if request_clock else attempt_now
                     status_code = response.status_code
                     if status_code == 304:
                         # Risposta condizionale (If-Modified-Since): chiamata riuscita,
@@ -666,17 +738,19 @@ class SafeProviderTransport:
 
                     minute_limit, remaining, cooldown = self._rate_limit_state(
                         response.headers,
-                        attempt_now,
+                        response_now,
                         status_code,
+                        provider=provider,
                     )
                     if minute_limit is not None or remaining is not None or cooldown is not None:
                         self._budget_manager.restrict(
                             connection,
                             provider,
-                            attempt_now,
+                            response_now,
                             minute_limit=minute_limit,
                             remaining=remaining,
                             cooldown_until=cooldown,
+                            policy=policy if provider == "alpaca" else None,
                         )
 
                     if status_code in _RETRYABLE_STATUS_CODES:
@@ -698,9 +772,9 @@ class SafeProviderTransport:
                         if attempts >= max_attempts:
                             code = "RATE_LIMITED" if status_code == 429 else "RETRY_EXHAUSTED"
                             raise SafeProviderTransportError(provider, operation, code)
-                        delay = self._retry_delay(attempts - 1, attempt_now, cooldown)
+                        delay = self._retry_delay(attempts - 1, response_now, cooldown)
                         self._sleep(sleeper, delay, provider, operation)
-                        elapsed_seconds += delay
+                        timeline = response_now + timedelta(seconds=delay)
                         continue
 
                     if not 200 <= status_code < 300:
@@ -722,6 +796,7 @@ class SafeProviderTransport:
                             provider,
                             operation,
                         )
+                        self._reject_secret_echo(raw_payload, safe_headers, provider, operation)
                         payload = self._decode(raw_payload, decoder, provider, operation)
                         self._reject_secret_echo(
                             payload,
@@ -729,6 +804,8 @@ class SafeProviderTransport:
                             provider,
                             operation,
                         )
+                        payload = self._filter_payload(payload, payload_filter, provider, operation)
+                        self._reject_secret_echo(payload, safe_headers, provider, operation)
                     except SafeProviderTransportError:
                         self._budget_manager.complete(
                             connection,
@@ -747,6 +824,7 @@ class SafeProviderTransport:
                         attempts - 1,
                         cooldown,
                     )
+                    fetched_at = max(response_now, _as_utc(request_clock())) if request_clock else response_now
                     self._save_cache(
                         connection,
                         provider,
@@ -755,7 +833,7 @@ class SafeProviderTransport:
                         status_code,
                         payload,
                         decoder,
-                        attempt_now,
+                        fetched_at,
                         cache_ttl_seconds,
                     )
                     return ProviderResponse(
@@ -764,7 +842,7 @@ class SafeProviderTransport:
                         from_cache=False,
                         attempts=attempts,
                         request_fingerprint=prepared.request_fingerprint,
-                        fetched_at=_as_utc(attempt_now),
+                        fetched_at=fetched_at,
                     )
             except httpx.TimeoutException:
                 outcome = "RETRY_EXHAUSTED" if attempts >= max_attempts else "TIMED_OUT"
@@ -779,8 +857,9 @@ class SafeProviderTransport:
                 if attempts >= max_attempts:
                     raise SafeProviderTransportError(provider, operation, "RETRY_EXHAUSTED") from None
                 delay = float(min(2 ** (attempts - 1), 8))
+                receipt = max(attempt_now, _as_utc(request_clock())) if request_clock else attempt_now
                 self._sleep(sleeper, delay, provider, operation)
-                elapsed_seconds += delay
+                timeline = receipt + timedelta(seconds=delay)
             except SafeProviderTransportError:
                 raise
             except httpx.HTTPError:
@@ -1062,17 +1141,19 @@ class SafeProviderTransport:
         headers: Mapping[str, str],
         provider: str,
         operation: str,
+        *, code: str = "SECRET_IN_RESPONSE",
     ) -> None:
         candidates: set[str] = set()
         for setting_name, setting_value in vars(self._settings).items():
-            if not setting_name.lower().endswith(("_api_key", "_token")):
+            if not (setting_name.lower().endswith(("_api_key", "_token", "_chat_id"))
+                    or setting_name.lower() in {"alpaca_api_key_id", "alpaca_api_secret_key"}):
                 continue
             if isinstance(setting_value, str) and setting_value:
                 candidates.add(setting_value)
         for raw_key, raw_value in headers.items():
             compact_key = re.sub(r"[-_]", "", raw_key).lower()
             if not (
-                compact_key in {"authorization", "proxyauthorization", "key", "token"}
+                compact_key in {"authorization", "proxyauthorization", "key", "token"} | _ALPACA_SECRET_HEADERS
                 or compact_key.endswith(("apikey", "accesstoken", "authtoken", "token"))
             ):
                 continue
@@ -1086,10 +1167,33 @@ class SafeProviderTransport:
         if not candidates:
             return
         if SafeProviderTransport._payload_contains_secret(payload, candidates):
-            raise SafeProviderTransportError(provider, operation, "SECRET_IN_RESPONSE")
+            raise SafeProviderTransportError(provider, operation, code)
+
+    @staticmethod
+    def _check_cached_size(payload: object, maximum: int, provider: str, operation: str) -> None:
+        try:
+            encoded = payload if isinstance(payload, bytes) else json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError, RecursionError):
+            raise SafeProviderTransportError(provider, operation, "INVALID_PAYLOAD") from None
+        if len(encoded) > maximum:
+            raise SafeProviderTransportError(provider, operation, "RESPONSE_TOO_LARGE")
+
+    @staticmethod
+    def _filter_payload(payload: object, payload_filter: Callable[[object], object] | None,
+                        provider: str, operation: str) -> object:
+        if payload_filter is None:
+            return payload
+        try:
+            return payload_filter(payload)
+        except Exception:
+            raise SafeProviderTransportError(provider, operation, "INVALID_PAYLOAD") from None
 
     @staticmethod
     def _payload_contains_secret(payload: object, candidates: set[str]) -> bool:
+        if isinstance(payload, (int, float, bool)):
+            return any(candidate in str(payload) for candidate in candidates)
         if isinstance(payload, str):
             return any(candidate in payload for candidate in candidates)
         if isinstance(payload, bytes):
@@ -1129,15 +1233,21 @@ class SafeProviderTransport:
         headers: httpx.Headers,
         now: datetime,
         status_code: int,
+        *, provider: str | None = None,
     ) -> tuple[int | None, int | None, datetime | None]:
         minute_limit = self._first_int(headers, "ratelimit-limit", "x-ratelimit-limit")
         remaining = self._first_int(headers, "ratelimit-remaining", "x-ratelimit-remaining")
         cooldown: datetime | None = None
+        cap = self._settings.provider_retry_after_cap_seconds
+        if provider == "alpaca":
+            cap = min(max(cap, 1), 60)
         if status_code == 429:
             retry_after = self._first_float(headers, "retry-after")
             if retry_after is not None:
-                retry_after = min(max(retry_after, 0.0), float(self._settings.provider_retry_after_cap_seconds))
+                retry_after = min(max(retry_after, 0.0), float(cap))
                 cooldown = now + timedelta(seconds=retry_after)
+            if provider == "alpaca":
+                cooldown = max(cooldown or now, now + timedelta(seconds=1))
         if remaining == 0:
             reset = self._first_float(headers, "ratelimit-reset", "x-ratelimit-reset")
             if reset is not None:
@@ -1145,7 +1255,7 @@ class SafeProviderTransport:
                 reset_seconds = reset - now_timestamp if reset > now_timestamp else reset
                 reset_seconds = min(
                     max(reset_seconds, 0.0),
-                    float(self._settings.provider_retry_after_cap_seconds),
+                    float(cap),
                 )
                 reset_cooldown = now + timedelta(seconds=reset_seconds)
                 if cooldown is None or reset_cooldown > cooldown:
@@ -1166,7 +1276,8 @@ class SafeProviderTransport:
             if raw is None:
                 continue
             try:
-                return float(raw.strip())
+                value = float(raw.strip())
+                return value if math.isfinite(value) else None
             except ValueError:
                 continue
         return None

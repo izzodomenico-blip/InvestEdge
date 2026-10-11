@@ -1235,3 +1235,127 @@ def test_crypto_budget_keyless_blocks_request_11_in_same_minute() -> None:
 
     assert exc_info.value.window_kind == "MINUTE"
     connection.close()
+
+
+# Alpaca's two official authentication headers must be protected even when
+# supplied by a caller rather than Settings. Sentinels exist only at runtime.
+@pytest.mark.parametrize("header", ["APCA-API-KEY-ID", "APCA-API-SECRET-KEY"])
+def test_alpaca_official_headers_reject_echo_before_cache(header) -> None:
+    import uuid
+
+    secret = uuid.uuid4().hex
+    connection = _initialize()
+    transport = _transport(lambda _: _json_response({"ignored": secret}), allowed_hosts={"data.alpaca.markets"})
+    with pytest.raises(SafeProviderTransportError, match="SECRET_IN_RESPONSE"):
+        _request(transport, connection, headers={header: secret},
+                 base_url="https://data.alpaca.markets", path="/v2/stocks/bars")
+    assert not connection.execute("SELECT * FROM api_cache").fetchall()
+
+
+@pytest.mark.parametrize("setting", ["alpaca_api_key_id", "alpaca_api_secret_key"])
+def test_alpaca_settings_reject_echo_without_auth_header(setting) -> None:
+    import uuid
+
+    secret = uuid.uuid4().hex
+    connection = _initialize()
+    values = {"alpaca_api_key_id": None, "alpaca_api_secret_key": None}
+    values[setting] = secret
+    config = replace(get_settings(), **values)
+    transport = SafeProviderTransport(
+        allowed_hosts={"api.example.test"}, settings=config,
+        client=httpx.Client(transport=httpx.MockTransport(lambda _: _json_response({"ignored": secret}))),
+    )
+    with pytest.raises(SafeProviderTransportError, match="SECRET_IN_RESPONSE"):
+        _request(transport, connection)
+    assert not connection.execute("SELECT * FROM api_cache").fetchall()
+
+
+@pytest.mark.parametrize("path", ["/v2/account", "/v2/orders", "/v2/stocks/bars/../quotes"])
+def test_alpaca_transport_enforces_exact_get_routes(path):
+    connection = _initialize()
+    calls = []
+    transport = _transport(lambda request: calls.append(request) or _json_response({}),
+                           allowed_hosts={"data.alpaca.markets", "paper-api.alpaca.markets"})
+    with pytest.raises(SafeProviderTransportError, match="ROUTE_NOT_ALLOWED"):
+        _request(transport, connection, provider="alpaca", base_url="https://data.alpaca.markets", path=path)
+    assert not calls and not connection.execute("SELECT * FROM provider_request_log").fetchall()
+
+
+@pytest.mark.parametrize("entrypoint", ["cache", "store", "request", "prepare"])
+@pytest.mark.parametrize("location", ["provider", "operation", "scope", "query"])
+@pytest.mark.parametrize("credential", ["alpaca_api_key_id", "alpaca_api_secret_key"])
+def test_legacy_helpers_reject_credentials_before_labels_and_fingerprint(entrypoint, location, credential):
+    import uuid
+    config = replace(get_settings(), alpaca_api_key_id=uuid.uuid4().hex,
+                     alpaca_api_secret_key=uuid.uuid4().hex)
+    connection = _initialize()
+    calls = []
+    transport = SafeProviderTransport(
+        allowed_hosts={"api.example.test"}, settings=config,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: calls.append(request) or _json_response({"ok": True}))),
+    )
+    values = {"provider": "fixture", "operation": "EOD", "cache_scope": "daily",
+              "request_url": "https://api.example.test/v1/prices?symbol=AAPL"}
+    secret = getattr(config, credential)
+    if location == "query":
+        values["request_url"] += "&page_token=" + secret
+    else:
+        values["cache_scope" if location == "scope" else location] = secret
+    with pytest.raises(SafeProviderTransportError) as caught:
+        if entrypoint == "cache":
+            transport.cached_response_for_url(connection, **values, now=NOW)
+        elif entrypoint == "store":
+            transport.store_response_for_url(connection, **values, payload={"ok": True},
+                                             status_code=200, cache_ttl_seconds=60, now=NOW)
+        elif entrypoint == "request":
+            transport.request_url(connection=connection, policy=POLICY, **values, headers={},
+                                  cache_ttl_seconds=60, max_response_bytes=1024, decoder="json", now=NOW)
+        else:
+            # prepare has no cache scope; use the operation for that case.
+            transport.prepare_legacy_url(values["provider"],
+                                         values["cache_scope"] if location == "scope" else values["operation"],
+                                         "GET", values["request_url"], None, enforce_allowlist=True)
+    assert caught.value.code == "SECRET_IN_REQUEST"
+    assert bool(secret not in str(caught.value))
+    assert not calls
+    for table in ("api_cache", "provider_request_log", "provider_usage_windows", "api_usage"):
+        assert not connection.execute(f"SELECT * FROM {table}").fetchall()
+
+
+@pytest.mark.parametrize("warm_cache", [False, True])
+def test_payload_filter_cannot_introduce_credentials_in_saved_or_cached_response(warm_cache):
+    import uuid
+    config = replace(get_settings(), alpaca_api_key_id=uuid.uuid4().hex,
+                     alpaca_api_secret_key=uuid.uuid4().hex)
+    connection = _initialize()
+    transport = SafeProviderTransport(
+        allowed_hosts={"api.example.test"}, settings=config,
+        client=httpx.Client(transport=httpx.MockTransport(lambda _: _json_response({"ok": True}))),
+    )
+    if warm_cache:
+        _request(transport, connection)
+    with pytest.raises(SafeProviderTransportError) as caught:
+        _request(transport, connection, payload_filter=lambda _: {"value": config.alpaca_api_secret_key})
+    assert caught.value.code == "SECRET_IN_RESPONSE"
+    assert not connection.execute("SELECT * FROM api_cache").fetchall()
+
+
+@pytest.mark.parametrize("echo_phase", ["request", "response"])
+def test_configured_chat_id_is_never_fingerprinted_or_persisted(echo_phase):
+    import uuid
+    config = replace(get_settings(), telegram_chat_id=uuid.uuid4().hex)
+    connection = _initialize()
+    calls = []
+    payload = {"value": config.telegram_chat_id} if echo_phase == "response" else {"ok": True}
+    transport = SafeProviderTransport(
+        allowed_hosts={"api.example.test"}, settings=config,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: calls.append(request) or _json_response(payload))),
+    )
+    params = {"page_token": config.telegram_chat_id} if echo_phase == "request" else {"symbol": "AAPL"}
+    with pytest.raises(SafeProviderTransportError) as caught:
+        _request(transport, connection, params=params)
+    assert caught.value.code == ("SECRET_IN_REQUEST" if echo_phase == "request" else "SECRET_IN_RESPONSE")
+    assert len(calls) == int(echo_phase == "response")
+    assert not connection.execute("SELECT * FROM api_cache").fetchall()

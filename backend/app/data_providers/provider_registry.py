@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any, cast
 
 from backend.app.config import Settings
+from backend.app.data_providers.alpaca_market import AlpacaMarketProvider
 from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.base import BaseMarketDataProvider
 from backend.app.data_providers.coingecko import CoinGeckoProvider
@@ -15,6 +16,7 @@ from backend.app.data_providers.fred import FredReferenceProvider
 from backend.app.data_providers.stooq import StooqProvider
 from backend.app.data_providers.transport import SafeProviderTransport
 from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
+from backend.app.intraday.contracts import FeedProfile
 from backend.app.services.provider_budget_service import (
     ProviderAvailability,
     ProviderCapability,
@@ -48,6 +50,10 @@ class ProviderRegistry:
             SafeProviderTransport(allowed_hosts=ECB_ALLOWED_HOSTS, settings=settings),
             cache_ttl_seconds=max(0, settings.ecb_fx_cache_ttl_hours) * 3600,
         )
+
+    def alpaca_market(self, profile: FeedProfile, *, transport: SafeProviderTransport | None = None) -> AlpacaMarketProvider:
+        """Explicit intraday factory: never an EOD fallback, no request at construction."""
+        return AlpacaMarketProvider(self.settings, self.connection, profile, transport=transport)
 
     def provider_for_asset_type(self, asset_type: str) -> BaseMarketDataProvider | None:
         normalized = asset_type.lower()

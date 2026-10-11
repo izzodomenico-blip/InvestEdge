@@ -1,6 +1,6 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
-**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1 FATTO (contratti/schema/fixture offline), restano Task 2–12 per G1_TECH. G1_DATA INSUFFICIENTE.
+**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–2 FATTI (contratti/schema e trasporto REST offline), restano Task 3–12 per G1_TECH. G1_DATA INSUFFICIENTE.
 **Base:** SP1 VERIFICATO, main remoto = d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
@@ -16,7 +16,7 @@ SP2b ha un gate intraday prioritario (Task 1–12) e un backlog distinto (§13).
 
 | Componente esistente | Riuso | Confine da preservare |
 |---|---|---|
-| SafeProviderTransport, ProviderBudgetManager | HTTP sicuro, budget atomico, cache, timeout, cooldown, MockTransport | Le due credenziali Alpaca non sono oggi coperte integralmente dal detector degli header; correggere prima di qualunque adapter. Cache distinta per feed/configurazione pubblica, mai per segreto. |
+| SafeProviderTransport, ProviderBudgetManager | HTTP sicuro, budget atomico, cache, timeout, cooldown, MockTransport | Task 2: detector dei due header e dei segreti configurati esteso a richieste, helper legacy, profili e risposte prima di fingerprint/persistenza. Cache distinta per feed/configurazione pubblica, mai per segreto. |
 | Instrument master, listing, provider_symbols, conferme versionate | ID interni, identità verificata, collisioni, evidence hash | Il mapping corrente non è una storia di tradabilità; aggiungere validità e conoscenza as-of. Il ticker da solo non identifica uno strumento. |
 | MarketObservationService / price_history | Percorso EOD/quote attuale | La proiezione BAR riduce a una data locale e la lettura sceglie la revisione globale: non usare questo percorso per minute bars. |
 | news_items / NewsEngine | Consultazione legacy e sentiment informativo | Il testo viene aggiornato in place e publication mancante può essere sostituita con now: non usare questa tabella come evidenza intraday. |
@@ -59,6 +59,13 @@ HTTP esclusivamente GET su host/path allowlist:
 WebSocket esclusivamente stream.data.alpaca.markets, /v2/iex o /v2/sip, e /v1beta1/news; delayed_sip solo profilo consultivo. Non usare trading stream/account/orders. Nessun endpoint POST ordini, nessuna query segreta, nessun redirect. La configurazione non accetta URL arbitrari.
 
 Conservare i limiti governati HTTP esistenti e aggiungere limiti stream su connessioni, sottoscrizioni, frame, coda, bytes/disco, riconnessioni. Retry con backoff bounded, rate-limit/cooldown condiviso; 401/403 stop, 429 rinvio. Risposta/frame che riecheggia uno dei due segreti: scartare prima della persistenza. Nessuna transazione SQLite aperta durante rete o attesa.
+
+
+Chiarimenti tecnici Task 2 (2026-10-11): il profilo logico delayed_sip usa feed=sip sulle route REST storiche, con end esplicitamente limitato a now meno 900 secondi; la query REST non accetta delayed_sip. Il profilo e il suo ritardo restano distinti da SIP realtime, senza fallback. Bars/quotes mantengono RFC3339 ns, USD, asof e sort espliciti; le barre sono 1Min raw. Parametri differenti per news, assets/calendar e corporate actions, secondo gli schemi ufficiali; i 16 tipi corporate in query sono singolari, le famiglie nella risposta plurali. [Barre REST](https://docs.alpaca.markets/us/reference/stockbars), [quote REST](https://docs.alpaca.markets/us/reference/stockquotes-1), [corporate actions REST](https://docs.alpaca.markets/us/reference/corporateactions-1).
+
+Ogni chiamata restituisce una sola pagina: mercato/news/corporate al massimo 7 giorni, calendario al massimo 366 giorni; limit massimo 10000 per bars/quotes, 50 per news e 1000 per corporate. Limite risposta minimo fra 16 MiB, cap pubblico congelato e cap runtime; il controllo vale anche su cache e waiter. Timeout connect/read al massimo 10/30 secondi e tre tentativi fisici, ciascuno prenotato prima della rete. Cooldown Alpaca condiviso da tutti i profili/capacità, almeno un secondo dopo 429 e al massimo 60 secondi per ogni rinvio, anche con header mancanti o non finiti. Limiti server possono solo restringere i cap; clock di ricezione effettivo per cooldown, retry, fetched_at e TTL. Un solo bucket alpaca per database/account configurato, senza identificativo personale o digest delle credenziali.
+
+La verifica REST è locale prima di cache/rete: opt-in, due credenziali valide in memoria, feed e capacità esplicitamente attestati, cap HTTP/simboli/bytes positivi. Non presume diritti da un piano commerciale né abilita lo stream. Un 401 blocca tutte le capacità della singola istanza; un 403 blocca la capacità richiesta. Questa è disponibilità operativa in memoria, separata dal profilo immutabile: nessun upgrade o ripristino automatico nella stessa istanza, nessuna attestazione durevole inventata. I servizi dei task successivi conserveranno le prove nel proprio scope. Profili e metadati di richiesta rifiutano i due segreti Alpaca e l'inventario sensibile delle Settings (chiavi API, token e chat ID) prima di serializzazione pubblica, fingerprint e persistenza, anche negli helper legacy. Whitelist strutturale applicata prima della cache; corpo HTML/news e campi estranei esclusi in attesa di diritti/retention del Task 5. Paginazione, archivio e decoder di dominio restano ai Task 4–6.
 
 ## 5. Identità, calendario e universo
 

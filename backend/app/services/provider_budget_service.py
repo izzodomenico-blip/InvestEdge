@@ -27,6 +27,11 @@ AvailabilityReason = Literal[
     "RATE_LIMITED",
     "BUDGET_EXHAUSTED",
     "UNSUPPORTED_CAPABILITY",
+    "REAL_DATA_DISABLED",
+    "PROFILE_INVALID",
+    "BUDGET_UNATTESTED",
+    "FEED_NOT_ENTITLED",
+    "AUTHENTICATION_FAILED",
 ]
 
 
@@ -340,12 +345,25 @@ class ProviderBudgetManager:
         minute_limit: int | None,
         remaining: int | None,
         cooldown_until: datetime | None,
+        policy: ProviderBudgetPolicy | None = None,
     ) -> None:
         starts = _window_values(now)
         timestamp = _timestamp(now)
         self._begin_immediate(connection)
         try:
             if minute_limit is not None or remaining is not None:
+                if policy is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO provider_usage_windows (
+                            provider, window_kind, window_start, used_count,
+                            configured_limit, effective_limit, cooldown_until, created_at, updated_at
+                        ) VALUES (?, 'MINUTE', ?, 0, ?, ?, NULL, ?, ?)
+                        ON CONFLICT(provider, window_kind, window_start) DO NOTHING
+                        """,
+                        (provider, starts["MINUTE"], policy.minute_limit, policy.minute_limit,
+                         timestamp, timestamp),
+                    )
                 row = connection.execute(
                     """
                     SELECT used_count, effective_limit
@@ -382,18 +400,12 @@ class ProviderBudgetManager:
                         END,
                         updated_at = ?
                     WHERE provider = ?
-                      AND (window_kind, window_start) IN (
-                          ('MINUTE', ?), ('DAY', ?), ('MONTH', ?)
-                      )
                     """,
                     (
                         _timestamp(cooldown_until),
                         _timestamp(cooldown_until),
                         timestamp,
                         provider,
-                        starts["MINUTE"],
-                        starts["DAY"],
-                        starts["MONTH"],
                     ),
                 )
         except Exception:

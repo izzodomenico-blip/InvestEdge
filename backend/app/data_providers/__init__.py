@@ -1,3 +1,4 @@
+from backend.app.data_providers.alpaca_market import AlpacaMarketProvider, AlpacaProviderError
 from backend.app.data_providers.alpha_vantage import AlphaVantageProvider
 from backend.app.data_providers.alpha_vantage_news import AlphaVantageNewsProvider
 from backend.app.data_providers.base import (
@@ -23,6 +24,8 @@ from backend.app.data_providers.yahoo_finance import YahooFinanceProvider
 from backend.app.data_providers.yahoo_news import YahooNewsProvider
 
 __all__ = [
+    "AlpacaMarketProvider",
+    "AlpacaProviderError",
     "AlphaVantageProvider",
     "AlphaVantageNewsProvider",
     "BaseMarketDataProvider",
