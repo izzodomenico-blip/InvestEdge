@@ -528,7 +528,7 @@ def test_429_without_headers_blocks_other_capabilities():
 def test_warm_cache_respects_reduced_runtime_response_limit():
     config = settings()
     connection = db()
-    payload = {"bars": {"AAPL": [{"t": "2026-10-09T14:00:00Z", "o": 10, "h": 11, "l": 9, "c": 10, "v": 20}]}}
+    payload = {"bars": {"AAPL": [{"t": "2026-10-09T14:00:00Z", "o": 10, "h": 11, "l": 9, "c": 10, "v": 20}]}, "next_page_token": None}
     calls = []
     def handler(request):
         calls.append(request)
@@ -697,3 +697,35 @@ def test_public_profile_rejects_all_known_sensitive_settings(credential):
             operation()
         assert getattr(caught.value, "code", None) == "PROFILE_INVALID"
     assert not calls and not connection.execute("SELECT * FROM api_cache").fetchall()
+
+
+@pytest.mark.parametrize("stamp,expected", [("2026-10-12T13:30:00.000000001Z", 1),
+                                           ("2026-10-12T15:30:00.000000002+02:00", 2)])
+def test_market_decoder_preserves_nanoseconds_and_timezone(stamp, expected):
+    from backend.app.data_providers.alpaca_market import _ns, decode_market_row, format_ns
+    value = decode_market_row("QUOTE", {"t": stamp, "bp": 10, "ap": 11, "bs": 2, "as": 3, "c": []}, source="STREAM")
+    assert _ns(value["raw"]["t"]) % 1_000_000_000 == expected
+    assert _ns(format_ns(_ns(stamp))) == _ns(stamp)
+    assert value["size_unit"] == "ROUND_LOTS"
+
+
+@pytest.mark.parametrize("payload", [{"bars": {}}, {"quotes": {}}])
+def test_market_page_requires_explicit_terminal_pagination(payload):
+    from backend.app.data_providers.alpaca_market import _payload
+    with pytest.raises(ValueError):
+        _payload(next(iter(payload)), payload)
+
+
+@pytest.mark.parametrize("change", [{"o": True}, {"h": 90}, {"v": -1}, {"vw": 500}, {"n": -1}])
+def test_invalid_bar_economics_remain_quarantined(change):
+    from backend.app.data_providers.alpaca_market import decode_market_row
+    row = {"t": "2026-10-12T13:30:00Z", "o": 100, "h": 102, "l": 99, "c": 101, "v": 10, "vw": 100.5}
+    value = decode_market_row("BAR", {**row, **change}, source="REST")
+    assert value["reason_code"] == "BAR_INVALID"
+
+
+@pytest.mark.parametrize("stamp", ["bad", "1969-12-31T23:59:59Z", "2026-10-12T13:30:00.1234567890Z"])
+def test_bad_market_timestamps_fail_closed(stamp):
+    from backend.app.data_providers.alpaca_market import decode_market_row
+    with pytest.raises(ProviderError):
+        decode_market_row("QUOTE", {"t": stamp, "bp": 1, "ap": 2, "bs": 1, "as": 1}, source="STREAM")

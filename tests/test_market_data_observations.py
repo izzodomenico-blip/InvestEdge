@@ -1333,3 +1333,14 @@ def test_price_that_underflows_legacy_real_projection_is_rejected(
     assert market_connection.execute(
         "SELECT COUNT(*) FROM price_history"
     ).fetchone()[0] == 0
+
+
+def test_intraday_archive_does_not_project_minute_into_daily_tables():
+    from test_intraday_store import event, prepared
+    s = prepared()
+    tables = ("price_history", "features_daily")
+    before = {table: [tuple(row) for row in s.db.execute(f"SELECT * FROM {table}")] for table in tables}
+    s.store.persist((event(s), event(s, kind="QUOTE")))
+    after = {table: [tuple(row) for row in s.db.execute(f"SELECT * FROM {table}")] for table in tables}
+    assert after == before
+    assert len(s.store.read_as_of("BAR", cutoff_ns=s.clock.now)) == 1

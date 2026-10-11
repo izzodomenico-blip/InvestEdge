@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–3 FATTI e pubblicati, prossimo Task 4 NON INIZIATO.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–4 FATTI e pubblicati, prossimo Task 5 NON INIZIATO.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -86,10 +86,10 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 **Files create:** backend/app/intraday/store.py, backend/app/intraday/aggregate.py, tests/test_intraday_store.py, tests/test_intraday_aggregate.py, tests/fixtures/market_data/alpaca_bars_pages.json, tests/fixtures/market_data/alpaca_quotes_pages.json.
 **Files modify:** backend/app/data_providers/alpaca_market.py, tests/test_alpaca_market_provider.py, tests/test_market_data_observations.py.
 **Produces:** persist(envelopes) e read_as_of; backfill paginato/chunk idempotente; 1/5/15 minuti closed/as-of.
-- [ ] RED: pagina iniziale solo primo simbolo, next token loop, interruzione, timestamp ns persi, BAR sovrascritta, late/crossed/zero-size quote, revised raw bar retroattiva; ritorno A→B→A perso dalla deduplica globale del payload.
-- [ ] Implementare raw USD, feed distinti, ns e payload hash; PARTIAL distinto da COMPLETE, first_received immutato, quarantine reason codes. Storico corrente RESEARCH_ONLY prima della cattura.
-- [ ] GREEN: warm-up/gruppo incompleto/missing minuto, sessioni e feed separati, OHLC/VWAP attesi a mano, delayed/non NBBO dichiarati; size round lots non convertita senza attestazione.
-- [ ] Regressione: minuto non proiettato in price_history/features_daily, percorso EOD invariato; suite e review.
+- [x] RED: 38 fallimenti iniziali per moduli mancanti; ulteriori RED su ns, revisioni/A→B→A, ID/first_received, RAW/admission/backlog, mapping/asof, quote, cancel finale, prova calendario, overflow e marker bounded. Corretti con fixture locali e MockTransport.
+- [x] Implementare raw USD/feed/ns/hash e ADMISSION post-commit; PARTIAL distinto da COMPLETE, progress PAGE/CHUNK pubblicato e ref congelati, first_received immutato. Storico REST HISTORICAL_CURRENT/RESEARCH_ONLY anche tramite persist; paginazione/chunk idempotenti e cap sicuri.
+- [x] GREEN: 79 nuove regressioni, 296 mirati; gruppi completi 1/5/15 e OHLC/VWAP a mano, gap/warm-up/quarantena/sessioni/feed/overflow espliciti. Quote ROUND_LOTS originali, unità REST non attestata, nessuna conversione automatica. Status UNKNOWN e nessuna idoneità di segnale.
+- [x] Regressione/gate: intraday non proiettato in price_history/features_daily, EOD invariato; 1435 backend offline verdi, 0 chiamate esterne inattese. Ruff/pip/diff/scan PASS, 3 review indipendenti senza Critical/Important residui, documenti e scope allineati. Commit/push Task 4 con gate remoto; fast-forward Task 0–4 su main autorizzato dall'utente il 2026-10-11, registro merge a operazione conclusa. G1_DATA INSUFFICIENTE.
 **Commit:** feat: archive minute bars quotes and causal aggregates
 
 ## Task 5 — News versionate e mapping degli eventi
@@ -211,4 +211,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 4 dal remoto Task 3 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 5 dal remoto Task 4 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

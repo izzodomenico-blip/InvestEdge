@@ -1,7 +1,8 @@
-"""Governed read-only Alpaca REST pages. Decoders/ingest/pagination belong to later tasks."""
+"""Governed read-only Alpaca REST pages and exact market-row decoding."""
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 import time
@@ -112,6 +113,8 @@ def _payload(capability: str, value: object) -> object:
     if capability in {"assets", "calendar"}:
         return _rows(value, _ROW_FIELDS[capability])
     if not isinstance(value, dict):
+        raise ValueError
+    if capability in {"bars", "quotes"} and "next_page_token" not in value:
         raise ValueError
     token = value.get("next_page_token")
     if token is not None and (not isinstance(token, str) or not _TOKEN.fullmatch(token)):
@@ -320,3 +323,58 @@ class AlpacaMarketProvider:
                     raise ValueError
         except (ValueError, TypeError, KeyError, OverflowError):
             raise AlpacaProviderError("INVALID_REQUEST") from None
+
+
+def format_ns(value: int) -> str:
+    """RFC3339 without converting the nanosecond remainder through datetime."""
+    if type(value) is not int or not 0 <= value <= 2**63 - 1:
+        raise AlpacaProviderError("INVALID_TIMESTAMP")
+    seconds, nanos = divmod(value, 1_000_000_000)
+    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%S") + f".{nanos:09d}Z"
+
+
+def decode_market_row(kind, row, *, source):
+    """Keep whitelisted source values. REST size units have no attestation here.
+
+    Stream documentation specifies round lots; neither path fabricates shares.
+    Invalid economics are archived quarantined; malformed structures fail closed.
+    """
+    try:
+        if kind not in {"BAR", "QUOTE"} or source not in {"REST", "STREAM"} or type(row) is not dict:
+            raise ValueError
+        fields = _ROW_FIELDS["bars" if kind == "BAR" else "quotes"]
+        required = {"t", "o", "h", "l", "c", "v"} if kind == "BAR" else {"t", "bp", "ap", "bs", "as"}
+        if not required <= set(row):
+            raise ValueError
+        selected = _rows([row], fields)[0]
+        json.dumps(selected, allow_nan=False)
+        at = _ns(selected["t"])
+        if not 0 <= at <= 2**63 - 1:
+            raise ValueError
+        def number(value, positive=False):
+            return type(value) in {int, float} and math.isfinite(value) and (value > 0 if positive else value >= 0)
+        reason = None
+        if kind == "BAR":
+            if (at % _MINUTE_NS or not all(number(selected[key], True) for key in ("o", "h", "l", "c")) or
+                    not number(selected["v"]) or not selected["l"] <= min(selected["o"], selected["c"]) <=
+                    max(selected["o"], selected["c"]) <= selected["h"] or
+                    (selected.get("vw") is not None and (not number(selected["vw"], True) or not selected["l"] <= selected["vw"] <= selected["h"])) or
+                    (selected.get("n") is not None and (type(selected["n"]) is not int or selected["n"] < 0))):
+                reason = "BAR_INVALID"
+        else:
+            if not all(number(selected[key], True) for key in ("bp", "ap")) or not all(number(selected[key]) for key in ("bs", "as")):
+                reason = "QUOTE_INVALID"
+            elif selected["bp"] > selected["ap"]:
+                reason = "QUOTE_CROSSED"
+            elif selected["bs"] == 0 or selected["as"] == 0:
+                reason = "QUOTE_ZERO_SIZE"
+            if "c" in selected and (type(selected["c"]) is not list or any(type(code) is not str for code in selected["c"])):
+                raise ValueError
+        return {"version": "alpaca-market-row-v1", "source": source, "currency": "USD", "adjustment": "raw",
+                "raw": selected, "reason_code": reason,
+                "size_unit": ("ROUND_LOTS" if source == "STREAM" else "SOURCE_UNATTESTED") if kind == "QUOTE" else "SHARES"}
+    except (ValueError, TypeError, KeyError, OverflowError):
+        raise AlpacaProviderError("MARKET_ROW_INVALID") from None
+
+
+_MINUTE_NS = 60_000_000_000

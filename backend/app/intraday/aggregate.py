@@ -1,0 +1,77 @@
+"""Pure closed-bar aggregation, with explicit gaps and no synthetic minutes."""
+from __future__ import annotations
+
+import math
+
+from backend.app.data_providers.alpaca_metadata import check_ns
+
+MINUTE_NS = 60_000_000_000
+
+
+def aggregate_as_of(rows, session, *, cutoff_ns, minutes, warmup_bars=0):
+    check_ns(cutoff_ns)
+    if type(minutes) is not int or minutes not in {1, 5, 15} or type(warmup_bars) is not int or warmup_bars < 0:
+        raise ValueError("AGGREGATE_INVALID")
+    if session.known_at_ns > cutoff_ns:
+        raise ValueError("CALENDAR_NOT_KNOWN")
+    namespace = None
+    latest = {}
+    exclusions = []
+    for row in rows:
+        if row["kind"] != "BAR" or row["available_at_ns"] is None or row["available_at_ns"] > cutoff_ns:
+            continue
+        key = tuple(row[name] for name in ("provider", "feed", "profile_id", "data_mode", "provenance", "replay_grade", "listing_id"))
+        if namespace is not None and namespace != key:
+            raise ValueError("MIXED_NAMESPACE")
+        namespace = key
+        at = row["event_time_ns"]
+        if not session.open_at_ns <= at < session.close_at_ns or (at - session.open_at_ns) % MINUTE_NS:
+            exclusions.append({"start_at_ns": at, "reason_code": "OUT_OF_SESSION_OR_GRID"})
+            continue
+        previous = latest.get(at)
+        if previous is None or (row["received_at_ns"], row["ingest_sequence"], row["id"]) > (
+                previous["received_at_ns"], previous["ingest_sequence"], previous["id"]):
+            latest[at] = row
+    width = minutes * MINUTE_NS
+    bars = []
+    start = session.open_at_ns
+    while start < min(session.close_at_ns, cutoff_ns):
+        end = start + width
+        reason = None
+        if end > session.close_at_ns:
+            reason = "SESSION_INCOMPLETE_GROUP"
+        elif end > cutoff_ns:
+            reason = "GROUP_NOT_CLOSED"
+        else:
+            members = [latest.get(start + offset * MINUTE_NS) for offset in range(minutes)]
+            if any(row is None for row in members):
+                reason = "MISSING_MINUTE"
+            elif any(row["bar_end_ns"] != row["event_time_ns"] + MINUTE_NS or row["bar_end_ns"] > cutoff_ns for row in members):
+                reason = "GROUP_NOT_CLOSED"
+            elif any(row["quality"] != "VALID" for row in members):
+                reason = "QUARANTINED_MINUTE"
+            else:
+                raw = [row["payload"]["raw"] for row in members]
+                volume = sum(row["v"] for row in raw)
+                try:
+                    if not math.isfinite(volume):
+                        raise OverflowError
+                    # Normalize weights first: finite price*large volume must not overflow.
+                    vwap = math.fsum(row["vw"] * (row["v"] / volume) for row in raw) if volume > 0 and all(row.get("vw") is not None for row in raw) else None
+                    if vwap is not None and not math.isfinite(vwap):
+                        raise OverflowError
+                except (OverflowError, ValueError):
+                    exclusions.append({"start_at_ns": start, "end_at_ns": end, "reason_code": "NUMERIC_OVERFLOW"})
+                    start = end
+                    continue
+                bars.append({"start_at_ns": start, "end_at_ns": end, "minutes": minutes, "complete": True,
+                             "open": raw[0]["o"], "high": max(row["h"] for row in raw), "low": min(row["l"] for row in raw),
+                             "close": raw[-1]["c"], "volume": volume, "vwap": vwap,
+                             "available_at_ns": max(end, session.known_at_ns, *(row["available_at_ns"] for row in members)),
+                             "member_ids": [row["id"] for row in members], "namespace": namespace,
+                             "calendar_version_id": session.version_id, "signal_eligible": False})
+        if reason:
+            exclusions.append({"start_at_ns": start, "end_at_ns": end, "reason_code": reason})
+        start = end
+    return {"bars": bars, "exclusions": sorted(exclusions, key=lambda row: (row["start_at_ns"], row["reason_code"])),
+            "warmup_complete": len(bars) >= warmup_bars, "status_coverage": "UNKNOWN"}

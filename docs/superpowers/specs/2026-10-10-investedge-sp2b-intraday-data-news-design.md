@@ -1,6 +1,6 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
-**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–3 FATTI (contratti/schema, trasporto REST e identità/calendario/universo offline), restano Task 4–12 per G1_TECH. G1_DATA INSUFFICIENTE.
+**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–4 FATTI (contratti/schema, trasporto REST, identità/calendario/universo e archivio/aggregazioni offline), restano Task 5–12 per G1_TECH. G1_DATA INSUFFICIENTE.
 **Base:** SP1 VERIFICATO, main remoto = d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
@@ -103,6 +103,10 @@ REST: 1Min, adjustment=raw, currency=USD, start/end/asof/feed/sort espliciti; co
 
 STREAM: bars, updatedBars e quotes; status/LULD dove attestati. I timestamp delle barre descrivono l'inizio dell'intervallo, non disponibilità del close. Il messaggio originale e updatedBars sono versioni differenti. Una barra chiusa ricevuta, resa durable e admitted alle 09:31:02 diventa disponibile a quell'istante; con backlog vale il confine successivo del §3; la correzione ricevuta 09:31:31 non cambia il replay 09:31:05. [Canali, quote e revisioni](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data).
 
+Chiarimento tecnico Task 4: RAW observations non ha admitted/available; il reader richiede ADMISSION tipizzata con id/hash e durable_at_ns acquisito dopo commit raw. Il confine della receipt misura l'ammissione del raw, non il timestamp fisico del commit della receipt. Dopo il filtro di disponibilità al cutoff, la revisione BAR nota è scelta per received/ingest sequence, senza regressione da una vecchia ricezione persistita tardi. Duplicati identificabili mantengono la prima ricezione; qualità dipendente da metadati successivi non crea un nuovo ricevimento. RAW provvisorio/futuro rimane quarantinato; senza ID fonte una successiva BAR chiusa può costituire occurrence distinta.
+
+Il backfill REST resta sempre HISTORICAL_CURRENT/RESEARCH_ONLY. PAGE/CHUNK hanno ricevute PUBLICATION immutabili; COMPLETE certifica l'esaurimento delle pagine del chunk, senza certificare copertura minuti o idoneità. Token terminale obbligatorio, loop/cancel/errore/cap -> PARTIAL; con quota/frame esaurito può mancare il marker, quindi nessun chunk completo, mentre il run operativo termina. Bounds REST inclusivi: il chunk successivo inizia a end+1 ns. Prove identità/calendario CAPTURED restano nel proprio namespace, con id/hash/publication nell'impronta anche per holiday e per la versione consultata alla data symbol-asof. asof lega il simbolo all'entità, senza attestare una vintage dei prezzi. [Contratto barre storico](https://docs.alpaca.markets/us/reference/stockbars), [quote storiche](https://docs.alpaca.markets/us/reference/stockquotes-1).
+
 Nessuna promessa di tick tape completo: quote capture è il flusso realmente ricevuto con stato di gap; trades/corrections/cancelErrors non sono necessari per ricostruire barre già emesse. Se SP3 richiederà microstruttura basata su trades, servirà un addendum, con nuova capacità e test.
 
 ### 6.2 Validazione e aggregazione
@@ -112,6 +116,8 @@ OHLC positivi/finiti, low <= min(open,close) <= max(open,close) <= high, volume 
 Quote: bid/ask, size, exchange, conditions/tape, timestamp nanosecondi. Prezzi positivi; bid > ask -> CROSSED e non eseguibile; zero size, stale e condizioni escluse -> reason code. Conservare la size originale con unità della fonte (lo stream dichiara round lots); la normalizzazione richiede lotto attestato, mai assumere sempre 100 azioni. Quote IEX marcate copertura venue, quote SIP consolidate secondo contratto; nessuna size trattata come garanzia di fill. Una quote tardiva con event_time precedente non sostituisce il mercato corrente con uno stato più vecchio.
 
 Aggregatore puro as-of: usa versioni note al cutoff e intervalli chiusi; open primo, high max, low min, close ultimo, volume somma. Gruppo incompleto -> non eleggibile; niente riuso della barra precedente. VWAP aggregato da somma(vw * volume) / somma(volume) se tutti gli input hanno vw valido; volume zero -> null. Revisioni cambiano solo letture successive e nuovo digest, mai uno snapshot congelato. Reset sessione VWAP e caratteristiche tecniche sono SP3.
+
+Chiarimento Task 4: availability dell'aggregato comprende conoscenza calendario e fine gruppo, oltre ai membri. VWAP usa pesi normalizzati equivalenti alla formula per evitare overflow; output non finito -> esclusione NUMERIC_OVERFLOW. Un gruppo completo di prezzi non dimostra continuità status: fino all'integrazione Task 6–9 l'output dichiara status_coverage UNKNOWN e signal_eligible false. REST quote size SOURCE_UNATTESTED; stream ROUND_LOTS, mai shares inventate. Conditions/exchange/tape mancanti o non attestati non diventano quote eseguibili. Questi chiarimenti non abbassano G1_DATA né anticipano SP3/SP6a.
 
 Daily di contesto SP3 ricostruita dalle sole barre complete di sedute precedenti del medesimo profilo, con copertura dichiarata; non usare il dailyBar progressivo come giorno concluso.
 
