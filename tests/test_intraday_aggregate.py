@@ -156,3 +156,87 @@ def test_future_admission_does_not_change_the_aggregate_prefix_capture_order():
     s.store.admit(orphan)
     final = s.store.read_as_of("BAR", cutoff_ns=s.clock.now, revisions=True)
     assert aggregation()(final, session(), cutoff_ns=cutoff, minutes=1) == before
+
+
+
+def corporate_event(s, *, at=OPEN+2*MINUTE, known=None, revision=1, cancelled=False, effective_end=None):
+    return {"id": revision, "provider": "alpaca", "feed": s.profile.feed, "profile_id": s.profile.profile_id,
+            "data_mode": "REAL", "provenance": "CAPTURED", "replay_grade": "STRICT_PIT", "listing_id": s.listing,
+            "logical_key": "split-synthetic", "capture_id": "corporate-fixture", "ingest_sequence": revision,
+            "received_at_ns": s.clock.now if known is None else known,
+            "available_at_ns": s.clock.now if known is None else known, "event_type": "CORPORATE_ACTION",
+            "effective_at_ns": at, "payload_hash": str(revision)*64,
+            "payload": {"discontinuity": True, "family": "reorganizations", "intake_sequence": revision,
+                        "effective_end_ns": effective_end, "cancelled": cancelled}}
+
+
+def test_split_or_reorganization_window_excluded_without_adjusting_raw_prices():
+    s = prepared()
+    rows = bars(s, 5)
+    before = [dict(row["payload"]["raw"]) for row in rows]
+    result = aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[corporate_event(s)])
+    assert not result["bars"] and result["exclusions"][0]["reason_code"] == "CORPORATE_ACTION_WINDOW"
+    assert [row["payload"]["raw"] for row in rows] == before
+
+
+def test_future_event_revision_does_not_change_saved_aggregate_prefix():
+    s = prepared()
+    rows = bars(s, 5)
+    cutoff = s.clock.now
+    first = corporate_event(s, at=OPEN-1)
+    before = aggregation()(rows, session(), cutoff_ns=cutoff, minutes=5, events=[first])
+    future = corporate_event(s, revision=2, known=cutoff+1)
+    assert aggregation()(rows, session(), cutoff_ns=cutoff, minutes=5, events=[first, future]) == before
+    assert not aggregation()(rows, session(), cutoff_ns=cutoff+1, minutes=5, events=[first, future])["bars"]
+
+
+def test_event_revision_selected_before_window_and_cancellation_filter():
+    s = prepared()
+    rows = bars(s, 5)
+    first = corporate_event(s)
+    moved = corporate_event(s, at=OPEN+60*MINUTE, revision=2)
+    result = aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[first, moved])
+    assert len(result["bars"]) == 1
+    cancelled = corporate_event(s, revision=3, cancelled=True)
+    assert len(aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5,
+                            events=[first, moved, cancelled])["bars"]) == 1
+
+
+def test_unknown_effective_time_fails_closed_and_date_only_blocks_whole_day():
+    s = prepared()
+    rows = bars(s, 5)
+    unknown = corporate_event(s, at=None)
+    assert not aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[unknown])["bars"]
+    date_only = corporate_event(s, at=OPEN-9*60*MINUTE, effective_end=OPEN+15*60*MINUTE)
+    assert not aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[date_only])["bars"]
+
+
+def test_corporate_event_cannot_cross_namespace_into_other_mode():
+    s = prepared()
+    rows = bars(s, 5)
+    wrong = {**corporate_event(s), "data_mode": "DEMO"}
+    with pytest.raises(ValueError, match="MIXED_NAMESPACE"):
+        aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[wrong])
+
+
+def test_demo_cancellation_cannot_hide_real_discontinuity_before_namespace_check():
+    s = prepared()
+    rows = bars(s, 5)
+    wrong = {**corporate_event(s, revision=2, cancelled=True), 'data_mode': 'DEMO',
+             'provenance': 'SYNTHETIC', 'replay_grade': 'RESEARCH_ONLY'}
+    with pytest.raises(ValueError, match='MIXED_NAMESPACE'):
+        aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[corporate_event(s), wrong])
+
+
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_corporate_revision_reopens_bar_only_at_its_knowledge_time(cancelled):
+    s = prepared()
+    rows = bars(s, 5)
+    first = corporate_event(s)
+    before = s.clock.now
+    s.clock.now += MINUTE
+    moved = corporate_event(s, at=OPEN+60*MINUTE, revision=2, cancelled=cancelled)
+    result = aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=5, events=[first, moved])
+    assert result['bars'][0]['available_at_ns'] == s.clock.now
+    assert result['bars'][0]['event_versions'] == [{'id': 2, 'hash': moved['payload_hash']}]
+    assert not aggregation()(rows, session(), cutoff_ns=before, minutes=5, events=[first, moved])['bars']

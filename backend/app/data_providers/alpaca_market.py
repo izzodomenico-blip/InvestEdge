@@ -114,7 +114,7 @@ def _payload(capability: str, value: object) -> object:
         return _rows(value, _ROW_FIELDS[capability])
     if not isinstance(value, dict):
         raise ValueError
-    if capability in {"bars", "quotes", "news"} and "next_page_token" not in value:
+    if capability in {"bars", "quotes", "news", "corporate_actions"} and "next_page_token" not in value:
         raise ValueError
     token = value.get("next_page_token")
     if token is not None and (not isinstance(token, str) or not _TOKEN.fullmatch(token)):

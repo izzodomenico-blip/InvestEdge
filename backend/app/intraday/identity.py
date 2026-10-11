@@ -69,6 +69,21 @@ def read_identity_as_of(connection, listing_id, effective_at_ns, cutoff_ns, *, p
     return row
 
 
+def resolve_symbol_as_of(connection, ticker, effective_at_ns, cutoff_ns, *, profile_id,
+                         data_mode="REAL", provenance="CAPTURED", replay_grade="STRICT_PIT"):
+    """No name/CUSIP fuzzy matching or mutable projection; collisions fail closed."""
+    namespace = scope(profile_id, data_mode, provenance, replay_grade)
+    versions = _versions(connection, cutoff_ns, namespace)
+    candidates = [_at([v for v in versions if v["listing_id"] == listing], effective_at_ns)
+                  for listing in {v["listing_id"] for v in versions}]
+    candidates = [v for v in candidates if v is not None and v["ticker"] == ticker]
+    if len(candidates) != 1:
+        return None
+    return read_identity_as_of(connection, candidates[0]["listing_id"], effective_at_ns, cutoff_ns,
+                               profile_id=profile_id, data_mode=data_mode, provenance=provenance,
+                               replay_grade=replay_grade)
+
+
 class IdentityService:
     def __init__(self, archive: AlpacaMetadataService):
         self.archive = archive

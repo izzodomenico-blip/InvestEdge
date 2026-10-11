@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–5 FATTI e pubblicati, prossimo Task 6 NON INIZIATO.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–6 FATTI, prossimo Task 7 NON INIZIATO. Push Task 6 e merge fast-forward Task 5–6 richiesti; esito remoto da verificare dopo pubblicazione.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -110,13 +110,15 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 
 **Branch:** investedge/sp2b-task-6; **Base:** origin/investedge/sp2b-task-5.
 **Files create:** backend/app/data_providers/alpaca_events.py, backend/app/data_providers/official_event_calendar.py, backend/app/intraday/events.py, tests/test_intraday_events.py, tests/test_official_event_calendar.py, tests/fixtures/market_data/alpaca_corporate_actions.json, tests/fixtures/market_data/us_events_calendar.json.
-**Files modify:** backend/app/intraday/contracts.py, backend/app/intraday/store.py, backend/app/intraday/aggregate.py, backend/app/intraday/identity.py, tests/test_intraday_aggregate.py.
+**Files modify:** backend/app/intraday/contracts.py, backend/app/intraday/store.py, backend/app/intraday/aggregate.py, backend/app/intraday/identity.py, tests/test_intraday_aggregate.py; backend/app/data_providers/alpaca_market.py (solo token terminale corporate: difetto precedente, correzione autorizzata).
 **Produces:** versioni eventi, invalidazioni split/merger, decode STATUS/LULD, snapshot calendari BLS/Fed e import locale earnings da fonte ufficiale; validatore/importatore di checkpoint status con provenienza riscontrabile, completezza/scope/expiry, mai NORMAL automatico.
-- [ ] RED: ex/process date trattata come availability, evento tardivo anticipato, split/reorganization attraversata, halt UNKNOWN inferito come resume, calendario aggiornato che muta il passato; bootstrap assente/stale/parziale, halt overnight e quotation-only scambiato per trading resume.
-- [ ] Implementare known/effective separati; REST corrente non certifica il passato. Status/LULD necessari ma diritti da attestare; assenza/gap -> UNKNOWN. Checkpoint autorevole necessario al bootstrap; RSS parziale, /assets, ack e barre non provano NORMAL. Checkpoint pre-ack abilita solo CONNECTING; il handshake del Task 7 raccorda lo stato prima di LIVE. Fonte/capacità assente -> STATUS_BOOTSTRAP_UNAVAILABLE, G1_DATA non READY. No automatic adjustment dei raw.
-- [ ] GREEN: report evento/quarantena, holiday/DST, ora macro/earnings sconosciuta -> intera seduta, corpo calendario deterministico da fixture/import, nessuna surprise senza consensus.
-- [ ] Gate e review; corporate SSE e fondamentali/realized macro restano addendum.
+- [x] RED: ex/process date trattata come availability, evento tardivo anticipato, split/reorganization attraversata, halt UNKNOWN inferito come resume, calendario aggiornato che muta il passato; bootstrap assente/stale/parziale, halt overnight e quotation-only scambiato per trading resume.
+- [x] Implementare known/effective separati; REST corrente non certifica il passato. Status/LULD necessari ma diritti da attestare; assenza/gap -> UNKNOWN. Checkpoint autorevole necessario al bootstrap; RSS parziale, /assets, ack e barre non provano NORMAL. Checkpoint pre-ack abilita solo CONNECTING; il handshake del Task 7 raccorda lo stato prima di LIVE. Fonte/capacità assente -> STATUS_BOOTSTRAP_UNAVAILABLE, G1_DATA non READY. No automatic adjustment dei raw.
+- [x] GREEN: report evento/quarantena, holiday/DST, ora macro/earnings sconosciuta -> intera seduta, corpo calendario deterministico da fixture/import, nessuna surprise senza consensus.
+- [x] Gate e review; corporate SSE e fondamentali/realized macro restano addendum.
 **Commit:** feat: version intraday corporate and scheduled events
+
+Chiusura 2026-10-11: 98 focus, 484 mirati e 1593 backend offline PASS; Ruff/pip/diff/scanner Fase 2 e tre review indipendenti PASS. RAW/documento + ADMISSION tipizzata, namespace e timeline revisioni congelati. Fonte bootstrap implementata UTP Snap-Shot 4.0/Output 4.1 su Nasdaq tape C con sei canali SoupBinTCP originali, attestazione esterna obbligatoria di fonte/contratto/diritti/capture digest/binding, expiry bounded; import manuale senza fetch/costo. Stato solo CONNECTING, Task 7 raccorda ACK e continuità prima di LIVE. Calendari import locali ufficiali auditabili, copertura ANNOUNCED_EVENTS_ONLY; ora ignota intera seduta, nessuna surprise. Gate economico ancora INSUFFICIENTE.
 
 ## Task 7 — Collector WebSocket controllato
 
@@ -213,4 +215,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 6 dal remoto Task 5 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 7 dal remoto Task 6 verificato dopo push/integrazione richiesta. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

@@ -103,7 +103,7 @@ class IntradayStore:
         return result
 
     def _prepare(self, envelope):
-        if not isinstance(envelope, EventEnvelope) or envelope.kind not in {"BAR", "QUOTE"}:
+        if not isinstance(envelope, EventEnvelope) or envelope.kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
         if ((envelope.profile_id, envelope.data_mode, envelope.provenance, envelope.replay_grade) != self.namespace or
                 envelope.feed != self.profile.feed or envelope.provider != "alpaca"):
@@ -111,7 +111,11 @@ class IntradayStore:
         # Secret guard precedes decode, digest queries and persistence.
         self.archive.safe_json(json.loads(envelope.payload_json))
         payload = json.loads(envelope.payload_json)
-        decoded = decode_market_row(envelope.kind, payload.get("raw"), source=payload.get("source"))
+        if envelope.kind in {"STATUS", "LULD"}:
+            from backend.app.data_providers.alpaca_events import decode_status_row
+            decoded = decode_status_row(envelope.kind, payload.get("raw"), source=payload.get("source"))
+        else:
+            decoded = decode_market_row(envelope.kind, payload.get("raw"), source=payload.get("source"))
         if payload != decoded or _ns(decoded["raw"]["t"]) != envelope.event_time_ns:
             raise StoreError("OBSERVATION_INVALID")
         if decoded["source"] == "REST" and (self.provenance != "HISTORICAL_CURRENT" or self.replay_grade != "RESEARCH_ONLY"):
@@ -130,7 +134,7 @@ class IntradayStore:
                 raise StoreError("OBSERVATION_INVALID")
             if end > envelope.received_at_ns and reason is None:
                 reason = "BAR_NOT_CLOSED"
-        else:
+        elif envelope.kind == "QUOTE":
             conditions = decoded["raw"].get("c", [])
             if reason is None:
                 if "c" not in decoded["raw"]:
@@ -144,7 +148,14 @@ class IntradayStore:
                           "replay_grade": "STRICT_PIT" if self.data_mode == "REAL" else "RESEARCH_ONLY"}
         identity = read_identity_as_of(self.connection, envelope.listing_id, envelope.event_time_ns,
                                       envelope.received_at_ns, profile_id=self.profile.profile_id, **metadata_scope)
-        if reason is None and (identity is None or envelope.kind not in identity["payload"]["capabilities"]):
+        if envelope.kind in {"STATUS", "LULD"}:
+            if self.profile.feed != "sip" or envelope.kind.lower() not in self.profile.attested_capabilities:
+                reason = "FEED_NOT_ENTITLED"
+            elif identity is None or decoded["raw"]["S"] != identity["ticker"] or (
+                    identity["venue"] == "NASDAQ" and decoded["raw"]["z"] != "C"):
+                reason = "IDENTITY_UNVERIFIED"
+        if reason is None and (identity is None or (envelope.kind in {"BAR", "QUOTE"} and
+                                                    envelope.kind not in identity["payload"]["capabilities"])):
             reason = "IDENTITY_UNVERIFIED"
         return envelope, {"kind": envelope.kind, "quality": "QUARANTINED" if reason else "VALID",
                           "reason_code": reason, "bar_end_ns": end}
@@ -242,7 +253,7 @@ class IntradayStore:
 
     def read_as_of(self, kind, *, cutoff_ns, listing_ids=None, start_ns=None, end_ns=None, revisions=False):
         check_ns(cutoff_ns)
-        if kind not in {"BAR", "QUOTE"}:
+        if kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
         rows = self.connection.execute("""
             SELECT raw.*, proof.id AS proof_id, proof.payload_json AS proof_json, proof.payload_hash AS proof_hash,

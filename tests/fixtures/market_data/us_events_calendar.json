@@ -1,0 +1,30 @@
+{
+  "source": "BLS",
+  "source_url": "https://www.bls.gov/schedule/2026/home.htm",
+  "original_text": "Synthetic offline official-calendar-shaped fixture.\n2026-10-12 08:30 Consumer Price Index\n2026-10-13 Employment Situation\n",
+  "rows": [
+    {
+      "event_id": "cpi-2026-10",
+      "event_type": "MACRO",
+      "name": "Consumer Price Index",
+      "event_date": "2026-10-12",
+      "local_time": "08:30",
+      "timezone": "America/New_York",
+      "listing_id": null,
+      "source_row_text": "2026-10-12 08:30 Consumer Price Index",
+      "cancelled": false
+    },
+    {
+      "event_id": "jobs-2026-10",
+      "event_type": "MACRO",
+      "name": "Employment Situation",
+      "event_date": "2026-10-13",
+      "local_time": null,
+      "timezone": "America/New_York",
+      "listing_id": null,
+      "source_row_text": "2026-10-13 Employment Situation",
+      "cancelled": false
+    }
+  ],
+  "original_sha256": "7ae1e1f96f230a19e18d84eeaa7b2611bb0d13ec82e5cdb4528c7d4b1b6a647e"
+}
