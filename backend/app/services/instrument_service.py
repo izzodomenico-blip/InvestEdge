@@ -8,9 +8,13 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from backend.app.models import (
+    AlpacaIdentityApplyIn,
+    AlpacaIdentityApplyOut,
+    AlpacaIdentityPreviewIn,
+    AlpacaIdentityPreviewOut,
     AssetClass,
     InstrumentType,
     ProviderSymbolApplyIn,
@@ -22,6 +26,9 @@ from backend.app.models import (
     TradeRepublicAttestationPreviewIn,
     TradeRepublicAttestationPreviewOut,
 )
+
+if TYPE_CHECKING:
+    from backend.app.data_providers.alpaca_metadata import AlpacaMetadataService
 
 _ISIN_PATTERN = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
@@ -690,6 +697,18 @@ class ListingConfirmationService:
 
     def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
+
+    def preview_alpaca_identity(
+        self, archive: AlpacaMetadataService, listing_id: int, payload: AlpacaIdentityPreviewIn,
+    ) -> AlpacaIdentityPreviewOut:
+        from backend.app.intraday.identity import IdentityService
+        return IdentityService(archive).preview(listing_id, payload)
+
+    def apply_alpaca_identity(
+        self, archive: AlpacaMetadataService, listing_id: int, payload: AlpacaIdentityApplyIn,
+    ) -> AlpacaIdentityApplyOut:
+        from backend.app.intraday.identity import IdentityService
+        return IdentityService(archive).apply(listing_id, payload)
 
     def preview_provider_symbol(
         self,

@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–2 FATTI e pubblicati, prossimo Task 3 NON INIZIATO.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–3 FATTI e pubblicati, prossimo Task 4 NON INIZIATO.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -74,10 +74,10 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 **Files create:** backend/app/data_providers/alpaca_metadata.py, backend/app/intraday/identity.py, backend/app/intraday/calendar.py, backend/app/intraday/universe.py, tests/test_intraday_identity.py, tests/test_us_calendar.py, tests/test_historical_universe.py.
 **Files modify:** backend/app/services/instrument_service.py, backend/app/models/schemas.py, backend/app/models/__init__.py, tests/test_instrument_catalog.py, tests/test_instrument_resolution.py.
 **Produces:** metadata GET paper /assets,/calendar con servizio bounded di bootstrap esposto nel Task 10; preview/apply espliciti della conferma mapping Alpaca versionata, read_identity_as_of, session_as_of e universo congelato prima della seduta.
-- [ ] RED: UUID diverso per ticker riusato, mapping ambiguo/non confermato, delisting/rename futuri che modificano universo passato; legacy non risolto resta escluso.
-- [ ] Implementare as-of su validità e known_at; nessuna attestazione storica inventata dalla risposta corrente /assets. UNKNOWN leva/inverse ETF escluso dal primo universo operativo.
-- [ ] GREEN: DST USA/Europa non coincidenti, holiday/half-day, calendar missing/future version, gruppi ancorati all'open; universo contemporaneo/pit distinto da retrospettivo.
-- [ ] Review e gate, I3 legacy conservato fuori scope.
+- [x] RED: 48 fallimenti iniziali per servizi mancanti; regressioni UUID/ticker riusato, mapping ambiguo/non confermato, delisting/rename futuri, legacy non risolto; ulteriori RED riprodotti su durabilità, riferimenti mancanti, limiti master e copertura calendario.
+- [x] Implementare as-of su validità e known_at con preview/apply espliciti e publication post-durabilità raw; CURRENT_ASSETS non retrodata validità/conoscenza. UNKNOWN leva/inverse ETF e capacità non attestate esclusi; master completo in chunk bounded, lettura frozen senza fallback latest.
+- [x] GREEN: 291 mirati offline (75 regressioni nuove); DST USA/Europa, holiday/half-day, coverage missing/future version, gruppi completi all'open, prospettico distinto da retrospettivo, revisioni future invarianti. Raw orfani/riferimenti mancanti esclusi, bootstrap 8000/10000 asset senza troncamento, admission all'apertura rifiutata.
+- [x] Review e gate: 1356 backend offline, 0 failure/error/skip e chiamate esterne inattese; Ruff/pip/diff/scan PASS, 3 review indipendenti senza Critical/Important residui. I3 legacy conservato fuori scope; commit/push solo Task 3 e gate remoto uguale HEAD, programma/piano/spec allineati. G1_DATA resta INSUFFICIENTE.
 **Commit:** feat: snapshot intraday identities sessions and universe
 
 ## Task 4 — Archivio barre/quote e aggregazioni complete
@@ -211,4 +211,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 3 dal remoto Task 2 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 4 dal remoto Task 3 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

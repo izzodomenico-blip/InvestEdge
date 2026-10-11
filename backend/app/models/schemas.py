@@ -1540,3 +1540,35 @@ class TradeRepublicAttestationOut(BaseModel):
     observed_at: datetime
     evidence_hash: str = Field(..., min_length=64, max_length=64)
     version: int = Field(..., ge=1)
+
+
+class AlpacaIdentityPreviewIn(BaseModel):
+    model_config = {"extra": "forbid", "hide_input_in_errors": True}
+    metadata_capture_id: int = Field(..., strict=True, gt=0)
+    broker_asset_id: str = Field(..., pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
+    capabilities: list[Literal["BAR", "QUOTE", "NEWS"]] = Field(..., min_length=1, max_length=3)
+    evidence_hash: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+    valid_from_ns: int | None = Field(None, strict=True, ge=0, le=2**63-1)
+    valid_to_ns: int | None = Field(None, strict=True, ge=0, le=2**63-1)
+    validity_source: Literal["CURRENT_ASSETS", "OFFICIAL_NOTICE"] = "CURRENT_ASSETS"
+    leveraged: Literal["YES", "NO", "UNKNOWN"] = "UNKNOWN"
+    inverse: Literal["YES", "NO", "UNKNOWN"] = "UNKNOWN"
+
+
+class AlpacaIdentityPreviewOut(BaseModel):
+    listing_id: int
+    broker_asset_id: str
+    ticker: str
+    venue: str
+    current_version_id: int | None
+    confirmation_token: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+
+
+class AlpacaIdentityApplyIn(AlpacaIdentityPreviewIn):
+    confirmation_token: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+
+
+class AlpacaIdentityApplyOut(BaseModel):
+    listing_id: int
+    identity_version_id: int
+    status: Literal["CONFIRMED"]

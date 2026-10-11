@@ -808,3 +808,25 @@ def test_require_resolved_listing_rejects_unresolved_and_returns_verified_curren
 
     assert row["id"] == result.listing_id
     assert row["metadata_version"] == 1
+
+
+def test_alpaca_confirmation_uses_separate_intraday_contract_without_relinking_legacy():
+    from test_intraday_identity import asset, capture, mapping, system
+
+    from backend.app.models import AlpacaIdentityApplyIn
+    from backend.app.services.instrument_service import ListingConfirmationService
+
+    s = system()
+    a = asset()
+    c = capture(s, [a])
+    confirmation = ListingConfirmationService()
+    request = mapping(s, a, c)
+    before = [tuple(row) for row in s.db.execute("SELECT * FROM assets")]
+    symbols = [tuple(row) for row in s.db.execute("SELECT * FROM provider_symbols")]
+    preview = confirmation.preview_alpaca_identity(s.archive, s.listing, request)
+    result = confirmation.apply_alpaca_identity(s.archive, s.listing, AlpacaIdentityApplyIn(
+        **request.model_dump(), confirmation_token=preview.confirmation_token,
+    ))
+    assert result.status == "CONFIRMED"
+    assert [tuple(row) for row in s.db.execute("SELECT * FROM assets")] == before
+    assert [tuple(row) for row in s.db.execute("SELECT * FROM provider_symbols")] == symbols

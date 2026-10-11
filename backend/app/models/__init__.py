@@ -29,6 +29,10 @@ from backend.app.models.schemas import (
     AllocationItemOut,
     AllocationPlanIn,
     AllocationPlanOut,
+    AlpacaIdentityApplyIn,
+    AlpacaIdentityApplyOut,
+    AlpacaIdentityPreviewIn,
+    AlpacaIdentityPreviewOut,
     ApiUsageOut,
     AssetClass,
     AssetCreate,
@@ -144,6 +148,10 @@ from backend.app.models.schemas import (
 )
 
 __all__ = [
+    "AlpacaIdentityApplyIn",
+    "AlpacaIdentityApplyOut",
+    "AlpacaIdentityPreviewIn",
+    "AlpacaIdentityPreviewOut",
     "ADAPTER_VALIDATION_REASONS",
     "EffectiveObservationQuality",
     "IngestResult",

@@ -1,6 +1,6 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
-**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–2 FATTI (contratti/schema e trasporto REST offline), restano Task 3–12 per G1_TECH. G1_DATA INSUFFICIENTE.
+**Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–3 FATTI (contratti/schema, trasporto REST e identità/calendario/universo offline), restano Task 4–12 per G1_TECH. G1_DATA INSUFFICIENTE.
 **Base:** SP1 VERIFICATO, main remoto = d9a43eee2f35fcda558a1b8d58bacc08a4cd8994.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
@@ -79,11 +79,21 @@ Snapshot universo acquisiti prima della seduta, append-only, con active/inactive
 
 Il ricollegamento legacy I3 resta nel backlog: il gate può lavorare con listing risolti nuovi/esistenti, senza riscrivere posizioni/import del portafoglio.
 
+Chiarimento tecnico Task 3 (2026-10-11): il bootstrap usa due GET /assets, status active/inactive e asset_class=us_equity, per il contratto governato del Task 2. Ogni risposta conserva i cap HTTP attestati; un array troppo grande viene rifiutato, senza elevarli. Massimo 30.000 righe aggregate, input decoded entro due cap di risposta. Campi whitelisted id/class/symbol/exchange/status/tradable; controlli credential echo sui campi raw prima dello scarto. Class us_equity non prova STOCK/ETF e marginable non prova leva di prodotto: tipo/valuta/fuso vengono dal listing risolto, leva/inverse dalla conferma esplicita. Header BOOTSTRAP ASSETS e ASSET_CHUNK conservano count, riferimenti e hash immutabili; ogni record entro min(1 MiB, frame profilo, frame runtime), quota payload archivio entro il minimo configurato. Non è ancora il controllo della dimensione fisica DB del collector Task 7. [Assets API, verificata il 2026-10-11](https://docs.alpaca.markets/us/reference/get-v2-assets-1).
+
+Preview/apply Alpaca hanno contratti dedicati, senza estendere provider/capability del percorso daily. Guardie: listing RESOLVED/VERIFIED/ACTIVE, identità non ambigua, UUID/ticker/MIC, USD, America/New_York, tipo STOCK/ETF e capability BAR/QUOTE/NEWS esplicite. ARCA/NYSEARCA condividono MIC ARCX nei confronti. La conferma congela tali verifiche e viene conosciuta solo all'apply, senza consultare proiezioni canoniche correnti nelle letture storiche. CURRENT_ASSETS usa valid_from=received_at del batch completo, senza retrodatazione; OFFICIAL_NOTICE richiede valid_from e hash della prova dichiarata. Questa dichiarazione non anticipa known_at né promuove lo storico corrente a STRICT_PIT. Revisione dello stesso valid_from sopprime la precedente prima di applicare valid_to; una transizione economica successiva conserva il passato. UUID diverso non eredita conferme dal ticker.
+
+freeze usa un cutoff degli input <= ora effettiva e registra la propria disponibilità successiva, senza retrodatare un nuovo snapshot al cutoff. Nel percorso STRICT_PIT, durabilità raw e admission devono precedere l'open. Header/membri sono atomici; listing senza identità confermata resta esclusione nel manifest, senza inventare una identity per poterlo inserire fra i membri. Mapping parziale o capacità bars/quotes/news non attestate nel profilo -> CAPABILITY_UNVERIFIED. Sono condizioni dell'universo, non prova di continuità status/quote/news o READY, che resta Task 9. Snapshot RESEARCH_ONLY marcato RETROSPECTIVE; REAL/DEMO, provenance e grade restano separati.
+
+
 ### 5.2 Calendario USA
 
 Persistenza versionata del calendario ufficiale di trading: session_date, open/close UTC, America/New_York, known_at, fonte/hash/versione. Festivi, DST e chiusure anticipate effettivi; nessuna approssimazione con lun–ven. Fuori range disponibile -> CALENDAR_MISSING, nessuna seduta inventata. [Calendar API](https://docs.alpaca.markets/us/reference/legacycalendar).
 
 Intervalli [open, close), close speciale della seduta. Il 5/15 minuti è ancorato all'open della seduta; nessun gruppo attraverso notti, halt o feed diversi. Barre pre/post-market archiviate ma escluse dal primo universo operativo. Il limite d'entrata vicino alla chiusura è funzione holding + margine d'uscita di SP3/SP6a.
+
+
+Chiarimento tecnico Task 3: ogni risposta completa conserva un header BOOTSTRAP CALENDAR con range inclusivo e ID delle sedute. Una data assente è chiusura nota solo nel range completo già disponibile; un range vuoto fuori dalla copertura documentata 1970–2029 è CALENDAR_MISSING. Limite 366 giorni e 367 righe, no weekday fallback. Parse date + open/close HH:MM nel fuso America/New_York, ignorando gli orari estesi session_open/session_close; solo gruppi 1/5/15 interamente contenuti in [open,close). Una risposta futura o una revisione che rimuove una seduta non cambia le letture al cutoff precedente. [Calendar API, verificata il 2026-10-11](https://docs.alpaca.markets/us/reference/legacycalendar).
 
 ## 6. Barre e quote
 
@@ -149,6 +159,11 @@ Dettagli schema Task 1 (chiarimento tecnico della §3): identificativi profilo/p
 RAW persistito con admitted_at/available_at NULL resta indisponibile. L'admission successiva è una nuova riga del capture log, riferita con FK tipizzata a observation/news/event, stesso run/capture/namespace e listing coerente se dichiarato. I suoi tempi non anticipano la persistenza o il floor di disponibilità del target; la riga RAW non viene aggiornata. Listing e instrument delle identità/news concordano col proprietario canonico; i membri dell'universo concordano con il listing della versione identità. I dataset member hanno esattamente un riferimento tipizzato. Il member_count immutabile impedisce aggiunte oltre la capacità dichiarata; il Task 9 pubblicherà header/membri/report atomicamente solo dopo aver verificato completezza e digest, senza considerare completo un header isolato.
 
 Logical event key include provider, feed, modalità, listing, kind e identità evento; BAR include start/end, QUOTE include timestamp + fingerprint/sequence fonte se disponibile. Il payload può essere deduplicato per hash, ma **le occurrence della timeline sono distinte**. Duplicato con event/revision ID fonte identico -> stessa occurrence; senza revision ID deduplicare soltanto ripetizioni consecutive invarianti della stessa logical key e posizione del capture. A→B→A conserva tre occurrence con le tre availability, anche se la prima e l'ultima condividono payload hash. Backfill e capture appartengono a provenance diverse; non usare un ID inventato come ID fonte. First_received immutato per occurrence; un backfill corrente non sostituisce l'originale catturato.
+
+
+Chiarimento di pubblicazione del Task 3: dopo il commit atomico di metadata/calendario/identità/header+members, un BOOTSTRAP PUBLICATION nello stesso namespace/run attesta durable_at_ns misurato dopo quel commit, count completo e refs tipizzati (table/id/hash). Nessuna mutazione delle righe raw. I reader richiedono la ricevuta e il ref del target, verificano hash/namespace e usano known effettivo=max(raw.available_at_ns, PUBLICATION.available_at_ns, durable_at_ns); conservano recorded_available_at_ns per il tempo del record raw. PUBLICATION.available rappresenta l'admission dopo durabilità degli input, non dichiara il timestamp fisico del commit della ricevuta stessa. Il manifest e il replay Task 8–9 devono conservare anche queste ricevute e applicare il medesimo confine; non basta il campo available della sola riga raw o lo stato mutabile del run.
+
+Se la pubblicazione fallisce dopo il primo commit, il lotto raw rimane archiviato ma non leggibile/utilizzabile; un run RUNNING senza ricevuta non è evidenza completa. Un universo il cui commit raw o admission raggiunge l'open non viene pubblicato come prospettico. La lettura di uno snapshot richiede header, count e tutti i membri, identità, header/chunk assets, calendario e rispettive ricevute congelate; mancanza -> SNAPSHOT_INPUT_MISSING, senza fallback latest.
 
 API interna condivisa proposta:
 - ingest(envelopes, captured_clock) -> conteggi accettati/duplicati/quarantena;
