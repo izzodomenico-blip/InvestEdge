@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–4 FATTI e pubblicati, prossimo Task 5 NON INIZIATO.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–5 FATTI e pubblicati, prossimo Task 6 NON INIZIATO.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -96,12 +96,14 @@ Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag 
 
 **Branch:** investedge/sp2b-task-5; **Base:** origin/investedge/sp2b-task-4.
 **Files create:** backend/app/data_providers/alpaca_news.py, backend/app/intraday/news.py, tests/test_alpaca_news_provider.py, tests/test_intraday_news.py, tests/fixtures/market_data/alpaca_news_pages.json, tests/fixtures/market_data/alpaca_news_revisions.json.
-**Files modify:** backend/app/data_providers/__init__.py, tests/test_news_providers.py.
+**Files modify:** backend/app/data_providers/__init__.py, tests/test_news_providers.py (regressione invariata).
+**Correzioni precedenti autorizzate dall’utente il 2026-10-11:** backend/app/data_providers/alpaca_market.py, backend/app/data_providers/alpaca_metadata.py, backend/app/intraday/store.py, backend/app/intraday/aggregate.py, tests/test_intraday_store.py, tests/test_intraday_aggregate.py, tests/test_us_calendar.py, tests/test_historical_universe.py. Solo terminale/rights news e regressioni causalità intake/deduplica/snapshot/aggregato.
 **Produces:** historical news reader + decoder stream, archivio versioni, relazioni articolo/listing/evento e tassonomia fattuale v1.
-- [ ] RED: testo rivisto retrodatato, updated_at fuori ordine/uguale con hash diverso, duplicate consegna, ritorno A→B→A con updated_at successivo, URL stesso per due fonti, publication assente, seed confluito in REAL, mapping ambiguo.
-- [ ] Implementare articolo ID fonte/hash/versione/tre tempi, many-to-many e cluster deterministico versionato; raw HTML mai eseguito, testo consentito bounded. Licenza/retention prima del corpo, missing esplicito.
-- [ ] GREEN: news/cluster futuro invarianti al cutoff, missing/stale/disabled/covered-zero distinti, categoria UNKNOWN quando prove insufficienti; niente score/sentiment predittivo.
-- [ ] Preservare consultazione e sentiment legacy REAL/DEMO; non migrare retroattivamente news_items in STRICT_PIT. Gate e review.
+- [x] RED: testo rivisto retrodatato, updated_at fuori ordine/uguale con hash diverso, duplicate consegna, ritorno A→B→A con updated_at successivo, URL stesso per due fonti, publication assente, seed confluito in REAL, mapping ambiguo.
+- [x] Implementare articolo ID fonte/hash/versione/tre tempi, many-to-many e cluster deterministico versionato; raw HTML mai eseguito, testo consentito bounded. Licenza/retention prima del corpo, missing esplicito.
+- [x] GREEN: news/cluster futuro invarianti al cutoff, missing/stale/disabled/covered-zero distinti, categoria UNKNOWN quando prove insufficienti; niente score/sentiment predittivo.
+- [x] Preservare consultazione e sentiment legacy REAL/DEMO; non migrare retroattivamente news_items in STRICT_PIT. Gate e review.
+- [x] Gate finale: 307 mirati + 1515 backend offline, 0 failure/error/skip e tentativi esterni inattesi, Ruff/pip/diff/scan PASS; 3 review indipendenti PASS. REST query coverage senza continuità attestata, diritti summary/body default negati e retention finita non supportata; ordine totale coerente e ricostruito al cutoff dell’aggregatore. Chiusura sul solo branch Task 5 con gate SHA remoto; main Task 0–4 + registro merge d225c1b invariato. G1_DATA INSUFFICIENTE.
 **Commit:** feat: archive point-in-time news versions and events
 
 ## Task 6 — Corporate actions, halt e calendari eventi
@@ -211,4 +213,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 5 dal remoto Task 4 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 6 dal remoto Task 5 verificato. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

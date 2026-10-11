@@ -133,3 +133,26 @@ def test_backlogged_old_revision_is_not_latest_aggregate_input():
     rows = s.store.read_as_of("BAR", cutoff_ns=s.clock.now, revisions=True)
     result = aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=1)
     assert result["bars"][0]["close"] == 101
+
+
+def test_aggregate_revision_selection_matches_original_capture_intake():
+    s = prepared()
+    s.store.persist((replace(event(s, change={"c": 101}), ingest_sequence=2),))
+    s.store.persist((replace(event(s, change={"c": 100}), ingest_sequence=1),))
+    rows = s.store.read_as_of("BAR", cutoff_ns=s.clock.now, revisions=True)
+    assert read(s)[0]["payload"]["raw"]["c"] == 101
+    assert aggregation()(rows, session(), cutoff_ns=s.clock.now, minutes=1)["bars"][0]["close"] == 101
+
+
+def test_future_admission_does_not_change_the_aggregate_prefix_capture_order():
+    s = prepared()
+    orphan = s.store.persist((replace(event(s, change={"c": 100}), ingest_sequence=1),), admit=False)
+    s.store.persist((replace(event(s, change={"c": 100.5}), capture_id="other-capture", ingest_sequence=1),))
+    s.store.persist((replace(event(s, change={"c": 101}), ingest_sequence=2),))
+    cutoff = s.clock.now
+    before = aggregation()(s.store.read_as_of("BAR", cutoff_ns=cutoff, revisions=True),
+                           session(), cutoff_ns=cutoff, minutes=1)
+    s.clock.now += 1_000_000_000
+    s.store.admit(orphan)
+    final = s.store.read_as_of("BAR", cutoff_ns=s.clock.now, revisions=True)
+    assert aggregation()(final, session(), cutoff_ns=cutoff, minutes=1) == before

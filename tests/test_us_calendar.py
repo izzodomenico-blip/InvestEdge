@@ -126,3 +126,30 @@ def test_empty_calendar_outside_documented_source_coverage_is_missing(day):
         calendar(s, [], day, day)
     with pytest.raises(ValueError, match="CALENDAR_MISSING"):
         session(s, day)
+
+
+def test_backlogged_calendar_does_not_regress_newer_received_session():
+    s = system()
+    older_received = s.clock.now
+    s.clock.now += SECOND
+    day = "2026-10-12"
+    calendar(s, [{"date":day,"open":"09:30","close":"13:00"}],day,day)
+    cutoff = s.clock.now
+    before = session(s,day)
+    s.clock.now += SECOND
+    s.calendar.record([{"date":day,"open":"09:30","close":"16:00"}],start=day,end=day,received_at_ns=older_received)
+    assert session(s,day).close_at_ns == before.close_at_ns
+    assert session(s,day,cutoff=cutoff) == before
+
+
+def test_same_receipt_calendar_removal_does_not_compare_run_member_count():
+    s = system()
+    day = "2026-10-12"
+    received = s.clock.now
+    s.calendar.record([{"date": day, "open": "09:30", "close": "16:00"}],
+                      start=day, end=day, received_at_ns=received)
+    cutoff = s.clock.now
+    s.clock.now += SECOND
+    s.calendar.record([], start=day, end=day, received_at_ns=received)
+    assert session(s, day) is None
+    assert session(s, day, cutoff=cutoff) is not None

@@ -71,7 +71,7 @@ def test_raw_is_invisible_until_post_commit_admission_and_receipt_hash():
     assert not read(s, stamp)
     row = read(s)[0]
     assert row["available_at_ns"] == s.clock.now and row["received_at_ns"] == stamp
-    assert row["payload_hash"] == event(s).payload_hash
+    assert {k: v for k, v in row["payload"].items() if k != "intake_sequence"} == event(s).payload
     assert s.store.admit(ids) == ()
 
 
@@ -279,7 +279,7 @@ def test_same_ns_revision_keeps_original_cross_run_order():
     # An earlier run has a high sequence; later run has sequence=1 at the same timestamp.
     values = [replace(event(s, at=OPEN + i * MINUTE), ingest_sequence=i + 1) for i in range(5)]
     s.store.persist(values)
-    s.store.persist((event(s, at=OPEN + 4 * MINUTE, change={"c": 100}),))
+    s.store.persist((event(s, at=OPEN + 4 * MINUTE, change={"c": 100}, capture_id="capture-after-restart"),))
     row = next(row for row in read(s) if row["event_time_ns"] == OPEN + 4 * MINUTE)
     assert row["payload"]["raw"]["c"] == 100
 
@@ -500,3 +500,36 @@ def test_chunk_fingerprint_includes_distinct_identity_used_for_symbol_asof():
     chunk = next(row["payload"] for row in s.store.progress_as_of(cutoff_ns=s.clock.now) if row["payload"]["complete"])
     assert {proof["id"] for proof in chunk["metadata"]["identities"]} == {first["id"], result.identity_version_id}
     assert all(len(proof["hash"]) == 64 and proof["publication_id"] for proof in chunk["metadata"]["identities"])
+
+
+def test_backlogged_tied_revisions_preserve_intake_sequence():
+    s = prepared()
+    older = replace(event(s, change={"c": 100}), ingest_sequence=1)
+    newer = replace(event(s, change={"c": 101}), ingest_sequence=2)
+    s.store.persist((newer,))
+    s.clock.now += SECOND
+    s.store.persist((older,))
+    assert read(s)[0]["payload"]["raw"]["c"] == 101
+
+
+def test_backlogged_delivery_does_not_hide_a_b_a_transition():
+    s = prepared()
+    a = event(s, change={"c": 100})
+    s.clock.now += SECOND
+    b_id = s.store.persist((event(s, change={"c": 101}),))
+    old_a_id = s.store.persist((a,))
+    assert read(s)[0]["id"] == b_id[0]
+    s.clock.now += SECOND
+    new_a_id = s.store.persist((event(s, change={"c": 100}),))
+    assert new_a_id != old_a_id
+    assert read(s)[0]["payload"]["raw"]["c"] == 100
+
+
+
+def test_interleaved_capture_with_tied_receipt_cannot_promote_older_intake():
+    s = prepared()
+    s.store.persist((replace(event(s, change={"c": 101}), ingest_sequence=2),))
+    s.store.persist((replace(event(s, change={"c": 100.5}), capture_id="second-capture", ingest_sequence=1),))
+    before = read(s)
+    s.store.persist((replace(event(s, change={"c": 100}), ingest_sequence=1),))
+    assert read(s) == before

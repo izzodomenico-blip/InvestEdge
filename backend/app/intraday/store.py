@@ -80,6 +80,10 @@ class IntradayStore:
             raise StoreError("MODE_MISMATCH")
 
     def _insert(self, table, envelope, run, fields):
+        if table == "intraday_observations":
+            # Keep original intake order separately from the globally unique storage sequence.
+            envelope = replace(envelope, payload_json=self.archive.safe_json(
+                {**envelope.payload, "intake_sequence": envelope.ingest_sequence}))
         text = self.archive.safe_json(json.loads(envelope.payload_json))
         size = len(text.encode())
         settings = self.archive.settings
@@ -152,15 +156,24 @@ class IntradayStore:
         if identified:
             rows = self.connection.execute(f"SELECT * FROM intraday_observations WHERE {where} AND source_event_id IS ? AND source_revision_id IS ? ORDER BY id DESC",
                                            (*params, envelope.source_event_id, envelope.source_revision_id)).fetchall()
-            if envelope.source_revision_id is not None and any(row["payload_hash"] != envelope.payload_hash for row in rows):
+            if envelope.source_revision_id is not None and any(self._source_payload(row) != envelope.payload for row in rows):
                 raise StoreError("SOURCE_REVISION_CONFLICT")
             row = rows[0] if rows else None
         else:
-            row = self.connection.execute(f"SELECT * FROM intraday_observations WHERE {where} AND capture_id=? ORDER BY id DESC LIMIT 1",
-                                          (*params, envelope.capture_id)).fetchone()
+            row = self.connection.execute(f"""SELECT * FROM intraday_observations WHERE {where} AND capture_id=?
+                AND (received_at_ns<? OR (received_at_ns=? AND
+                  COALESCE(json_extract(payload_json,'$.intake_sequence'),ingest_sequence)<=?))
+                ORDER BY received_at_ns DESC,COALESCE(json_extract(payload_json,'$.intake_sequence'),ingest_sequence) DESC,id DESC LIMIT 1""",
+                (*params, envelope.capture_id, envelope.received_at_ns, envelope.received_at_ns, envelope.ingest_sequence)).fetchone()
         temporal_change = (not identified and row is not None and row["reason_code"] in {"BAR_NOT_CLOSED", "TIMESTAMP_FUTURE"}
                            and row["reason_code"] != fields["reason_code"])
-        return row["id"] if row is not None and row["payload_hash"] == envelope.payload_hash and not temporal_change else None
+        return row["id"] if row is not None and self._source_payload(row) == envelope.payload and not temporal_change else None
+
+    @staticmethod
+    def _source_payload(row):
+        payload = decode_row(row)["payload"]
+        payload.pop("intake_sequence", None)
+        return payload
 
     def persist(self, envelopes, *, run_id=None, admit=True):
         cap = min(self.profile.max_queue_events, self.archive.settings.alpaca_max_queue_events)
@@ -259,17 +272,29 @@ class IntradayStore:
             if end_ns is not None and item["event_time_ns"] >= end_ns:
                 continue
             item["admission_id"] = raw["proof_id"]
+            item["capture_ingest_sequence"] = item["payload"].get("intake_sequence", item["ingest_sequence"])
             result.append(item)
+        # A total order within each logical observation/receipt, using visible evidence only.
+        # Intake ordinals are comparable inside a capture; first visible ID orders separate captures.
+        captures = {}
+        for item in result:
+            key = (item["listing_id"], item["event_time_ns"], item["received_at_ns"], item["capture_id"])
+            captures[key] = min(captures.get(key, item["id"]), item["id"])
+        for item in result:
+            key = (item["listing_id"], item["event_time_ns"], item["received_at_ns"], item["capture_id"])
+            item["capture_order"] = captures[key]
+        def order(item):
+            return (item["received_at_ns"], item["capture_order"], item["capture_ingest_sequence"],
+                    item["ingest_sequence"], item["id"])
         if not revisions:
             latest = {}
             for item in result:
                 key = (item["listing_id"], item["event_time_ns"])
                 previous = latest.get(key)
-                if previous is None or (item["received_at_ns"], item["ingest_sequence"], item["id"]) > (
-                        previous["received_at_ns"], previous["ingest_sequence"], previous["id"]):
+                if previous is None or order(item) > order(previous):
                     latest[key] = item
             result = list(latest.values())
-        return sorted(result, key=lambda row: (row["event_time_ns"], row["available_at_ns"], row["id"]))
+        return sorted(result, key=lambda row: (row["event_time_ns"], row["available_at_ns"], *order(row)))
 
     def quote_state(self, listing_id, *, cutoff_ns, max_age_ns=2_000_000_000):
         check_ns(max_age_ns)

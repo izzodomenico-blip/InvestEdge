@@ -17,6 +17,17 @@ def aggregate_as_of(rows, session, *, cutoff_ns, minutes, warmup_bars=0):
     namespace = None
     latest = {}
     exclusions = []
+    rows = list(rows)
+    captures = {}
+    for row in rows:
+        if row["kind"] == "BAR" and row["available_at_ns"] is not None and row["available_at_ns"] <= cutoff_ns:
+            key = (row["listing_id"], row["event_time_ns"], row["received_at_ns"], row["capture_id"])
+            captures[key] = min(captures.get(key, row["id"]), row["id"])
+    def order(row):
+        key = (row["listing_id"], row["event_time_ns"], row["received_at_ns"], row["capture_id"])
+        return (row["received_at_ns"], captures[key],
+                row.get("capture_ingest_sequence", row["payload"].get("intake_sequence", row["ingest_sequence"])),
+                row["ingest_sequence"], row["id"])
     for row in rows:
         if row["kind"] != "BAR" or row["available_at_ns"] is None or row["available_at_ns"] > cutoff_ns:
             continue
@@ -29,8 +40,7 @@ def aggregate_as_of(rows, session, *, cutoff_ns, minutes, warmup_bars=0):
             exclusions.append({"start_at_ns": at, "reason_code": "OUT_OF_SESSION_OR_GRID"})
             continue
         previous = latest.get(at)
-        if previous is None or (row["received_at_ns"], row["ingest_sequence"], row["id"]) > (
-                previous["received_at_ns"], previous["ingest_sequence"], previous["id"]):
+        if previous is None or order(row) > order(previous):
             latest[at] = row
     width = minutes * MINUTE_NS
     bars = []

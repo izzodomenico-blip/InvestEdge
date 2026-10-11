@@ -129,7 +129,11 @@ def captures_as_of(connection, cutoff_ns, *, profile_id, data_mode="REAL",
     if session_date is not None:
         query += " AND json_extract(raw.payload_json,'$.start')<=? AND json_extract(raw.payload_json,'$.end')>=?"
         params += (session_date, session_date)
-    query += " ORDER BY pub.available_at_ns DESC,raw.available_at_ns DESC,raw.id DESC"
+    # Publication determines visibility; source receipt determines the newest source state.
+    if metadata_kind in {"ASSETS", "CALENDAR"}:
+        query += " ORDER BY raw.received_at_ns DESC,raw.id DESC"
+    else:
+        query += " ORDER BY pub.available_at_ns DESC,raw.available_at_ns DESC,raw.id DESC"
     if latest_only:
         query += " LIMIT 1"
     return [decode_published(row, "intraday_capture_events", cutoff_ns) for row in connection.execute(query, params)]

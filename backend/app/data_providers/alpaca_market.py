@@ -114,7 +114,7 @@ def _payload(capability: str, value: object) -> object:
         return _rows(value, _ROW_FIELDS[capability])
     if not isinstance(value, dict):
         raise ValueError
-    if capability in {"bars", "quotes"} and "next_page_token" not in value:
+    if capability in {"bars", "quotes", "news"} and "next_page_token" not in value:
         raise ValueError
     token = value.get("next_page_token")
     if token is not None and (not isinstance(token, str) or not _TOKEN.fullmatch(token)):
@@ -130,7 +130,12 @@ def _payload(capability: str, value: object) -> object:
                 raise ValueError
             selected[symbol] = _rows(rows, _ROW_FIELDS[capability])
     elif capability == "news":
+        from backend.app.data_providers.alpaca_news import plain_text
         selected = _rows(source, _ROW_FIELDS["news"])
+        for row in selected:
+            if "headline" in row:
+                row["headline"] = plain_text(row["headline"], 8192)
+            row.pop("summary", None)  # No summary/body storage right configured on generic REST transport.
     else:
         # Filled from the published corporate-action schema, never raw unbounded objects.
         if not isinstance(source, dict) or not set(source) <= set(_CORPORATE_FIELDS):

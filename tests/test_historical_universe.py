@@ -247,3 +247,17 @@ def test_failed_publication_leaves_unreadable_raw_snapshot():
     assert row is not None
     with pytest.raises(ValueError, match="SNAPSHOT_INPUT_MISSING"):
         s.universe.read(row[0])
+
+
+def test_backlogged_assets_do_not_restore_inactive_listing():
+    s = system()
+    a,_ = prepare(s)
+    older_received = s.clock.now
+    s.clock.now += SECOND
+    s.archive.record_assets([{**a,"status":"inactive","tradable":False}],received_at_ns=s.clock.now)
+    saved = s.universe.read(freeze(s).snapshot_id)
+    s.clock.now += SECOND
+    s.archive.record_assets([a],received_at_ns=older_received)
+    later = s.universe.read(freeze(s).snapshot_id)
+    assert later["members"][0]["reason_code"] == "ASSET_INACTIVE"
+    assert saved["members"][0]["reason_code"] == "ASSET_INACTIVE"
