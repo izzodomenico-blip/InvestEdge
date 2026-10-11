@@ -1,7 +1,7 @@
 # InvestEdge — SP2b «Dati per l'alpha»: gate dati e news intraday
 
 **Stato:** approvata dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–6 FATTI (contratti/schema, trasporto REST, identità/calendario/universo, archivio/aggregazioni, news, corporate/status/calendari eventi offline), restano Task 7–12 per G1_TECH. G1_DATA INSUFFICIENTE.
-**Base progettuale:** SP1 VERIFICATO al commit d9a43eee2f35fcda558a1b8d58bacc08a4cd8994. Task 0–4 SP2b integrati in main con fast-forward verificato a fceb90fc6786139d9faf23379f7861c2b2016afc il 2026-10-11; registro merge pubblicato e integrato a d225c1b40793db8c7296253df9f5c047ed029452. Base Task 6 verificata 7bd4dcceb17f6eea4bc16faa675bf5b71c27b09b (Task 5); merge fast-forward Task 5–6 richiesto, da verificare dopo push Task 6.
+**Base progettuale:** SP1 VERIFICATO al commit d9a43eee2f35fcda558a1b8d58bacc08a4cd8994. Task 0–4 SP2b integrati in main con fast-forward verificato a fceb90fc6786139d9faf23379f7861c2b2016afc il 2026-10-11; registro merge pubblicato e integrato a d225c1b40793db8c7296253df9f5c047ed029452. Base Task 6 verificata 7bd4dcceb17f6eea4bc16faa675bf5b71c27b09b (Task 5); feature Task 6 2478b1d082c45f8dd92d1eeb0c71663d5466f38e pubblicata e Task 5–6 integrati in main con fast-forward remoto verificato; registro integrazione documentale nel commit successivo, codice invariato.
 **Documenti:** attua la spec di programma 2026-09-30 (§2.1, §4–5) e la priorità intraday di PROGRAMMA-OPERATIVO.md. Piano: ../plans/2026-10-10-investedge-sp2b-intraday-data-news.md.
 
 ## 1. Risultato e confini

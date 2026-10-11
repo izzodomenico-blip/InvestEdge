@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–6 FATTI, prossimo Task 7 NON INIZIATO. Push Task 6 e merge fast-forward Task 5–6 richiesti; esito remoto da verificare dopo pubblicazione.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–6 FATTI, prossimo Task 7 NON INIZIATO. Feature Task 6 2478b1d082c45f8dd92d1eeb0c71663d5466f38e pubblicata e integrata in main con fast-forward verificato; registro documentale successivo sullo stesso branch, SHA corrente da verificare al Task 7.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -215,4 +215,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 7 dal remoto Task 6 verificato dopo push/integrazione richiesta. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 7 dal remoto investedge/sp2b-task-6 verificato, comprensivo del registro integrazione; feature Task 6 2478b1d. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
