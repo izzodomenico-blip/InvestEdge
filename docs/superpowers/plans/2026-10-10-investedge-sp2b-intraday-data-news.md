@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati dall'utente il 2026-10-10; Task 1–8 FATTI, prossimo Task 9 NON INIZIATO. Base Task 8 verificata 687a20a2d0486f274bf598fa1cb7c02091a2e80e, registro integrazione Task 7 pubblicato e fast-forward main verificato. Task 8 consegnato sul proprio branch secondo il piano; SHA proprio registrato dal Task 9.
+**Stato:** approvati il 2026-10-10; Task 1–9 FATTI, prossimo Task 10 NON INIZIATO. Task 8 feature f39244849138647b6953c1d781193609d3133057 e main FF verificati; Task 9 gate 899/1798/Ruff/pip/diff/scan e 3 review PASS, consegna commit/push/FF come autorizzato.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -17,7 +17,7 @@
 - Ogni task: test mirati, suite backend completa offline con JUnit, Ruff, pip check, git diff --check; task UI anche suite frontend/build offline e audit --audit-level=high (advisory consultati separatamente). Non dichiarare PASS dalle prove del task precedente.
 - Review indipendente senza Critical/Important aperti prima del commit. Secret scan con pattern Fase 2 + classificazione dei candidati; sentinelle generate nel test e non salvate in fixture.
 - Chiusura nello stesso commit: checkbox, riga FATTO con test/data/owner, SHA del precedente e Prossimo passo. Un commit per task, messaggio esatto sotto; checkpoint pubblicato e documentato se interruzione.
-- Push solo branch task e gate SHA remoto == HEAD, worktree pulito. Merge fast-forward ai gate tecnici solo su richiesta esplicita. Il gate parziale non marca tutto SP2b VERIFICATO.
+- Push solo branch task e gate SHA remoto == HEAD, worktree pulito. Richiesta esplicita utente 2026-10-12: commit, push e merge di ogni singolo task; applicare fast-forward main dopo i gate tecnici/review di ciascun task e registrare l’esito. Il gate parziale non marca tutto SP2b VERIFICATO.
 - G1_TECH e G1_DATA distinti. Task 12 può chiudere il software con G1_DATA INSUFFICIENTE se mancano capture reale/diritti; G2/promozione/paper restano bloccati da quel dato. Nessuna raccolta live in questo piano senza richiesta e configurazione utente.
 
 Comandi (PowerShell, dalla radice del worktree; scratch temporaneo nuovo e flag live disabilitati):
@@ -154,10 +154,10 @@ Chiusura 2026-10-12: 300 focus, 850 mirati e 1749 backend offline PASS; Ruff/pip
 **Files create:** backend/app/intraday/snapshots.py, backend/app/intraday/quality.py, tests/test_intraday_snapshots.py, tests/test_intraday_quality.py.
 **Files modify:** backend/app/intraday/universe.py, backend/app/intraday/replay.py.
 **Produces:** freeze_dataset/report con manifest e digest completo; G1_TECH distinto da G1_DATA e policy immutabile §11.
-- [ ] RED: feed/news/event/calendar/universe revision non entra nel digest; GET/read fonte latest cambia un vecchio snapshot; incomplete batch pubblicato completo; token futuro nel manifest.
-- [ ] Implementare riferimenti immutabili a tutte le occurrence della timeline, incluse superseded/pre-periodo e capture log append-only, e policy, timestamp cutoff e profilo; salvataggio atomico, cancellazione prima della pubblicazione; missing source errore senza fallback. A@t2/B@t8 congelate a t10 restituiscono A al cutoff t5; A→B→A mantiene tutte le availability.
-- [ ] GREEN: stesso manifest/replay -> stesso digest, ogni input revision nuovo -> nuovo digest; test READY/INSUFFICIENTE/NON_IDONEO e denominatori includono gap/exclusions. Griglia fissa 1/5/15 con minimi per listing/seduta/timeframe e >0; barre complete con sole quote stale/gap news/status UNKNOWN non danno READY. Synthetic verifica funzione, mai certifica campione reale.
-- [ ] SIP/quote/status/news diritti e soglie attestate, storico corrente/IEX/delayed non promossi. Tutte le esclusioni e limiti nel report. Gate e review.
+- [x] RED: feed/news/event/calendar/universe revision non entra nel digest; GET/read fonte latest cambia un vecchio snapshot; incomplete batch pubblicato completo; token futuro nel manifest.
+- [x] Implementare riferimenti immutabili a tutte le occurrence della timeline, incluse superseded/pre-periodo e capture log append-only, e policy, timestamp cutoff e profilo; salvataggio atomico, cancellazione prima della pubblicazione; missing source errore senza fallback. A@t2/B@t8 congelate a t10 restituiscono A al cutoff t5; A→B→A mantiene tutte le availability.
+- [x] GREEN: stesso manifest/replay -> stesso digest, ogni input revision nuovo -> nuovo digest; test READY/INSUFFICIENTE/NON_IDONEO e denominatori includono gap/exclusions. Griglia fissa 1/5/15 con minimi per listing/seduta/timeframe e >0; barre complete con sole quote stale/gap news/status UNKNOWN non danno READY. Synthetic verifica funzione, mai certifica campione reale.
+- [x] SIP/quote/status/news diritti e soglie attestate, storico corrente/IEX/delayed non promossi. Tutte le esclusioni e limiti nel report. Gate e review.
 **Commit:** feat: freeze intraday datasets and quality evidence
 
 ## Task 10 — Job finiti e API intraday
@@ -219,4 +219,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 9 dal remoto investedge/sp2b-task-8 dopo gate SHA. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 10 dal remoto investedge/sp2b-task-9 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.

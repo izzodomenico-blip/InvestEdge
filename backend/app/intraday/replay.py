@@ -319,3 +319,19 @@ class ReplayReducer:
 
     def as_of(self, cutoff_ns, *, listing_ids=None):
         return replay_as_of(self._rows, cutoff_ns=cutoff_ns, listing_ids=listing_ids, namespace=self.namespace)
+
+
+def replay_frozen(manifest, rows, *, cutoff_ns=None, listing_ids=None):
+    """Pure snapshot adapter; the caller has validated the exact persisted references."""
+    frozen_cutoff = manifest['cutoff_ns']
+    check_ns(frozen_cutoff)
+    cutoff = frozen_cutoff if cutoff_ns is None else cutoff_ns
+    check_ns(cutoff)
+    if cutoff > frozen_cutoff:
+        raise ValueError('SNAPSHOT_CUTOFF')
+    planned = manifest['listing_ids']
+    if listing_ids is not None and any(item not in planned for item in listing_ids):
+        raise ValueError('SNAPSHOT_SCOPE')
+    return replay_as_of(rows, cutoff_ns=cutoff, listing_ids=planned if listing_ids is None else listing_ids,
+                        namespace=tuple(manifest['namespace']),
+                        quote_max_age_ns=manifest['policy']['config']['quote_max_age_ns'])

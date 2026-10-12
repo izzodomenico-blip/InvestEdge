@@ -22,6 +22,16 @@ class UniverseSnapshot:
     digest: str
 
 
+def frozen_universe_dependencies(snapshot, timeline):
+    """Bind exact member occurrences where the dataset schema has no member FK."""
+    members = sorted((row for row in timeline if row['table'] == 'intraday_universe_members'
+                      and row['snapshot_id'] == snapshot['id']), key=lambda row: row['listing_id'])
+    if (len(members) != snapshot['member_count'] or
+            [row['payload'] for row in members] != snapshot['payload']['members']):
+        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+    return members
+
+
 class UniverseService:
     def __init__(self, archive: AlpacaMetadataService):
         self.archive = archive
