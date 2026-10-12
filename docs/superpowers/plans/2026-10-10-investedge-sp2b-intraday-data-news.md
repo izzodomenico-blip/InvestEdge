@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–9 FATTI, prossimo Task 10 NON INIZIATO. Task 8 feature f39244849138647b6953c1d781193609d3133057 e main FF verificati; Task 9 gate 899/1798/Ruff/pip/diff/scan e 3 review PASS, consegna commit/push/FF come autorizzato.
+**Stato:** approvati il 2026-10-10; Task 1–9 FATTI, prossimo Task 10 NON INIZIATO. Task 8 feature f39244849138647b6953c1d781193609d3133057 e main FF verificati; Task 9 feature 66ce090ae0b2855a7fe84152e5de092142744055, gate 899/1798/Ruff/pip/diff/scan e 3 review PASS, push branch e main FF verificati 2026-10-12. Questo registro documentale completa l’integrazione prima del Task 10.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -159,6 +159,8 @@ Chiusura 2026-10-12: 300 focus, 850 mirati e 1749 backend offline PASS; Ruff/pip
 - [x] GREEN: stesso manifest/replay -> stesso digest, ogni input revision nuovo -> nuovo digest; test READY/INSUFFICIENTE/NON_IDONEO e denominatori includono gap/exclusions. Griglia fissa 1/5/15 con minimi per listing/seduta/timeframe e >0; barre complete con sole quote stale/gap news/status UNKNOWN non danno READY. Synthetic verifica funzione, mai certifica campione reale.
 - [x] SIP/quote/status/news diritti e soglie attestate, storico corrente/IEX/delayed non promossi. Tutte le esclusioni e limiti nel report. Gate e review.
 **Commit:** feat: freeze intraday datasets and quality evidence
+
+Chiusura 2026-10-12: 49 regressioni nuove; 899 mirati e 1798 backend offline PASS, zero rete esterna inattesa. Ruff/pip/diff/scanner/scope e tre review PASS. Feature 66ce090ae0b2855a7fe84152e5de092142744055 pubblicata e main fast-forward verificato; registro integrazione documentale sullo stesso branch. Prossimo Task 10 dopo gate SHA remoto.
 
 ## Task 10 — Job finiti e API intraday
 
