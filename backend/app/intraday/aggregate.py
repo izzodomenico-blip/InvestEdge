@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from backend.app.data_providers.alpaca_metadata import check_ns
+from backend.app.intraday.replay import check_ns, select_versions
 
 MINUTE_NS = 60_000_000_000
 
@@ -18,16 +18,7 @@ def aggregate_as_of(rows, session, *, cutoff_ns, minutes, warmup_bars=0, events=
     latest = {}
     exclusions = []
     rows = list(rows)
-    captures = {}
-    for row in rows:
-        if row["kind"] == "BAR" and row["available_at_ns"] is not None and row["available_at_ns"] <= cutoff_ns:
-            key = (row["listing_id"], row["event_time_ns"], row["received_at_ns"], row["capture_id"])
-            captures[key] = min(captures.get(key, row["id"]), row["id"])
-    def order(row):
-        key = (row["listing_id"], row["event_time_ns"], row["received_at_ns"], row["capture_id"])
-        return (row["received_at_ns"], captures[key],
-                row.get("capture_ingest_sequence", row["payload"].get("intake_sequence", row["ingest_sequence"])),
-                row["ingest_sequence"], row["id"])
+    rows = select_versions([row for row in rows if row['kind'] == 'BAR'], family='BAR', cutoff_ns=cutoff_ns)
     for row in rows:
         if row["kind"] != "BAR" or row["available_at_ns"] is None or row["available_at_ns"] > cutoff_ns:
             continue
@@ -39,9 +30,7 @@ def aggregate_as_of(rows, session, *, cutoff_ns, minutes, warmup_bars=0, events=
         if not session.open_at_ns <= at < session.close_at_ns or (at - session.open_at_ns) % MINUTE_NS:
             exclusions.append({"start_at_ns": at, "reason_code": "OUT_OF_SESSION_OR_GRID"})
             continue
-        previous = latest.get(at)
-        if previous is None or order(row) > order(previous):
-            latest[at] = row
+        latest[at] = row
     corporate = _corporate_as_of(events, cutoff_ns, namespace)
     width = minutes * MINUTE_NS
     bars = []
@@ -100,20 +89,8 @@ def _corporate_as_of(events, cutoff, namespace):
         for row in visible:
             if tuple(row[k] for k in ("feed", "profile_id", "data_mode", "provenance", "replay_grade")) != namespace[1:-1]:
                 raise ValueError("MIXED_NAMESPACE")
-    captures = {}
-    for row in visible:
-        key = (row["logical_key"], row["received_at_ns"], row["capture_id"])
-        captures[key] = min(captures.get(key, row["id"]), row["id"])
-    def order(row):
-        key = (row["logical_key"], row["received_at_ns"], row["capture_id"])
-        return (row["received_at_ns"], captures[key], row["payload"].get("intake_sequence", row["ingest_sequence"]), row["id"])
-    latest = {}
-    for row in visible:
-        key = (row["provider"], row["logical_key"])
-        if key not in latest or order(row) > order(latest[key]):
-            latest[key] = row
     result = []
-    for row in latest.values():
+    for row in select_versions(visible, family='EVENT', cutoff_ns=cutoff):
         if row["event_type"] != "CORPORATE_ACTION":
             continue
         if namespace is None:

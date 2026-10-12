@@ -26,6 +26,7 @@ from backend.app.data_providers.alpaca_news import (
 )
 from backend.app.intraday.contracts import EventEnvelope, canonical_json
 from backend.app.intraday.identity import _at, _versions
+from backend.app.intraday.replay import select_versions
 
 _COMMON = ("provider", "feed", "profile_id", "data_mode", "provenance", "replay_grade", "schema_version",
            "listing_id", "logical_key", "capture_id", "ingest_sequence", "event_time_ns", "received_at_ns",
@@ -312,25 +313,7 @@ class NewsStore:
                 links.append(link)
             item.update(links=links, admission_id=raw["proof_id"], first_received_at_ns=item["received_at_ns"])
             result.append(item)
-        captures = {}
-        for item in result:
-            key = (item["article_id"], item["updated_at_ns"], item["received_at_ns"], item["capture_id"])
-            captures[key] = min(captures.get(key, item["id"]), item["id"])
-        for item in result:
-            key = (item["article_id"], item["updated_at_ns"], item["received_at_ns"], item["capture_id"])
-            item["capture_order"] = captures[key]
-        def order(item):
-            return (item["received_at_ns"], item["capture_order"],
-                    item["payload"].get("intake_sequence", item["ingest_sequence"]), item["id"])
-        if not revisions:
-            latest = {}
-            for item in sorted(result, key=lambda row: (row["updated_at_ns"], *order(row))):
-                latest[item["article_id"]] = item
-            result = list(latest.values())
-        # Filter after version selection: removing a symbol must not resurrect an old version.
-        if listing_ids is not None:
-            result = [item for item in result if any(link["listing_id"] in listing_ids for link in item["links"])]
-        return sorted(result, key=lambda row: (row["available_at_ns"], *order(row)))
+        return select_versions(result, family='NEWS', cutoff_ns=cutoff_ns, listing_ids=listing_ids, revisions=revisions)
 
     def quarantine_as_of(self, *, cutoff_ns):
         from backend.app.data_providers.alpaca_metadata import captures_as_of

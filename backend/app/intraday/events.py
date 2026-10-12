@@ -21,6 +21,7 @@ from backend.app.data_providers.official_event_calendar import IssuerAuthority, 
 from backend.app.intraday.calendar import session_as_of
 from backend.app.intraday.contracts import EventEnvelope
 from backend.app.intraday.identity import read_identity_as_of, resolve_symbol_as_of
+from backend.app.intraday.replay import select_versions, status_state_from_rows
 from backend.app.intraday.store import IntradayStore, StoreError
 
 
@@ -240,23 +241,7 @@ class EventStore(IntradayStore):
                         raise EventError('EVENT_INPUT_MISSING')
                 item['admission_id'] = raw['proof_id']
                 result.append(item)
-            captures = {}
-            for item in result:
-                key = (item['logical_key'], item['received_at_ns'], item['capture_id'])
-                captures[key] = min(captures.get(key, item['id']), item['id'])
-            def order(item):
-                key = (item['logical_key'], item['received_at_ns'], item['capture_id'])
-                return (item['received_at_ns'], captures[key], item['payload']['intake_sequence'], item['id'])
-            if not revisions:
-                latest = {}
-                for item in result:
-                    key = (item['provider'], item['logical_key'])
-                    if key not in latest or order(item) > order(latest[key]):
-                        latest[key] = item
-                result = list(latest.values())
-            if listing_ids is not None:
-                result = [item for item in result if item['listing_id'] in listing_ids]
-            return sorted(result, key=order)
+            return select_versions(result, family='EVENT', cutoff_ns=cutoff_ns, listing_ids=listing_ids, revisions=revisions)
         except (MetadataError, sqlite3.DatabaseError, KeyError, TypeError):
             raise EventError('EVENT_INPUT_MISSING') from None
 
@@ -311,15 +296,7 @@ class EventStore(IntradayStore):
         if gaps:
             return {**unknown, 'reason_code': 'CAPTURE_GAP'}
         observations = IntradayStore.read_as_of(self, 'STATUS', cutoff_ns=cutoff_ns, listing_ids=(listing_id,), revisions=True)
-        observations = [r for r in observations if r['event_time_ns'] >= row['effective_at_ns']]
-        state = payload['state']
-        if observations:
-            last_time = max(r['event_time_ns'] for r in observations)
-            states = [r['payload']['state'] if r['quality'] == 'VALID' else 'UNKNOWN'
-                      for r in observations if r['event_time_ns'] == last_time]
-            if last_time == row['effective_at_ns']:
-                states.append(state)
-            state = max(states, key=rank.__getitem__)
+        state = status_state_from_rows(row, observations, cutoff_ns=cutoff_ns)
         return {'state': state, 'reason_code': None if state != 'UNKNOWN' else 'STATUS_UNKNOWN',
                 'phase': 'CONNECTING', 'live_eligible': False, 'checkpoint_version_id': row['id'],
                 'checkpoint_hash': row['payload_hash'], 'next_sequence': payload['next_sequence'],

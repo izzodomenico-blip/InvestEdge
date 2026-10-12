@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10; Task 1–7 FATTI, prossimo Task 8 NON INIZIATO. Base Task 7 verificata 701017e90e21572385cb06ed6c8b5b4bee40aa2d (registro integrazione Task 6); feature Task 7 582b9b9f9bd4455b7a837be93855836bd35ea94b pubblicata e integrata in main con fast-forward verificato; questo registro documentale sarà pubblicato e integrato, SHA proprio registrato dal Task 8.
+**Stato:** approvati dall'utente il 2026-10-10; Task 1–8 FATTI, prossimo Task 9 NON INIZIATO. Base Task 8 verificata 687a20a2d0486f274bf598fa1cb7c02091a2e80e, registro integrazione Task 7 pubblicato e fast-forward main verificato. Task 8 consegnato sul proprio branch secondo il piano; SHA proprio registrato dal Task 9.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -140,11 +140,13 @@ Chiusura 2026-10-12: 688 mirati e 1678 backend offline PASS, zero rete esterna i
 **Files create:** backend/app/intraday/replay.py, tests/test_intraday_replay.py, tests/test_intraday_boundaries.py.
 **Files modify:** backend/app/intraday/store.py, backend/app/intraday/aggregate.py, backend/app/intraday/news.py, backend/app/intraday/events.py, tests/test_intraday_store.py.
 **Produces:** stesso reducer per eventi collector e replay ordinati da disponibilità; selezione revisioni per cutoff, no «latest globale».
-- [ ] RED: append/change/remove futuro in ogni tipo cambia prefisso; quote tardiva riporta mercato indietro; riordino tied timestamps non deterministico; news update futuro riclassifica ieri.
-- [ ] Implementare ordine §3 e revision selection §8; conservative completeness/gap/UNKNOWN e retention first_received; rifiuto dataset mixed REAL/DEMO/feed.
-- [ ] GREEN: stream transcript == replay a ogni cutoff, batch boundaries/chunk variati identici, aggregati e news/eventi/identità coerenti; test proprietà seed fisso.
-- [ ] Confini AST: nessun import score-v1/daily simulator/legacy news nell'evidenza intraday, nessun provider in replay, nessun trading adapter. Gate e review.
+- [x] RED: append/change/remove futuro in ogni tipo cambia prefisso; quote tardiva riporta mercato indietro; riordino tied timestamps non deterministico; news update futuro riclassifica ieri.
+- [x] Implementare ordine §3 e revision selection §8; conservative completeness/gap/UNKNOWN e retention first_received; rifiuto dataset mixed REAL/DEMO/feed.
+- [x] GREEN: stream transcript == replay a ogni cutoff, batch boundaries/chunk variati identici, aggregati e news/eventi/identità coerenti; test proprietà seed fisso.
+- [x] Confini AST: nessun import score-v1/daily simulator/legacy news nell'evidenza intraday, nessun provider in replay, nessun trading adapter. Gate e review.
 **Commit:** feat: replay intraday data with causal as-of semantics
+
+Chiusura 2026-10-12: 300 focus, 850 mirati e 1749 backend offline PASS; Ruff/pip/diff/scanner Fase 2 e tre review PASS. Reducer puro e selezione condivisa, timeline con tutte le occurrence/receipts/dependencies; ordine locale e cross-capture deterministico, future prefix invariabile. Quote non regrediscono, revisioni prima dei filtri, macro globali preservati, universo incompleto respinto. Metadata research separati per scope; policy trasporto congelata alla nuova cattura, legacy non promosso. Stato DURABLE_EVIDENCE_ONLY distinto da coda RAM; equivalenza ai cutoff ammessi e niente mutable run/state nel replay. CAPTURE_START/additive payload tramite store, collector.py invariato. Consegna sul solo branch Task 8; main 687a20a invariato. G1_DATA INSUFFICIENTE.
 
 ## Task 9 — Dataset congelati e gate di qualità
 
@@ -217,4 +219,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 8 dal remoto investedge/sp2b-task-7 dopo gate SHA e integrazione verificati. Il Task 7 non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 9 dal remoto investedge/sp2b-task-8 dopo gate SHA. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.

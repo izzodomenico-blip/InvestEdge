@@ -26,11 +26,14 @@ from backend.app.data_providers.alpaca_metadata import (
     captures_as_of,
     check_ns,
     datetime_ns,
+    decode_published,
     decode_row,
+    published_select,
 )
 from backend.app.intraday.calendar import session_as_of
 from backend.app.intraday.contracts import EventEnvelope
 from backend.app.intraday.identity import read_identity_as_of
+from backend.app.intraday.replay import quote_state_from_rows, replay_as_of, select_versions
 
 MINUTE_NS = 60_000_000_000
 _COMMON = ("provider", "feed", "profile_id", "data_mode", "provenance", "replay_grade", "schema_version",
@@ -231,6 +234,12 @@ class IntradayStore:
         """
         if kind not in {'CAPTURE_START', 'ACK', 'GAP', 'BOOTSTRAP', 'CLOCK', 'STOP'}:
             raise StoreError('OBSERVATION_INVALID')
+        if kind == 'CAPTURE_START':
+            # Freeze public temporal limits with the new epoch, never borrow
+            # mutable runtime configuration when replaying an earlier capture.
+            payload = {**payload, 'continuity_policy': {'version': 'collector-continuity-v1',
+                'socket_silence_ns': self.archive.settings.alpaca_stream_silence_seconds * 1_000_000_000,
+                'lease_ns': self.archive.settings.alpaca_collector_lease_seconds * 1_000_000_000}}
         stamp = self.archive.now()
         envelope = EventEnvelope('alpaca', self.profile.feed, *self.namespace[:2], *self.namespace[2:],
             'EVENT', listing_id, f'collector:{kind}:{capture_id}', capture_id, 1,
@@ -371,40 +380,71 @@ class IntradayStore:
             result.append(item)
         # A total order within each logical observation/receipt, using visible evidence only.
         # Intake ordinals are comparable inside a capture; first visible ID orders separate captures.
-        captures = {}
-        for item in result:
-            key = (item["listing_id"], item["event_time_ns"], item["received_at_ns"], item["capture_id"])
-            captures[key] = min(captures.get(key, item["id"]), item["id"])
-        for item in result:
-            key = (item["listing_id"], item["event_time_ns"], item["received_at_ns"], item["capture_id"])
-            item["capture_order"] = captures[key]
-        def order(item):
-            return (item["received_at_ns"], item["capture_order"], item["capture_ingest_sequence"],
-                    item["ingest_sequence"], item["id"])
-        if not revisions:
-            latest = {}
-            for item in result:
-                key = (item["listing_id"], item["event_time_ns"])
-                previous = latest.get(key)
-                if previous is None or order(item) > order(previous):
-                    latest[key] = item
-            result = list(latest.values())
-        return sorted(result, key=lambda row: (row["event_time_ns"], row["available_at_ns"], *order(row)))
+        return select_versions(result, family=kind, cutoff_ns=cutoff_ns, revisions=revisions)
 
     def quote_state(self, listing_id, *, cutoff_ns, max_age_ns=2_000_000_000):
-        check_ns(max_age_ns)
         rows = self.read_as_of("QUOTE", cutoff_ns=cutoff_ns, listing_ids=(listing_id,))
-        if not rows:
-            return None
-        result = dict(rows[-1])
-        result["nbbo"] = self.profile.feed == "sip"
-        result["delayed"] = self.profile.feed == "delayed_sip"
-        result["size_conversion_attested"] = False
-        if cutoff_ns - result["event_time_ns"] > max_age_ns:
-            result.update(quality="QUARANTINED", reason_code="QUOTE_STALE")
-        result["executable"] = (result["quality"] == "VALID" and result["nbbo"] and
-                                result["payload"]["source"] == "STREAM")
-        return result
+        return quote_state_from_rows(rows, listing_id=listing_id, cutoff_ns=cutoff_ns, max_age_ns=max_age_ns)
+
+    def replay_as_of(self, *, cutoff_ns, listing_ids=None):
+        """Archive-only adapter; no provider calls or mutable run/collector evidence."""
+        from backend.app.intraday.events import EventStore
+        from backend.app.intraday.news import NewsStore
+        from backend.app.intraday.universe import UniverseService
+
+        check_ns(cutoff_ns)
+        rows = []
+        def add(table, values):
+            rows.extend({**row, 'table': table} for row in values)
+        for kind in ('BAR', 'QUOTE', 'STATUS', 'LULD'):
+            add('intraday_observations', self.read_as_of(kind, cutoff_ns=cutoff_ns, revisions=True))
+        options = {'clock_ns': self.archive.clock_ns, 'data_mode': self.data_mode,
+                   'provenance': self.provenance, 'replay_grade': self.replay_grade}
+        news = NewsStore(self.provider, **options).read_as_of(cutoff_ns=cutoff_ns, revisions=True)
+        add('intraday_news_versions', news)
+        add('intraday_news_links', [link for row in news for link in row['links']])
+        event_store = EventStore(self.provider, **options)
+        events = event_store.read_as_of(cutoff_ns=cutoff_ns, revisions=True)
+        add('intraday_event_versions', events)
+        for event in events:
+            doc = event_store._document(event)
+            add('intraday_capture_events', [{**doc, 'recorded_available_at_ns': doc['available_at_ns'],
+                                           'available_at_ns': event['available_at_ns']}])
+        add('intraday_capture_events', self.read_capture_as_of(cutoff_ns=cutoff_ns))
+        metadata_provenance = 'CAPTURED' if self.data_mode == 'REAL' else 'SYNTHETIC'
+        metadata_grade = 'STRICT_PIT' if self.data_mode == 'REAL' else 'RESEARCH_ONLY'
+        metadata_namespace = (self.profile.profile_id, self.data_mode, metadata_provenance, metadata_grade)
+        metadata_archive = AlpacaMetadataService(self.provider, clock_ns=self.archive.clock_ns, data_mode=self.data_mode,
+                                                provenance=metadata_provenance, replay_grade=metadata_grade)
+        for table in ('intraday_identity_versions', 'intraday_calendar_versions',
+                      'intraday_universe_snapshots', 'intraday_universe_members', 'intraday_capture_events'):
+            query = published_select(table) + ''' WHERE raw.profile_id=? AND raw.data_mode=?
+                AND raw.provenance=? AND raw.replay_grade=? AND raw.available_at_ns<=? AND pub.available_at_ns<=?
+                AND EXISTS(SELECT 1 FROM json_each(pub.payload_json,'$.references') ref
+                    WHERE json_extract(ref.value,'$.table')=? AND json_extract(ref.value,'$.id')=raw.id)'''
+            if table == 'intraday_capture_events' and metadata_namespace != self.namespace:
+                query += " AND json_extract(raw.payload_json,'$.metadata_kind') IN ('ASSETS','ASSET_CHUNK','CALENDAR')"
+            values = [decode_published(row, table, cutoff_ns)
+                      for row in self.connection.execute(query, (*metadata_namespace, cutoff_ns, cutoff_ns, table))]
+            if table == 'intraday_universe_snapshots':
+                for snapshot in values:
+                    UniverseService(metadata_archive).read(snapshot['id'], cutoff_ns=cutoff_ns)
+            add(table, [{**row, 'metadata_dependency': True} for row in values])
+        for source_namespace in dict.fromkeys((self.namespace, metadata_namespace)):
+            proof_rows = self.connection.execute('''SELECT * FROM intraday_capture_events
+                WHERE profile_id=? AND data_mode=? AND provenance=? AND replay_grade=? AND available_at_ns<=?
+                AND (kind='ADMISSION' OR json_extract(payload_json,'$.metadata_kind') IN ('PUBLICATION','COLLECTOR_PUBLICATION'))''',
+                (*source_namespace, cutoff_ns))
+            used_publications = {row.get('publication_id') for row in rows if row.get('metadata_dependency')}
+            add('intraday_capture_events', [{**decode_row(row), 'metadata_dependency': source_namespace != self.namespace}
+                for row in proof_rows if source_namespace == self.namespace or row['id'] in used_publications])
+        unique = {}
+        for row in rows:
+            key = (row['table'], row['id'])
+            if key not in unique or row['available_at_ns'] < unique[key]['available_at_ns']:
+                unique[key] = row
+        namespace = (self.profile.profile_id, self.profile.feed, self.data_mode, self.provenance, self.replay_grade)
+        return replay_as_of(unique.values(), cutoff_ns=cutoff_ns, listing_ids=listing_ids, namespace=namespace)
 
     def _finish(self, run, state, reason=None):
         self.connection.execute("UPDATE intraday_ingest_runs SET state=?,finished_at_ns=?,cursor_json=? WHERE id=?",

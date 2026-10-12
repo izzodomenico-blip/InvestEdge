@@ -59,6 +59,17 @@ def pages(kind):
     return json.loads((Path(__file__).parent / "fixtures" / "market_data" / f"alpaca_{kind}_pages.json").read_text())
 
 
+def test_capture_start_freezes_transport_policy_for_replay():
+    from test_intraday_collector import handshake, setup
+    s = setup(alpaca_stream_silence_seconds=5)
+    s.collector.start((s.listing,))
+    handshake(s)
+    start = next(row for row in s.store.read_capture_as_of(cutoff_ns=s.clock.now) if row['kind'] == 'CAPTURE_START')
+    assert start['payload']['continuity_policy']['socket_silence_ns'] == 5 * SECOND
+    s.store.archive.settings = replace(s.config, alpaca_stream_silence_seconds=100)
+    assert next(row for row in s.store.read_capture_as_of(cutoff_ns=s.clock.now) if row['kind'] == 'CAPTURE_START') == start
+
+
 def test_raw_is_invisible_until_post_commit_admission_and_receipt_hash():
     s = prepared()
     stamp = s.clock.now
