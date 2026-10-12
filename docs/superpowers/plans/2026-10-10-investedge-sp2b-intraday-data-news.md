@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–11 FATTI, prossimo Task 12 NON INIZIATO. Base Task 11/integrazione Task 10 b4284af4505e81f0ee5e32b0e69504bec31493d2 verificata; Task 11 162 frontend/1852 backend offline, ci/build, HC0/Ruff/pip/scanner/smoke PASS. Commit/push/FF in chiusura; proprio SHA nel registro successivo.
+**Stato:** approvati il 2026-10-10; Task 1–11 FATTI, prossimo Task 12 NON INIZIATO. Base Task 11/integrazione Task 10 b4284af4505e81f0ee5e32b0e69504bec31493d2 verificata; feature Task 11 37194f2f34e63865c8104929695b7a7852c3cc1a pubblicata e main FF verificato. Gate 162 frontend/1852 backend offline, ci/build, HC0/Ruff/pip/scanner/smoke e review PASS. Questo registro documentale completa l’integrazione prima del Task 12; proprio SHA nel registro successivo.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -191,6 +191,8 @@ Integrazione verificata 2026-10-12: feature 100e858c74dc5c63a5121d181dc577df6648
 **Commit:** feat: show intraday data quality and versioned news
 
 Chiusura 2026-10-12: 28 nuove regressioni/162 frontend finali e 1852 backend offline PASS; npm ci/build offline, audit 0 high/critical (1 low fuori scope), Ruff/pip/diff/scope/scanner PASS. Tre review tecniche PASS e visiva SHIP; smoke 1440/375 per entrambe le viste, keyboard/polling/covered-zero/ns e controlli entro limiti dopo fix fieldset nativo. Nessun CSS redesign o dipendenza modificata; base b4284af, push/FF richiesti.
+
+Integrazione verificata 2026-10-12: feature 37194f2f34e63865c8104929695b7a7852c3cc1a, push/gate SHA branch Task 11 PASS e fast-forward main da b4284af4505e81f0ee5e32b0e69504bec31493d2 PASS, SHA remoto main uguale feature. Questo registro è solo documentale, con ulteriore push/FF e gate SHA prima del Task 12.
 
 ## Task 12 — Audit e gate intraday parziale SP2b
 

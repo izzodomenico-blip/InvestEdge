@@ -6,6 +6,8 @@
 
 **Integrazione Task 10 (2026-10-12):** base Task 9/registro 3d4649ea754ba7d046dea63403f4e52764b62baa; feature 100e858c74dc5c63a5121d181dc577df66483775 pubblicata sul branch investedge/sp2b-task-10 e integrata con fast-forward su main remoto verificato. Gate 52/1852 finali offline, 1400 mirati precedenti, Ruff/pip/diff/scanner e tre review PASS. Questo registro documentale completa la consegna prima del Task 11, senza modifiche al codice o promozione G1_DATA.
 
+**Integrazione Task 11 (2026-10-12):** base Task 10/registro b4284af4505e81f0ee5e32b0e69504bec31493d2; feature 37194f2f34e63865c8104929695b7a7852c3cc1a pubblicata sul branch investedge/sp2b-task-11 e integrata con fast-forward su main remoto verificato. Gate 162 frontend/1852 backend offline, ci/build, HC0, Ruff/pip/diff/scanner e tre review tecniche PASS; review visiva SHIP. Questo registro documentale completa la consegna prima del Task 12, senza modifiche al codice o promozione G1_DATA.
+
 ## 1. Risultato e confini
 
 Fornire a SP3 lo stesso flusso causale di barre, quote, universo, news ed eventi sia in replay sia nella raccolta corrente. Ogni informazione ha provenienza, disponibilità, qualità e versione; un risultato congelato resta riproducibile dopo rettifiche o aggiornamenti.
