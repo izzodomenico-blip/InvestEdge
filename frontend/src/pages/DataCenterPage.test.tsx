@@ -315,6 +315,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-01T08:30:00Z"));
   mocked.apiGet.mockImplementation(async (path: string) => {
+    if (path === '/intraday/status') return { enabled: false, collector_enabled: false, profiles: [], budgets: [], capture_gaps: [], latest_quality: null, g1_data: 'INSUFFICIENTE', collector: { state: 'STOPPED', capture_id: null } };
     if (path === "/data/status") return dataStatus();
     if (path === "/assets") return [activeAsset];
     if (path === "/backups") return backups;
@@ -331,6 +332,18 @@ afterEach(() => {
 });
 
 describe("Data Center coverage", () => {
+  it('keeps intraday local status visible independently of the daily load', async () => {
+    mocked.apiGet.mockImplementation(async path => {
+      if (path === '/intraday/status') return { profiles: [], budgets: [], capture_gaps: [], latest_quality: null,
+        enabled: false, collector_enabled: false, g1_data: 'INSUFFICIENTE', collector: { state: 'STOPPED', capture_id: null } };
+      if (path === '/data/status') return new Promise(() => {});
+      return [];
+    });
+    render(<DataCenterPage />);
+    expect(await screen.findByText('G1 dati: INSUFFICIENTE')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Aggiorna metadata e calendario' })).toBeInTheDocument();
+    expect(mocked.apiPost).not.toHaveBeenCalled();
+  });
   it("shows coverage loading, then catalog parsing, resolution, tier and Trade Republic denominators", async () => {
     let resolveCoverage: (value: DataCoverage) => void = () => undefined;
     mocked.getDataCoverage.mockReturnValueOnce(

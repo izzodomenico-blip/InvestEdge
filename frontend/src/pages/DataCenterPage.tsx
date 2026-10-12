@@ -4,6 +4,7 @@ import { Database, DatabaseBackup, HardDriveDownload, KeyRound, RefreshCw, Serve
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader, PageHeaderAction } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { IntradayDataStatus } from '../components/IntradayDataStatus';
 import {
   ApiError,
   apiGet,
@@ -58,6 +59,10 @@ function sourceBadge(source: string | null, isReal: boolean) {
 }
 
 export function DataCenterPage() {
+  return <div className="space-y-6"><DailyDataCenter /><IntradayDataStatus /></div>;
+}
+
+function DailyDataCenter() {
   const [status, setStatus] = useState<DataStatus | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);

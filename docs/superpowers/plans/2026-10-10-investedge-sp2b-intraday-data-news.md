@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–10 FATTI, prossimo Task 11 NON INIZIATO. Base Task 10/integrazione Task 9 3d4649ea754ba7d046dea63403f4e52764b62baa verificata; feature Task 10 100e858c74dc5c63a5121d181dc577df66483775 pubblicata e main FF verificato. Gate 1400 mirati precedenti, 52/1852 finali offline, Ruff/pip/diff/scanner e tre review PASS. Questo registro documentale completa l’integrazione prima del Task 11; proprio SHA nel registro successivo.
+**Stato:** approvati il 2026-10-10; Task 1–11 FATTI, prossimo Task 12 NON INIZIATO. Base Task 11/integrazione Task 10 b4284af4505e81f0ee5e32b0e69504bec31493d2 verificata; Task 11 162 frontend/1852 backend offline, ci/build, HC0/Ruff/pip/scanner/smoke PASS. Commit/push/FF in chiusura; proprio SHA nel registro successivo.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -184,11 +184,13 @@ Integrazione verificata 2026-10-12: feature 100e858c74dc5c63a5121d181dc577df6648
 **Files create:** frontend/src/pages/NewsPage.test.tsx, frontend/src/components/IntradayDataStatus.tsx, frontend/src/components/IntradayDataStatus.test.tsx.
 **Files modify:** frontend/src/lib/api.ts, frontend/src/pages/DataCenterPage.tsx, frontend/src/pages/DataCenterPage.test.tsx, frontend/src/pages/NewsPage.tsx.
 **Produces:** consultazione feed/capacità/gap/qualità, manifest/periodi e news versionate al cutoff; comandi espliciti bounded via API nuove, inclusi refresh iniziale metadata/calendario, preview/conferma mapping e import checkpoint status verificabile.
-- [ ] RED: missing mostrato zero articoli, IEX/NON_PIT indicati READY, date versioni confuse, errore nascosto, risposta obsoleta e cancel tardivo; DB nuovo senza comando bootstrap o conferma automatica del mapping.
-- [ ] Implementare tipi omologhi a Pydantic, riuso jobs.ts invariato, AbortController, labels su feed/grade/capture e badge G1 distinto dal VALIDATO di SP1; loading/empty/error propri.
-- [ ] GREEN: polling/terminali/annullamento, filtro as-of, news versione/mapping, covered-zero, accessibilità tastiera e narrow viewport.
-- [ ] Test frontend completi/build offline/audit HC0; backend gate completo. Smoke locale con fixture/API sintetiche e rete esterna bloccata, nessun DB reale. Nessun CSS redesign/dipendenza frontend. Review e chiusura.
+- [x] RED: missing mostrato zero articoli, IEX/NON_PIT indicati READY, date versioni confuse, errore nascosto, risposta obsoleta e cancel tardivo; DB nuovo senza comando bootstrap o conferma automatica del mapping.
+- [x] Implementare tipi omologhi a Pydantic, riuso jobs.ts invariato, AbortController, labels su feed/grade/capture e badge G1 distinto dal VALIDATO di SP1; loading/empty/error propri.
+- [x] GREEN: polling/terminali/annullamento, filtro as-of, news versione/mapping, covered-zero, accessibilità tastiera e narrow viewport.
+- [x] Test frontend completi/build offline/audit HC0; backend gate completo. Smoke locale con fixture/API sintetiche e rete esterna bloccata, nessun DB reale. Nessun CSS redesign/dipendenza frontend. Review e chiusura.
 **Commit:** feat: show intraday data quality and versioned news
+
+Chiusura 2026-10-12: 28 nuove regressioni/162 frontend finali e 1852 backend offline PASS; npm ci/build offline, audit 0 high/critical (1 low fuori scope), Ruff/pip/diff/scope/scanner PASS. Tre review tecniche PASS e visiva SHIP; smoke 1440/375 per entrambe le viste, keyboard/polling/covered-zero/ns e controlli entro limiti dopo fix fieldset nativo. Nessun CSS redesign o dipendenza modificata; base b4284af, push/FF richiesti.
 
 ## Task 12 — Audit e gate intraday parziale SP2b
 
@@ -225,4 +227,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 11 dal remoto investedge/sp2b-task-10 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 12 dal remoto investedge/sp2b-task-11 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.

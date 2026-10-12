@@ -9,6 +9,152 @@ if (import.meta.env.DEV) {
 }
 
 export type DataMode = "REAL" | "DEMO";
+
+// Decimal strings preserve int64 nanoseconds and large source IDs in the browser.
+// The HTTP contract continues to use JSON integers; SP1 keeps its existing parser.
+export type IntradayNs = string;
+export type IntradayArchive = 'REAL' | 'RESEARCH' | 'DEMO';
+export type IntradayCapability = 'bars' | 'updated_bars' | 'quotes' | 'news' | 'status' | 'luld' | 'assets' | 'calendar' | 'corporate_actions' | 'events';
+export type IntradayNamespace = {
+  profile_id: string; data_mode: DataMode; provenance: 'CAPTURED' | 'HISTORICAL_CURRENT' | 'SYNTHETIC';
+  replay_grade: 'STRICT_PIT' | 'RESEARCH_ONLY';
+};
+export type IntradayProfile = {
+  provider: 'alpaca'; version: 'intraday-profile-v1'; feed: 'iex' | 'sip' | 'delayed_sip';
+  required_capabilities: IntradayCapability[]; attested_capabilities: IntradayCapability[]; quote_conditions: string[];
+  delay_ns: IntradayNs | null; max_symbols: number; max_connections: number; http_minute_limit: number;
+  http_daily_limit: number; http_monthly_limit: number; max_frame_bytes: number; max_queue_events: number;
+  max_archive_bytes: number | string;
+};
+export type IntradayCollector = {
+  state: 'STOPPED' | 'CONNECTING' | 'LIVE' | 'DEGRADED' | 'BACKOFF' | 'FAILED'; reason_code: string | null;
+  capture_id: string | null; pending_events: number; listing_states: Record<string, unknown>; g1_data: string;
+};
+export type IntradayStatus = {
+  enabled: boolean; collector_enabled: boolean; collector: IntradayCollector; g1_data: string;
+  profiles: { profile_id: string; profile: IntradayProfile; availability: Record<string, { state: string; reason_code: string | null; cooldown_until: string | null }> }[];
+  budgets: { window_kind: string; window_start: string; used_count: number; configured_limit: number; effective_limit: number; cooldown_until: string | null }[];
+  capture_gaps: { id: number | string; capture_id: string; profile_id: string; available_at_ns: IntradayNs;
+    publication_id: number | string; reason_code: string | null; start_at_ns: IntradayNs | null; end_at_ns: IntradayNs | null; missing_transport_channels: string[] | null }[];
+  latest_quality: { snapshot_id: number; digest: string; known_at_ns: IntradayNs; outcome: string; reasons: string[]; namespace: string[] } | null;
+};
+export type IntradayMetadataIn = { profile_id: string; profile?: IntradayProfile; start_date: string; end_date: string };
+export type IntradayIdentityIn = { profile_id: string; listing_id: number; metadata_capture_id: number; broker_asset_id: string;
+  capabilities: ('BAR' | 'QUOTE' | 'NEWS')[]; evidence_hash: string; validity_source: 'CURRENT_ASSETS' | 'OFFICIAL_NOTICE';
+  leveraged: 'YES' | 'NO' | 'UNKNOWN'; inverse: 'YES' | 'NO' | 'UNKNOWN'; valid_from_ns?: IntradayNs | null; valid_to_ns?: IntradayNs | null };
+export type IntradayIdentityPreview = { listing_id: number; broker_asset_id: string; ticker: string; venue: string; current_version_id: number | null; confirmation_token: string };
+export type IntradayIdentityApplyIn = IntradayIdentityIn & { confirmation_token: string };
+export type IntradayIdentityApplied = { listing_id: number; identity_version_id: number; status: 'CONFIRMED' };
+export type IntradayBackfillIn = IntradayNamespace & { data_mode: 'REAL'; provenance: 'HISTORICAL_CURRENT'; replay_grade: 'RESEARCH_ONLY';
+  listing_ids: number[]; start_at_ns: IntradayNs; end_at_ns: IntradayNs; asof_date: string;
+  types: ('BAR' | 'QUOTE' | 'NEWS' | 'CORPORATE_ACTION')[]; chunk_days: number; max_pages: number };
+export type IntradaySnapshotIn = IntradayNamespace & { listing_ids: number[]; start_at_ns: IntradayNs; end_at_ns: IntradayNs;
+  cutoff_ns: IntradayNs; policy_id: 'intraday-quality-v1'; benchmarks: Partial<Record<'market' | 'sector', number>> };
+export type IntradayQualityIn = IntradayNamespace & { snapshot_id: number };
+export type IntradayCollectorIn = { profile_id: string; listing_ids: number[]; benchmark_listing_ids: number[] };
+export type IntradayCheckpointIn = { profile_id: string; capture_id: string; authority: { source: 'UTP_SNAPSHOT'; contract_version: '4.0';
+  contract_sha256: string; evidence_hash: string; retention: 'ARCHIVE_ALLOWED'; channel_bindings: [number, string][]; capture_sha256: string };
+  document: Record<string, unknown> };
+export type IntradayNewsItem = { id: number | string; article_id: number | string; available_at_ns: IntradayNs; supersedes_id: number | string | null;
+  payload: { headline: string; summary?: string | null; content?: string | null; content_state?: string; source?: string; wire_source?: string;
+    source_article_id?: number | string; published_at_ns?: IntradayNs | null; updated_at_ns?: IntradayNs | null; url?: string | null;
+    version?: string; symbols?: string[]; rights?: Record<string, unknown>; language?: string; author?: string | null };
+  links: { listing_id: number | null; instrument_id: number | null; category: string; rule_version: string; cluster_id?: string;
+    payload: { target?: string; reason_code?: string; facts?: Record<string, unknown> } }[] };
+export type IntradayNewsPage = { items: IntradayNewsItem[]; total: number; offset: number; limit: number; next_offset: number | null;
+  cutoff_ns: IntradayNs; namespace: string[]; coverage: { state: 'MISSING' | 'COVERED_ZERO' | 'COVERED' | 'STALE' | 'DISABLED'; continuity_attested: boolean; reason_code?: string | null } };
+export type IntradaySnapshotPage = { snapshot_id: number; digest: string; known_at_ns: IntradayNs;
+  manifest: { namespace: string[]; start_at_ns: IntradayNs; end_at_ns: IntradayNs; cutoff_ns: IntradayNs; listing_ids: number[];
+    requested_listing_ids: number[]; benchmarks: Record<string, number>; [key: string]: unknown };
+  report: { outcome: string; g1_tech: string; technical_result: string; reasons: string[];
+    metrics: { raw: { planned: number; valid: number; coverage: number }; grid: { listing_id: number; session_date: string; minutes: number; planned: number; usable: number; coverage: number; exclusions: Record<string, number> }[]; [key: string]: unknown };
+    limits: Record<string, unknown> };
+  inputs: Record<string, unknown>[]; offset: number; limit: number; total: number; next_offset: number | null; input_type: string };
+
+/** Tokenize outside JSON strings before JSON.parse can round a large integer. */
+export function parseIntradayJSON(text: string): unknown {
+  let exact = '';
+  for (let cursor = 0; cursor < text.length;) {
+    if (text[cursor] === '"') {
+      const start = cursor++;
+      while (cursor < text.length) {
+        if (text[cursor] === '\\') { cursor += 2; continue; }
+        if (text[cursor++] === '"') break;
+      }
+      exact += text.slice(start, cursor);
+    } else if (text[cursor] === '-' || /[0-9]/.test(text[cursor])) {
+      const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(cursor))?.[0];
+      if (!token) throw new Error('JSON intraday non valido.');
+      exact += /^-?\d+$/.test(token) && (BigInt(token) > BigInt(Number.MAX_SAFE_INTEGER) || BigInt(token) < BigInt(Number.MIN_SAFE_INTEGER)) ? JSON.stringify(token) : token;
+      cursor += token.length;
+    } else { exact += text[cursor++]; }
+  }
+  return JSON.parse(exact, (key, value) => key.endsWith('_ns') && typeof value === 'number' ? String(value) : value);
+}
+
+export function serializeIntradayJSON(value: unknown, canonical = false): string {
+  function encode(item: unknown, key = ''): string {
+    if (item != null && (key.endsWith('_ns') || key === 'max_archive_bytes')) {
+      if (typeof item !== 'string' && !(typeof item === 'number' && Number.isSafeInteger(item))) throw new Error('Timestamp o limite non valido.');
+      const decimal = String(item);
+      if (!/^(0|[1-9]\d*)$/.test(decimal) || BigInt(decimal) > 9223372036854775807n) throw new Error('Timestamp o limite non valido.');
+      return decimal;
+    }
+    if (Array.isArray(item)) return '[' + item.map(value => encode(value ?? null)).join(',') + ']';
+    if (typeof item === 'object' && item !== null) {
+      const entries = Object.entries(item).filter(([, value]) => value !== undefined);
+      if (canonical) entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+      return '{' + entries.map(([name, value]) => JSON.stringify(name) + ':' + encode(value, name)).join(',') + '}';
+    }
+    if (typeof item === 'number' && !Number.isFinite(item)) throw new Error('Numero non valido.');
+    const encoded = JSON.stringify(item);
+    if (encoded === undefined) throw new Error('Richiesta non valida.');
+    return encoded;
+  }
+  return encode(value);
+}
+
+export async function intradayProfileId(profile: IntradayProfile): Promise<string> {
+  const bytes = new TextEncoder().encode(serializeIntradayJSON(profile, true));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+}
+export function intradayNamespace(archive: IntradayArchive, profile_id: string): IntradayNamespace {
+  return { profile_id, data_mode: archive === 'DEMO' ? 'DEMO' : 'REAL',
+    provenance: archive === 'DEMO' ? 'SYNTHETIC' : archive === 'RESEARCH' ? 'HISTORICAL_CURRENT' : 'CAPTURED',
+    replay_grade: archive === 'REAL' ? 'STRICT_PIT' : 'RESEARCH_ONLY' };
+}
+export function intradayDateNs(value: string): IntradayNs {
+  const ms = Date.parse(value.endsWith('Z') ? value : value + 'Z');
+  if (!Number.isSafeInteger(ms) || ms < 0) throw new Error('Orario UTC non valido.');
+  const ns = String(BigInt(ms) * 1000000n);
+  serializeIntradayJSON({ at_ns: ns });
+  return ns;
+}
+export function formatIntradayNs(value: IntradayNs | number | null | undefined): string {
+  if (value == null) return 'Non disponibile';
+  try {
+    if (typeof value === 'number' && !Number.isSafeInteger(value)) return 'Timestamp non leggibile';
+    const ns = BigInt(value);
+    return new Date(Number(ns / 1000000n)).toISOString() + ' (' + ns + ' ns)';
+  } catch { return 'Timestamp non leggibile'; }
+}
+export function intradayErrorMessage(error: unknown): string {
+  const messages: Record<string, string> = {
+    PROFILE_INVALID: 'Profilo non valido. Verifica la configurazione pubblica.',
+    MODE_MISMATCH: 'Archivio non compatibile. Verifica profilo e modalità.',
+    INVALID_REQUEST: 'Richiesta non valida. Verifica periodo e campi.', METADATA_INVALID: 'Metadata non validi. Ripeti la verifica.',
+    RESOURCE_NOT_FOUND: 'Dati locali non trovati. Verifica gli identificativi.', REAL_DATA_DISABLED: 'Dati Alpaca disabilitati nella configurazione.',
+    MISSING_CREDENTIAL: 'Provider non configurato. Completa la configurazione esterna.', FEED_NOT_ENTITLED: 'Capacità del feed non attestate.',
+    BUDGET_UNATTESTED: 'Budget non configurato.', PAGE_LIMIT: 'Limite di pagine raggiunto: raccolta parziale.',
+    COLLECTOR_ALREADY_OWNED: 'Collector gestito da un altro processo. Aggiorna lo stato.', COLLECTOR_NOT_RUNNING: 'Collector non attivo per questa cattura.',
+    IDENTITY_UNVERIFIED: 'Identità non confermata. Esegui preview e conferma.', CALENDAR_MISSING: 'Calendario mancante. Aggiorna i metadata.',
+  };
+  const code = apiReasonCode(error);
+  if (code && Object.prototype.hasOwnProperty.call(messages, code)) return messages[code];
+  if (error instanceof Error && (error.message === 'Elaborazione annullata.' || error.message === 'Elaborazione interrotta dal riavvio: avvia un nuovo calcolo.')) return error.message;
+  return 'Operazione intraday non riuscita. Verifica i campi e riprova.';
+}
 export type SignalTimeframe = "D" | "W" | "M";
 
 export type Signal = "STRONG_BUY" | "BUY" | "HOLD" | "REDUCE" | "SELL";
@@ -460,7 +606,8 @@ export type BacktestRunInput = BacktestSettingsInput & {
   strategy_name: BacktestStrategy;
 };
 
-export type JobKind = "BACKTEST" | "COMPARE" | "WALK_FORWARD" | "EVIDENCE" | "FEATURE_REFRESH" | "FX_BACKFILL" | "ML_TRAIN";
+export type JobKind = "BACKTEST" | "COMPARE" | "WALK_FORWARD" | "EVIDENCE" | "FEATURE_REFRESH" | "FX_BACKFILL" | "ML_TRAIN"
+  | "INTRADAY_METADATA" | "INTRADAY_BACKFILL" | "INTRADAY_SNAPSHOT" | "INTRADAY_QUALITY";
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
 export type JobOut = {
   id: number;
@@ -1238,7 +1385,7 @@ export async function apiGet<T>(path: string, init: { signal?: AbortSignal } = {
     throw await parseError(response);
   }
 
-  const payload = await response.json();
+  const payload = path.startsWith('/intraday/') ? parseIntradayJSON(await response.text()) : await response.json();
   init.signal?.throwIfAborted();
   return payload as T;
 }
@@ -1252,7 +1399,7 @@ export async function apiPost<T>(
       method: "POST",
       signal: init.signal,
       headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : path.startsWith('/intraday/') ? serializeIntradayJSON(body) : JSON.stringify(body),
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
@@ -1263,7 +1410,7 @@ export async function apiPost<T>(
     throw await parseError(response);
   }
 
-  const payload = await response.json();
+  const payload = path.startsWith('/intraday/') ? parseIntradayJSON(await response.text()) : await response.json();
   init.signal?.throwIfAborted();
   return payload as T;
 }
