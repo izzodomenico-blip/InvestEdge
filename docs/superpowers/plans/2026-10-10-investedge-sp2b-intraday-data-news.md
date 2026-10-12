@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–11 FATTI, prossimo Task 12 NON INIZIATO. Base Task 11/integrazione Task 10 b4284af4505e81f0ee5e32b0e69504bec31493d2 verificata; feature Task 11 37194f2f34e63865c8104929695b7a7852c3cc1a pubblicata e main FF verificato. Gate 162 frontend/1852 backend offline, ci/build, HC0/Ruff/pip/scanner/smoke e review PASS. Questo registro documentale completa l’integrazione prima del Task 12; proprio SHA nel registro successivo.
+**Stato:** approvati il 2026-10-10; Task 1–12 FATTI, G1_TECH PASS e G1_DATA INSUFFICIENTE. Base Task 12/integrazione Task 11 e5473166669043bfbc0f05baa4186ee966963b9f verificata. Gate 1874 backend/162 frontend offline, ci/build, HC0/Ruff/pip/scanner/smoke e review PASS; target indicativi di prestazione mancati e documentati nel report. Prossimo proposta spec/piano SP3 dopo gate SHA della consegna Task 12; commit/push/FF tecnico autorizzati, proprio SHA nel registro successivo. SP2b resta IN CORSO per il backlog.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -200,12 +200,14 @@ Integrazione verificata 2026-10-12: feature 37194f2f34e63865c8104929695b7a7852c3
 **Files create:** backend/scripts/intraday_data_smoke.py, docs/reports/<data>-sp2b-intraday-data-gate.md.
 **Files modify:** README.md; correzioni nei soli file toccati da Task 1–11 per rilievi review cumulativa; spec/piano/programma per evidenze e stato.
 **Produces:** report tecnico G1_TECH, stato reale G1_DATA con motivazione/manifest se disponibile, prestazioni e backlog restante.
-- [ ] Smoke offline §12 della spec, DB nuovo/protetto, rete bloccata; tempi/dimensione DB/memoria/throughput/lag/as-of registrati.
-- [ ] Audit cumulativo catena/allowlist/sentinelle/migrazioni, matrice §12 -> test; independent review causale/esecuzione/sicurezza e re-review dei fix TDD.
-- [ ] Suite backend/frontend completa, Ruff/pip check, build/install offline, audit HC0, diff check; nessun confronto con dati live nei test.
-- [ ] Verdetto separato: G1_TECH PASS/FAIL; G1_DATA READY/INSUFFICIENTE/NON_IDONEO su dati configurati e catturati, mai REAL dai fixture. Non avviare capture/attendere 20 sedute automaticamente.
-- [ ] Documentare richiesta di eventuale ff merge tecnico su main, poi spec/piano SP3; G1_DATA aperto resta prerequisito economico, SP6a richiede G1_DATA + G2. SP2b intero resta IN CORSO.
+- [x] Smoke offline §12 della spec, DB nuovo/protetto, rete bloccata; tempi/dimensione DB/memoria/throughput/lag/as-of registrati.
+- [x] Audit cumulativo catena/allowlist/sentinelle/migrazioni, matrice §12 -> test; independent review causale/esecuzione/sicurezza e re-review dei fix TDD.
+- [x] Suite backend/frontend completa, Ruff/pip check, build/install offline, audit HC0, diff check; nessun confronto con dati live nei test.
+- [x] Verdetto separato: G1_TECH PASS/FAIL; G1_DATA READY/INSUFFICIENTE/NON_IDONEO su dati configurati e catturati, mai REAL dai fixture. Non avviare capture/attendere 20 sedute automaticamente.
+- [x] Documentare richiesta di eventuale ff merge tecnico su main, poi spec/piano SP3; G1_DATA aperto resta prerequisito economico, SP6a richiede G1_DATA + G2. SP2b intero resta IN CORSO.
 **Commit:** chore: verify SP2b intraday data gate
+
+Chiusura 2026-10-12: **1874 backend /162 frontend offline PASS**, 22 regressioni nuove, ci/build offline, HC0, Ruff/pip/diff/scanner e review indipendenti PASS. Corretti stato collector scaduto, privacy dei job, costi di lookup/replay e contatore capacità O(N²); contatori atomici e migrazione sotto writer lock, senza modificare evidenze. Smoke 30×20 DEMO: 228.600 barre e quote, 914.531 membri, 915.131 occurrence, snapshot invariato dopo revisioni future, rete zero; collector fake 600/600, zero perdite. G1_TECH PASS, G1_DATA INSUFFICIENTE. Target indicativi mancati: replay 280,178 s/query p95 1005,879 ms/picco RAM 10,18 GiB; limiti e ripresa su backup sintetico nel [report](../../reports/2026-10-12-sp2b-intraday-data-gate.md). Commit/push/FF tecnico autorizzati; proprio SHA nel registro documentale successivo.
 
 ## Dopo il gate: addendum e completamento restante
 
@@ -229,4 +231,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 12 dal remoto investedge/sp2b-task-11 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** verifica SHA della consegna Task 12, poi proposta spec/piano SP3 intraday. Includere finestra/retention sostenibili e percorso timeline-only per i limiti di prestazione osservati. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate; SP6a richiede G1_DATA READY e G2.

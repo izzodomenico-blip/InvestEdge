@@ -42,6 +42,81 @@ def test_intraday_schema_is_additive_and_contains_required_columns(intraday_db):
     assert {"idx_intraday_observations_asof", "idx_intraday_news_asof", "idx_intraday_capture_asof"} <= indexes
 
 
+@pytest.mark.parametrize('table', ['intraday_universe_members', 'intraday_dataset_members'])
+def test_cumulative_member_capacity_counter_is_atomic_bounded_and_cannot_decrease(intraday_db, table):
+    rows = seed_graph(intraday_db)
+    counter = table + '_counts'
+    assert intraday_db.execute(f'SELECT member_count FROM {counter} WHERE snapshot_id=1').fetchone()[0] == 1
+    trigger = intraday_db.execute("SELECT sql FROM sqlite_master WHERE name=?", ('trg_' + table + '_capacity',)).fetchone()[0]
+    assert 'COUNT(*)' not in trigger.upper()
+    with pytest.raises(sqlite3.IntegrityError):
+        intraday_db.execute(f'UPDATE {counter} SET member_count=0 WHERE snapshot_id=1')
+    with pytest.raises(sqlite3.IntegrityError):
+        intraday_db.execute(f'DELETE FROM {counter} WHERE snapshot_id=1')
+    with pytest.raises(sqlite3.IntegrityError):
+        intraday_db.execute(f'INSERT OR REPLACE INTO {counter}(snapshot_id,member_count) VALUES (1,0)')
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(intraday_db, table, {**rows[table], 'id': 2, 'ingest_sequence': 2})
+    assert intraday_db.execute(f'SELECT member_count FROM {counter} WHERE snapshot_id=1').fetchone()[0] == 1
+
+
+def test_cumulative_counter_migration_backfills_existing_members_once(intraday_db):
+    from backend.app.database import INTRADAY_INDEX_SCHEMA, INTRADAY_SCHEMA
+    seed_graph(intraday_db)
+    tables = ['intraday_universe_members_counts', 'intraday_dataset_members_counts']
+    # Reconstruct a pre-counter database without changing any evidence rows.
+    for counter in tables:
+        intraday_db.execute(f'DROP TABLE {counter}')
+    intraday_db.executescript(INTRADAY_SCHEMA + INTRADAY_INDEX_SCHEMA)
+    for counter in tables:
+        assert intraday_db.execute(f'SELECT member_count FROM {counter} WHERE snapshot_id=1').fetchone()[0] == 1
+        intraday_db.execute(f'UPDATE {counter} SET member_count=2 WHERE snapshot_id=1')
+    intraday_db.commit()
+    intraday_db.executescript(INTRADAY_SCHEMA + INTRADAY_INDEX_SCHEMA)
+    for counter in tables:
+        assert intraday_db.execute(f'SELECT member_count FROM {counter} WHERE snapshot_id=1').fetchone()[0] == 2
+
+
+def test_cumulative_counter_increment_rolls_back_with_member_insert(intraday_db):
+    rows = seed_graph(intraday_db)
+    insert(intraday_db, 'intraday_dataset_snapshots', {**rows['intraday_dataset_snapshots'], 'id': 2, 'ingest_sequence': 2})
+    intraday_db.commit()
+    intraday_db.execute('BEGIN IMMEDIATE')
+    insert(intraday_db, 'intraday_dataset_members', {**rows['intraday_dataset_members'], 'id': 2, 'ingest_sequence': 2, 'snapshot_id': 2})
+    assert intraday_db.execute('SELECT member_count FROM intraday_dataset_members_counts WHERE snapshot_id=2').fetchone()[0] == 1
+    intraday_db.rollback()
+    assert intraday_db.execute('SELECT COUNT(*) FROM intraday_dataset_members WHERE snapshot_id=2').fetchone()[0] == 0
+    assert intraday_db.execute('SELECT member_count FROM intraday_dataset_members_counts WHERE snapshot_id=2').fetchone()[0] == 0
+
+
+def test_cumulative_counter_install_holds_writer_lock_through_guard_replacement(intraday_db):
+    from backend.app.database import INTRADAY_INDEX_SCHEMA
+    rows = seed_graph(intraday_db)
+    insert(intraday_db, 'intraday_dataset_snapshots', {**rows['intraday_dataset_snapshots'], 'id': 2, 'ingest_sequence': 2})
+    intraday_db.commit()
+    path = intraday_db.execute('PRAGMA database_list').fetchone()[2]
+    writer = sqlite3.connect(path, timeout=.01)
+    attempts = []
+
+    def during_install(sql):
+        if sql.strip() == 'DROP TRIGGER IF EXISTS trg_intraday_dataset_members_capacity;':
+            try:
+                insert(writer, 'intraday_dataset_members', {**rows['intraday_dataset_members'], 'id': 2, 'ingest_sequence': 2, 'snapshot_id': 2})
+                attempts.append('unlocked')
+                writer.commit()
+            except sqlite3.OperationalError:
+                attempts.append('locked')
+
+    intraday_db.set_trace_callback(during_install)
+    try:
+        intraday_db.executescript(INTRADAY_INDEX_SCHEMA)
+    finally:
+        intraday_db.set_trace_callback(None)
+        writer.close()
+    assert attempts == ['locked']
+    assert intraday_db.execute('SELECT member_count FROM intraday_dataset_members_counts WHERE snapshot_id=2').fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("table", IMMUTABLE_TABLES)
 @pytest.mark.parametrize("operation", ["update", "delete", "replace"])
 def test_evidence_is_immutable_even_without_recursive_triggers(intraday_db, table, operation):

@@ -18,7 +18,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal, get_args
 
 from backend.app.config import get_settings
@@ -129,12 +129,20 @@ def _immediate(connection: sqlite3.Connection) -> Iterator[None]:
     connection.commit()
 
 
-def _record(row: sqlite3.Row | tuple[Any, ...]) -> JobRecord:
+def _protect_intraday(kind: str, payload: Any) -> None:
+    if kind.startswith("INTRADAY_"):
+        # Lazy import: handlers register with this module at application boot.
+        from backend.app.intraday.handlers import public_response
+
+        public_response(payload)
+
+
+def _record(row: sqlite3.Row | tuple[Any, ...], *, public: bool = True) -> JobRecord:
     (
         job_id, kind, status, params_json, progress, result_ref, result_json, error_code, error_message,
         cancel_requested, created_at, started_at, finished_at,
     ) = tuple(row)
-    return JobRecord(
+    record = JobRecord(
         id=int(job_id),
         kind=kind,
         status=status,
@@ -149,11 +157,14 @@ def _record(row: sqlite3.Row | tuple[Any, ...]) -> JobRecord:
         started_at=started_at,
         finished_at=finished_at,
     )
+    if public:
+        _protect_intraday(kind, asdict(record))
+    return record
 
 
-def _select(connection: sqlite3.Connection, job_id: int) -> JobRecord | None:
+def _select(connection: sqlite3.Connection, job_id: int, *, public: bool = True) -> JobRecord | None:
     row = connection.execute(f"SELECT {_COLUMNS} FROM lab_jobs WHERE id = ?", (job_id,)).fetchone()
-    return None if row is None else _record(row)
+    return None if row is None else _record(row, public=public)
 
 
 class JobService:
@@ -170,6 +181,7 @@ class JobService:
         """Accoda (o restituisce il job identico ancora aperto); in modalita inline lo esegue subito."""
         if kind not in JOB_KINDS or kind not in _HANDLERS:
             raise LabError("JOB_KIND_UNAVAILABLE", "Tipo di job non disponibile.")
+        _protect_intraday(kind, dict(params))
         params_json = json.dumps(dict(params), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         params_hash = hashlib.sha256(params_json.encode("utf-8")).hexdigest()
         with _connection() as connection:
@@ -221,7 +233,8 @@ class JobService:
     def cancel(self, job_id: int) -> JobRecord:
         with _connection() as connection:
             with _immediate(connection):
-                record = _select(connection, job_id)
+                # Cancellation must still take effect when archived output is now private.
+                record = _select(connection, job_id, public=False)
                 if record is None:
                     raise JobNotFound()
                 if record.status == "QUEUED":
@@ -317,16 +330,18 @@ class JobService:
 
     def _execute(self, job_id: int) -> None:
         with _connection() as connection:
-            record = _select(connection, job_id)
+            record = _select(connection, job_id, public=False)
             if record is None:
                 return
             status: JobStatus = "SUCCEEDED"
             result_ref = result_json = error_code = error_message = None
             try:
+                _protect_intraday(record.kind, record.params)
                 handler = _HANDLERS.get(record.kind)
                 if handler is None:
                     raise LabError("JOB_KIND_UNAVAILABLE", "Tipo di job non disponibile.")
                 outcome = handler(JobContext(job_id, connection), record.params)
+                _protect_intraday(record.kind, asdict(outcome))
                 result_ref = outcome.result_ref
                 if outcome.result is not None:
                     result_json = json.dumps(outcome.result, separators=(",", ":"), allow_nan=False)

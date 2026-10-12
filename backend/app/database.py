@@ -1058,12 +1058,45 @@ def _intraday_schema() -> tuple[str, str]:
                 indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_{column}_finite_{operation.lower()}
                     BEFORE {operation} ON {table} WHEN {finite}
                     BEGIN SELECT RAISE(ABORT,'INTRADAY_INVALID_JSON'); END;""")
+    # Install/backfill cardinality and replace legacy guards under one writer lock.
+    # executescript otherwise autocommits each statement, admitting a race window.
+    indexes.append('BEGIN IMMEDIATE;')
     for table, parent in (("intraday_universe_members","intraday_universe_snapshots"),
                           ("intraday_dataset_members","intraday_dataset_snapshots")):
-        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_capacity
-            BEFORE INSERT ON {table} WHEN (SELECT COUNT(*) FROM {table} WHERE snapshot_id=NEW.snapshot_id)
-                >=(SELECT member_count FROM {parent} WHERE id=NEW.snapshot_id)
+        counter = table + '_counts'
+        # Operational cardinality, excluded from frozen evidence. SQLite maintains
+        # it in the same INSERT transaction; COUNT per member was quadratic.
+        sql.append(f"""CREATE TABLE IF NOT EXISTS {counter} (
+            snapshot_id INTEGER PRIMARY KEY REFERENCES {parent}(id) ON DELETE RESTRICT,
+            member_count INTEGER NOT NULL CHECK(typeof(member_count)='integer' AND member_count>=0));""")
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{parent}_counter
+            AFTER INSERT ON {parent} BEGIN
+                INSERT INTO {counter}(snapshot_id,member_count) VALUES (NEW.id,0);
+            END;""")
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{counter}_no_decrease
+            BEFORE UPDATE ON {counter} WHEN NEW.snapshot_id<>OLD.snapshot_id OR NEW.member_count<OLD.member_count
             BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{counter}_no_delete
+            BEFORE DELETE ON {counter} BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{counter}_no_replace
+            BEFORE INSERT ON {counter} WHEN EXISTS(SELECT 1 FROM {counter} WHERE snapshot_id=NEW.snapshot_id)
+            BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+        # Backfill only missing counters, once per legacy snapshot; existing state
+        # is never lowered or reset by subsequent migrations.
+        indexes.append(f"""INSERT INTO {counter}(snapshot_id,member_count)
+            SELECT parent.id,(SELECT COUNT(*) FROM {table} WHERE snapshot_id=parent.id)
+            FROM {parent} parent WHERE NOT EXISTS(SELECT 1 FROM {counter} WHERE snapshot_id=parent.id);""")
+        indexes.append(f"DROP TRIGGER IF EXISTS trg_{table}_capacity;")
+        indexes.append(f"""CREATE TRIGGER trg_{table}_capacity
+            BEFORE INSERT ON {table} WHEN NOT EXISTS(
+                SELECT 1 FROM {counter} counter JOIN {parent} parent ON parent.id=counter.snapshot_id
+                WHERE counter.snapshot_id=NEW.snapshot_id AND counter.member_count<parent.member_count)
+            BEGIN SELECT RAISE(ABORT,'INTRADAY_APPEND_ONLY'); END;""")
+        indexes.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_count_insert
+            AFTER INSERT ON {table} BEGIN
+                UPDATE {counter} SET member_count=member_count+1 WHERE snapshot_id=NEW.snapshot_id;
+            END;""")
+    indexes.append('COMMIT;')
 
     # Versioned mappings must agree with the canonical listing owner.
     for table in ("intraday_identity_versions", "intraday_news_links"):
@@ -1100,11 +1133,17 @@ def _intraday_schema() -> tuple[str, str]:
                       raw.availability_floor_ns,COALESCE(raw.available_at_ns,0)))
             BEGIN SELECT RAISE(ABORT,'INTRADAY_INVALID_ADMISSION'); END;""")
     for name,table,columns in (
+        ("observations_logical","intraday_observations","profile_id,data_mode,provenance,replay_grade,listing_id,kind,logical_key,capture_id"),
+        ("observations_sequence","intraday_observations","ingest_sequence"),
+        ("capture_sequence","intraday_capture_events","ingest_sequence"),
         ("observations_asof","intraday_observations","profile_id,data_mode,listing_id,kind,available_at_ns,event_time_ns"),
         ("news_asof","intraday_news_versions","profile_id,data_mode,article_id,available_at_ns"),
         ("capture_asof","intraday_capture_events","capture_id,kind,available_at_ns"),
     ):
         indexes.append(f"CREATE INDEX IF NOT EXISTS idx_intraday_{name} ON {table}({columns});")
+    indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_observation_admission
+        ON intraday_capture_events(observation_id,kind,available_at_ns)
+        WHERE observation_id IS NOT NULL;""")
     return "\n".join(sql), "\n".join(indexes)
 
 

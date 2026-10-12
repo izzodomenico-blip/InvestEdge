@@ -283,7 +283,12 @@ def replay_as_of(rows, *, cutoff_ns, listing_ids=None, namespace=None, quote_max
     observations = {kind: select_versions(families.get(kind, []), family=kind, cutoff_ns=cutoff_ns,
                                          listing_ids=listing_ids) for kind in _MARKET}
     quote_listings = {row['listing_id'] for row in observations['QUOTE']}
-    quotes = {listing: quote_state_from_rows(families.get('QUOTE', []), listing_id=listing,
+    # Global causal/namespace validation has already run. Preserve every revision,
+    # but avoid copying the entire quote tape again for each listing.
+    quote_rows = {}
+    for row in families.get('QUOTE', []):
+        quote_rows.setdefault(row['listing_id'], []).append(row)
+    quotes = {listing: quote_state_from_rows(quote_rows[listing], listing_id=listing,
               cutoff_ns=cutoff_ns, max_age_ns=quote_max_age_ns) for listing in sorted(quote_listings)}
     news = select_versions(families.get('NEWS', []), family='NEWS', cutoff_ns=cutoff_ns, listing_ids=listing_ids)
     events = select_versions(families.get('EVENT', []), family='EVENT', cutoff_ns=cutoff_ns)

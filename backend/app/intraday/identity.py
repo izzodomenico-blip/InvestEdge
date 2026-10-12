@@ -55,6 +55,11 @@ def read_identity_as_of(connection, listing_id, effective_at_ns, cutoff_ns, *, p
                         provenance="CAPTURED", replay_grade="STRICT_PIT"):
     namespace = scope(profile_id, data_mode, provenance, replay_grade)
     versions = _versions(connection, cutoff_ns, namespace)
+    return _identity_from_versions(versions, listing_id, effective_at_ns)
+
+
+def _identity_from_versions(versions, listing_id, effective_at_ns):
+    """Resolve one listing while retaining collision checks across the whole scope."""
     row = _at([item for item in versions if item["listing_id"] == listing_id], effective_at_ns)
     if row is None:
         return None

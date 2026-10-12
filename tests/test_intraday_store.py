@@ -55,6 +55,125 @@ def read(s, cutoff=None, kind="BAR"):
     return s.store.read_as_of(kind, cutoff_ns=s.clock.now if cutoff is None else cutoff)
 
 
+def test_cumulative_global_sequence_uses_two_indexed_maxima_without_scanning_history():
+    s = prepared()
+    s.store.persist((event(s), event(s, kind='QUOTE')))
+    before = s.store._sequence(None)
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    assert s.store._sequence(None) == before
+    s.db.set_trace_callback(None)
+    query = queries[-1]
+    plan = ' '.join(row['detail'] for row in s.db.execute('EXPLAIN QUERY PLAN ' + query))
+    assert 'UNION' not in query.upper()
+    assert 'SEARCH intraday_observations' in plan and 'SEARCH intraday_capture_events' in plan
+    assert 'SCAN intraday_' not in plan
+    values = [row[0] for row in s.db.execute('SELECT ingest_sequence FROM intraday_observations UNION ALL SELECT ingest_sequence FROM intraday_capture_events')]
+    assert before == max(values) + 1
+
+
+def test_cumulative_admission_and_duplicate_queries_use_exact_source_indexes():
+    s = prepared()
+    ids = s.store.persist((event(s),), admit=False)
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    s.store.admit(ids)
+    s.store.persist((event(s),))
+    s.db.set_trace_callback(None)
+    admissions = [q for q in queries if 'SELECT 1 FROM intraday_capture_events' in q and 'observation_id=' in q]
+    duplicates = [q for q in queries if 'SELECT * FROM intraday_observations WHERE' in q and 'logical_key=' in q]
+    assert admissions and duplicates
+    for query in admissions + duplicates:
+        plan = ' '.join(row['detail'] for row in s.db.execute('EXPLAIN QUERY PLAN ' + query))
+        assert 'SCAN intraday_' not in plan
+        assert ('observation_id=?' in plan if query in admissions else 'logical_key=?' in plan), plan
+
+
+def test_cumulative_batch_decodes_identity_versions_once_per_knowledge_cutoff(monkeypatch):
+    from backend.app.intraday import identity
+    s = prepared(second=True)
+    original, calls = identity._versions, []
+
+    def measured(*args, **kwargs):
+        calls.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(identity, '_versions', measured)
+    quote = event(s, kind='QUOTE')
+    s.store.persist((quote, replace(quote, listing_id=s.second, logical_key='QUOTE:second:one')))
+    assert calls == [s.clock.now]
+    s.clock.now += SECOND
+    s.store.persist((replace(quote, received_at_ns=s.clock.now, persisted_at_ns=s.clock.now),))
+    assert calls == [s.clock.now - SECOND, s.clock.now]
+
+
+@pytest.mark.parametrize('external', [False, True])
+def test_cumulative_batch_identity_reuse_invalidates_on_database_writes(monkeypatch, tmp_path, external):
+    import copy
+    import sqlite3
+
+    from backend.app.intraday.identity import IdentityService
+    from backend.app.models import AlpacaIdentityApplyIn, AlpacaIdentityPreviewIn
+
+    s = prepared()
+    if external:
+        path = tmp_path / 'isolated.db'
+        primary = sqlite3.connect(path)
+        primary.row_factory = sqlite3.Row
+        s.db.backup(primary)
+        s.db.close()
+        s.db = s.store.connection = s.store.archive.connection = s.store.provider.connection = primary
+        writer = sqlite3.connect(path)
+        writer.row_factory = sqlite3.Row
+        writer.execute('PRAGMA foreign_keys=ON')
+    else:
+        writer = s.db
+    archive = copy.copy(s.store.archive)
+    archive.connection = writer
+    service = IdentityService(archive)
+    capture_id = writer.execute("SELECT id FROM intraday_capture_events WHERE json_extract(payload_json,'$.metadata_kind')='ASSETS' LIMIT 1").fetchone()[0]
+    broker = archive.read_capture(capture_id, 'ASSETS')['assets'][0]['id']
+    request = AlpacaIdentityPreviewIn(metadata_capture_id=capture_id, broker_asset_id=broker,
+                                      capabilities=['NEWS'], evidence_hash='b' * 64)
+    original, calls = s.store._prepare, []
+
+    def change_after_first(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append(1)
+        if len(calls) == 1:
+            preview = service.preview(s.listing, request)
+            service.apply(s.listing, AlpacaIdentityApplyIn(**request.model_dump(), confirmation_token=preview.confirmation_token))
+        return result
+
+    monkeypatch.setattr(s.store, '_prepare', change_after_first)
+    s.store.persist((event(s, kind='QUOTE'), event(s, kind='QUOTE', at=OPEN + 1)))
+    assert [row[0] for row in s.db.execute('SELECT quality FROM intraday_observations ORDER BY id')] == ['VALID', 'QUARANTINED']
+    if external:
+        writer.close()
+    s.db.close()
+
+
+def test_cumulative_scoped_read_decodes_only_requested_listings(monkeypatch):
+    from backend.app.intraday import store
+    s = prepared(second=True)
+    quote = event(s, kind='QUOTE')
+    s.store.persist((quote, replace(quote, listing_id=s.second, logical_key='QUOTE:second:one')))
+    original, seen = store.decode_row, []
+
+    def measured(value):
+        if 'listing_id' in value:
+            seen.append(value['listing_id'])
+        return original(value)
+
+    expected = [row for row in read(s, kind='QUOTE') if row['listing_id'] == s.listing]
+    monkeypatch.setattr(store, 'decode_row', measured)
+    assert s.store.read_as_of('QUOTE', cutoff_ns=s.clock.now, listing_ids=(s.listing, s.listing)) == expected
+    assert set(seen) == {s.listing}
+    seen.clear()
+    assert s.store.read_as_of('QUOTE', cutoff_ns=s.clock.now, listing_ids=()) == []
+    assert not seen
+
+
 def pages(kind):
     return json.loads((Path(__file__).parent / "fixtures" / "market_data" / f"alpaca_{kind}_pages.json").read_text())
 

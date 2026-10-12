@@ -312,20 +312,40 @@ class CollectorRuntime:
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._error = None
+        self._published_at_ns = self._valid_until_ns = 0
         self._state = {'state': 'STOPPED', 'reason_code': None, 'capture_id': None,
                        'pending_events': 0, 'listing_states': {}, 'g1_data': 'INSUFFICIENTE'}
 
     def status(self):
         with self._state_lock:
-            return copy.deepcopy(self._state)
+            state = copy.deepcopy(self._state)
+            published, deadline = self._published_at_ns, self._valid_until_ns
+        now = clock_ns()
+        if state['state'] == 'LIVE' and (now < published or now >= deadline):
+            expired = [row for row in state['listing_states'].values() if row.get('expires_at_ns', 0) <= now]
+            state.update(state='DEGRADED', reason_code='STATUS_BOOTSTRAP_UNAVAILABLE' if expired else 'CAPTURE_GAP')
+            for row in state['listing_states'].values():
+                row['live_eligible'] = False
+                if row in expired:
+                    row.update(state='UNKNOWN', reason_code='STATUS_BOOTSTRAP_UNAVAILABLE')
+        return state
 
     def owns_capture(self, profile_id, capture_id):
         return (self._key is not None and self._key[0] == profile_id and self._thread is not None
                 and self._thread.is_alive() and self.status()['capture_id'] == capture_id)
 
-    def _publish(self, state):
+    def _publish(self, state, *, collector=None):
+        stamp = clock_ns()
+        deadline = stamp
+        if state['state'] == 'LIVE' and collector is not None:
+            transport = collector._last_transport
+            expiries = [row.get('expires_at_ns', stamp) for row in state['listing_states'].values()]
+            if {'market', 'news'} <= transport.keys() and expiries:
+                silence = collector.settings.alpaca_stream_silence_seconds * 1_000_000_000
+                deadline = min(*expiries, *(transport[channel] + silence for channel in ('market', 'news')))
         with self._state_lock:
             self._state = copy.deepcopy(state)
+            self._published_at_ns, self._valid_until_ns = stamp, deadline
 
     def start(self, params):
         key = (params['profile_id'], tuple(sorted(set(params['listing_ids'] + params['benchmark_listing_ids']))))
@@ -362,7 +382,7 @@ class CollectorRuntime:
                     return open_socket(**kwargs)
                 collector = Collector(store.provider, clock_ns=lambda: clock_ns(), socket_factory=guarded_open)
                 try:
-                    self._publish(collector.start(params['listing_ids'], benchmark_listing_ids=params['benchmark_listing_ids']))
+                    self._publish(collector.start(params['listing_ids'], benchmark_listing_ids=params['benchmark_listing_ids']), collector=collector)
                     if self.status()['state'] == 'FAILED':
                         raise OperationError(self.status()['reason_code'])
                     self._ready.set()
@@ -372,7 +392,7 @@ class CollectorRuntime:
                             break
                         for channel in ('market', 'news'):
                             collector.receive(channel, timeout=.05)
-                        self._publish(collector.step())
+                        self._publish(collector.step(), collector=collector)
                         if self.status()['state'] in ('STOPPED', 'FAILED'):
                             break
                 finally:
@@ -422,22 +442,31 @@ def stop_active_collector():
 
 
 def collector_status(connection, profile_id=None):
-    sql = 'SELECT state,capture_id,lease_expires_at_ns FROM intraday_collector_state'
+    sql = "SELECT profile_id,state,capture_id,lease_expires_at_ns FROM intraday_collector_state WHERE data_mode='REAL'"
     params = ()
     if profile_id is not None:
-        sql += ' WHERE profile_id=?'
+        sql += ' AND profile_id=?'
         params = (profile_id,)
     row = connection.execute(sql + ' ORDER BY id DESC LIMIT 1', params).fetchone()
+    local = None
     if _runtime is not None and (profile_id is None or _runtime._key is not None and _runtime._key[0] == profile_id):
         local = _runtime.status()
-        if row is None or row['lease_expires_at_ns'] <= clock_ns() or row['capture_id'] == local['capture_id']:
+        if local['state'] in ('STOPPED', 'FAILED') and (row is None or row['capture_id'] == local['capture_id']):
+            return local
+        owns = getattr(_runtime, 'owns_capture', None)
+        if (row is not None and row['capture_id'] == local['capture_id']
+                and row['lease_expires_at_ns'] > clock_ns()
+                and callable(owns) and owns(row['profile_id'], row['capture_id'])):
             return local
     state = {'state': 'STOPPED', 'reason_code': None, 'capture_id': None,
              'pending_events': 0, 'listing_states': {}, 'g1_data': 'INSUFFICIENTE'}
     if row is not None:
         state.update({key: row[key] for key in ('state', 'capture_id')})
-        if state['state'] != 'STOPPED' and row['lease_expires_at_ns'] <= clock_ns():
+        if state['state'] not in ('STOPPED', 'FAILED') and (row['lease_expires_at_ns'] <= clock_ns()
+                or local is not None and row['capture_id'] == local['capture_id']):
             state.update(state='DEGRADED', reason_code='CAPTURE_GAP')
+    elif local is not None and local['state'] not in ('STOPPED', 'FAILED'):
+        state.update(state='DEGRADED', reason_code='CAPTURE_GAP', capture_id=local['capture_id'])
     return state
 
 

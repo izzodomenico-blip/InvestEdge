@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib
 import random
+from dataclasses import replace
 
 import pytest
 from test_intraday_store import SECOND, event, prepared
@@ -19,6 +20,25 @@ TABLES = {'BAR': 'intraday_observations', 'QUOTE': 'intraday_observations',
 
 def api():
     return importlib.import_module('backend.app.intraday.replay')
+
+
+def test_cumulative_quote_projection_has_linear_input_volume_after_global_validation(monkeypatch):
+    s = prepared(second=True)
+    quote = event(s, kind='QUOTE')
+    s.store.persist((quote, replace(quote, listing_id=s.second, logical_key=f'QUOTE:{s.second}:sample')))
+    timeline = s.store.replay_as_of(cutoff_ns=s.clock.now)['timeline']
+    original = api().quote_state_from_rows
+    volumes = []
+
+    def measured(rows, **options):
+        values = list(rows)
+        volumes.append(len(values))
+        return original(values, **options)
+
+    monkeypatch.setattr(api(), 'quote_state_from_rows', measured)
+    result = api().replay_as_of(timeline, cutoff_ns=s.clock.now)
+    assert set(result['quotes']) == {s.listing, s.second}
+    assert sum(volumes) == len(result['observations']['QUOTE'])
 
 
 def row(family='BAR', *, at=10, received=20, available=21, row_id=1, capture='capture-a', intake=1, **changes):

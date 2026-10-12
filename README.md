@@ -4,6 +4,21 @@ InvestEdge e una web app locale per analisi investimenti su azioni, ETF, cripto 
 
 La fase attuale include backend FastAPI, database SQLite, frontend React/Vite/TypeScript/Tailwind, analisi tecnica avanzata, scoring spiegabile, portafoglio simulato, paper trading, backtest, confronto multi-strategia, pianificatore di allocazione capitale, integrazione dati reali opzionale con cache e modulo news/sentiment. Include un modulo ML sperimentale sulla pipeline condivisa; collegamenti a broker e trading automatico restano nei sottoprogetti successivi.
 
+## Dati intraday Alpaca — stato SP2b
+
+Data Center espone feed, capacità, budget, capture/GAP, namespace e snapshot di qualità; News consente letture versionate al cutoff. Bootstrap metadata/calendario, mapping preview/conferma, backfill, collector e checkpoint sono comandi espliciti. I job intraday usano la coda condivisa; il collector ha un owner separato e lo stato LIVE scade con lease, checkpoint e continuità dei due canali.
+
+Il [report del gate tecnico](docs/reports/2026-10-12-sp2b-intraday-data-gate.md) distingue G1_TECH da **G1_DATA INSUFFICIENTE**. Fixture, storico corrente e LIVE non certificano dati REAL o redditività. Il programma prosegue con spec/piano SP3 per holding 15/30 minuti; Alpaca paper senza leva richiede G1_DATA READY e G2.
+
+Smoke offline riproducibile, con dipendenze già installate e un file assoluto **nuovo** nello scratch:
+
+```powershell
+$env:INVESTEDGE_DB_PATH = '<scratch-assoluto>/sp2b-smoke-nuovo.db'
+& './backend/.venv/Scripts/python.exe' -m backend.scripts.intraday_data_smoke
+```
+
+30 simboli × 20 sedute, inclusa una mezza giornata, producono 228.600 barre e altrettante quote campionate DEMO; rete bloccata e database reale protetto. `--quick` esegue il percorso ridotto. Il benchmark non rappresenta un SIP tick tape completo e non avvia trading o raccolta live. Dettagli, prestazioni e verifiche nel report; ordine dei lavori in `PROGRAMMA-OPERATIVO.md`.
+
 ## Avvio rapido (one-click)
 
 Su Windows, doppio click su `Avvia-InvestEdge.bat` nella cartella del progetto. Lo script `scripts/launcher.ps1`:

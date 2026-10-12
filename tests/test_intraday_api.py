@@ -12,6 +12,89 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize('cause', ['checkpoint', 'transport', 'rollback'])
+def test_cumulative_runtime_copy_expires_from_proofs_even_with_live_thread_and_lease(monkeypatch, cause):
+    from backend.app.intraday import handlers
+    second = 1_000_000_000
+    clock = SimpleNamespace(now=25 * second)
+    monkeypatch.setattr(handlers, 'clock_ns', lambda: clock.now)
+    runtime = handlers.CollectorRuntime()
+    state = {'state': 'LIVE', 'reason_code': None, 'capture_id': 'capture', 'pending_events': 0,
+             'listing_states': {'1': {'state': 'NORMAL', 'expires_at_ns': 29 * second if cause == 'checkpoint' else 100 * second,
+                                      'live_eligible': True}}, 'g1_data': 'INSUFFICIENTE'}
+    collector = SimpleNamespace(_last_transport={'market': 0, 'news': 0},
+                                settings=SimpleNamespace(alpaca_stream_silence_seconds=30))
+    runtime._publish(state, collector=collector)
+    assert runtime.status()['state'] == 'LIVE'
+    clock.now = 24 * second if cause == 'rollback' else (29 if cause == 'checkpoint' else 31) * second
+    result = runtime.status()
+    assert result['state'] == 'DEGRADED'
+    assert all(not row['live_eligible'] for row in result['listing_states'].values())
+    assert state['state'] == 'LIVE'  # Copy aging does not rewrite published evidence.
+
+
+@pytest.mark.parametrize('expired,alive', [(True, True), (False, False), (True, False)])
+def test_cumulative_status_never_exposes_local_live_after_lease_or_thread_loss(monkeypatch, expired, alive):
+    import sqlite3
+
+    from backend.app.intraday import handlers
+    db = sqlite3.connect(':memory:')
+    db.row_factory = sqlite3.Row
+    db.execute('CREATE TABLE intraday_collector_state(id INTEGER,profile_id TEXT,data_mode TEXT,state TEXT,capture_id TEXT,lease_expires_at_ns INTEGER,owner_nonce TEXT)')
+    db.execute("INSERT INTO intraday_collector_state VALUES(1,'profile','REAL','LIVE','capture',?, 'owner')", (9 if expired else 20,))
+    stale = {'state': 'LIVE', 'reason_code': None, 'capture_id': 'capture', 'pending_events': 0,
+             'listing_states': {'1': {'live_eligible': True}}, 'g1_data': 'INSUFFICIENTE'}
+    runtime = SimpleNamespace(_key=('profile', (1,)), _thread=SimpleNamespace(is_alive=lambda: alive),
+                              status=lambda: stale, owns_capture=lambda *args: alive)
+    monkeypatch.setattr(handlers, '_runtime', runtime)
+    monkeypatch.setattr(handlers, 'clock_ns', lambda: 10)
+    result = handlers.collector_status(db, 'profile')
+    assert result['state'] == 'DEGRADED'
+    assert not result['listing_states']
+    assert result['reason_code'] == 'CAPTURE_GAP'
+    db.close()
+
+
+@pytest.mark.parametrize('operation', ['get', 'list', 'cancel'])
+def test_cumulative_intraday_jobs_recheck_rotated_inventory_on_shared_routes(client, monkeypatch, operation):
+    from backend.app.api import lab_routes
+    from backend.app.database import get_connection
+    from backend.app.intraday import handlers
+    from backend.app.lab import jobs
+    service = jobs.JobService('thread')
+    value = uuid.uuid4().hex + uuid.uuid4().hex
+    record = service.enqueue('INTRADAY_METADATA', {'profile_id': value, 'start_date': '2026-10-12', 'end_date': '2026-10-12'})
+    monkeypatch.setattr(lab_routes, 'get_job_service', lambda: service)
+    rotated = replace(jobs.get_settings(), alpaca_api_secret_key=value)
+    monkeypatch.setattr(handlers, 'get_settings', lambda: rotated)
+    if operation == 'get':
+        response = client.get('/lab/jobs/' + str(record.id))
+    elif operation == 'list':
+        response = client.get('/lab/jobs')
+    else:
+        response = client.post('/lab/jobs/' + str(record.id) + '/cancel')
+    assert response.status_code == 422
+    assert value not in response.text
+    if operation == 'cancel':
+        with get_connection() as db:
+            assert db.execute('SELECT status FROM lab_jobs WHERE id=?', (record.id,)).fetchone()[0] == 'CANCELLED'
+
+
+def test_cumulative_intraday_enqueue_checks_inventory_before_hash_and_write(client, monkeypatch):
+    from backend.app.database import get_connection
+    from backend.app.intraday import handlers
+    from backend.app.lab import jobs
+    value = uuid.uuid4().hex + uuid.uuid4().hex
+    rotated = replace(jobs.get_settings(), alpaca_api_secret_key=value)
+    monkeypatch.setattr(handlers, 'get_settings', lambda: rotated)
+    with get_connection() as db:
+        before = db.execute('SELECT COUNT(*) FROM lab_jobs').fetchone()[0]
+    with pytest.raises(handlers.OperationError, match='METADATA_INVALID'):
+        jobs.JobService('thread').enqueue('INTRADAY_METADATA', {'profile_id': value, 'start_date': '2026-10-12', 'end_date': '2026-10-12'})
+    with get_connection() as db:
+        assert db.execute('SELECT COUNT(*) FROM lab_jobs').fetchone()[0] == before
+
+
 def test_disabled_status_and_boot_are_read_only(client, monkeypatch):
     from backend.app.data_providers.alpaca_market import AlpacaMarketProvider
     from backend.app.database import get_connection

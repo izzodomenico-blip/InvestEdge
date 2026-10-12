@@ -29,6 +29,7 @@ from backend.app.data_providers.alpaca_metadata import (
     decode_published,
     decode_row,
     published_select,
+    scope,
 )
 from backend.app.intraday.calendar import session_as_of
 from backend.app.intraday.contracts import EventEnvelope
@@ -79,9 +80,9 @@ class IntradayStore:
 
     def _sequence(self, run):
         return self.connection.execute("""
-            SELECT COALESCE(MAX(ingest_sequence),0)+1 FROM (
-              SELECT ingest_sequence FROM intraday_observations
-              UNION ALL SELECT ingest_sequence FROM intraday_capture_events)
+            SELECT MAX(
+              COALESCE((SELECT MAX(ingest_sequence) FROM intraday_observations),0),
+              COALESCE((SELECT MAX(ingest_sequence) FROM intraday_capture_events),0)) + 1
         """).fetchone()[0]
 
     def _run(self, run):
@@ -114,7 +115,7 @@ class IntradayStore:
         self.connection.execute("UPDATE intraday_ingest_runs SET accepted_count=accepted_count+1 WHERE id=?", (run,))
         return result
 
-    def _prepare(self, envelope):
+    def _prepare(self, envelope, *, identity_reader=None):
         if not isinstance(envelope, EventEnvelope) or envelope.kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
         if ((envelope.profile_id, envelope.data_mode, envelope.provenance, envelope.replay_grade) != self.namespace or
@@ -158,8 +159,9 @@ class IntradayStore:
                     reason = "QUOTE_METADATA_MISSING"
         metadata_scope = {"data_mode": self.data_mode, "provenance": "CAPTURED" if self.data_mode == "REAL" else "SYNTHETIC",
                           "replay_grade": "STRICT_PIT" if self.data_mode == "REAL" else "RESEARCH_ONLY"}
-        identity = read_identity_as_of(self.connection, envelope.listing_id, envelope.event_time_ns,
-                                      envelope.received_at_ns, profile_id=self.profile.profile_id, **metadata_scope)
+        reader = read_identity_as_of if identity_reader is None else identity_reader
+        identity = reader(self.connection, envelope.listing_id, envelope.event_time_ns,
+                          envelope.received_at_ns, profile_id=self.profile.profile_id, **metadata_scope)
         if envelope.kind in {"STATUS", "LULD"}:
             if self.profile.feed != "sip" or envelope.kind.lower() not in self.profile.attested_capabilities:
                 reason = "FEED_NOT_ENTITLED"
@@ -203,7 +205,20 @@ class IntradayStore:
         values = tuple(islice(iter(envelopes), max(0, cap) + 1))
         if not values or len(values) > cap:
             raise StoreError("OBSERVATION_INVALID")
-        prepared = [self._prepare(envelope) for envelope in values]
+        from backend.app.intraday import identity
+
+        version_cache = {}
+
+        def batch_identity(connection, listing, effective, cutoff, **namespace):
+            # Bounded to this call/cutoff. Both local and other-connection writes
+            # invalidate reuse; every resolution still checks all listing collisions.
+            key = (scope(**namespace), cutoff, connection.total_changes,
+                   connection.execute('PRAGMA data_version').fetchone()[0])
+            if key not in version_cache:
+                version_cache[key] = identity._versions(connection, cutoff, key[0])
+            return identity._identity_from_versions(version_cache[key], listing, effective)
+
+        prepared = [self._prepare(envelope, identity_reader=batch_identity) for envelope in values]
         self._begin()
         try:
             run = run_id if run_id is not None else self.archive.begin_run()
@@ -348,14 +363,22 @@ class IntradayStore:
         check_ns(cutoff_ns)
         if kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
-        rows = self.connection.execute("""
+        sql = """
             SELECT raw.*, proof.id AS proof_id, proof.payload_json AS proof_json, proof.payload_hash AS proof_hash,
               proof.available_at_ns AS proof_available
             FROM intraday_observations raw JOIN intraday_capture_events proof
               ON proof.observation_id=raw.id AND proof.kind='ADMISSION'
             WHERE raw.profile_id=? AND raw.data_mode=? AND raw.provenance=? AND raw.replay_grade=?
-              AND raw.kind=? AND proof.available_at_ns<=? ORDER BY proof.available_at_ns,raw.received_at_ns,raw.ingest_sequence,raw.id
-        """, (*self.namespace, kind, cutoff_ns))
+              AND raw.kind=? AND proof.available_at_ns<=?
+        """
+        params = (*self.namespace, kind, cutoff_ns)
+        if listing_ids is not None:
+            listing_ids = tuple(listing_ids)
+            if not listing_ids:
+                return []
+            sql += f" AND raw.listing_id IN ({','.join('?' for _ in listing_ids)})"
+            params += listing_ids
+        rows = self.connection.execute(sql + ' ORDER BY proof.available_at_ns,raw.received_at_ns,raw.ingest_sequence,raw.id', params)
         result = []
         for row in rows:
             raw = dict(row)
