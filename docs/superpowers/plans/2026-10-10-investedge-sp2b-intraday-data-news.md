@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10; Task 1–7 FATTI, prossimo Task 8 NON INIZIATO. Base Task 7 verificata 701017e90e21572385cb06ed6c8b5b4bee40aa2d (registro integrazione Task 6); consegna e fast-forward main Task 7 richiesti esplicitamente, esito/SHA nel registro successivo.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10; Task 1–7 FATTI, prossimo Task 8 NON INIZIATO. Base Task 7 verificata 701017e90e21572385cb06ed6c8b5b4bee40aa2d (registro integrazione Task 6); feature Task 7 582b9b9f9bd4455b7a837be93855836bd35ea94b pubblicata e integrata in main con fast-forward verificato; questo registro documentale sarà pubblicato e integrato, SHA proprio registrato dal Task 8.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -132,7 +132,7 @@ Chiusura 2026-10-11: 98 focus, 484 mirati e 1593 backend offline PASS; Ruff/pip/
 - [x] Leak test entrambi i segreti in auth/error/echo; stop/start idempotenti e shutdown pulito. Gate/review, zero socket reale/ordine.
 **Commit:** feat: capture Alpaca streams with explicit continuity
 
-Chiusura 2026-10-12: 688 mirati e 1678 backend offline PASS, zero rete esterna inattesa; Ruff/pip/diff/scanner Fase 2/tre review PASS. websockets==17.2 già installato e pinnato, host dati fissi/no redirect/retry implicito, receipt prima coda, write watchdog bounded. Collector esplicito con lease/cap globali/quota fisica e riserva; controls RAW+publication, PONG liveness congelati e confini GAP/restart riproducibili. ACK completi + barriera entrambi i buffer + checkpoint post-ACK necessario a LIVE; HALTED resta escluso. Migrazione additiva e pre-SP2b verificata; nessun bootstrap al boot/rete reale/ordine. Fast-forward main autorizzato, registrazione dopo gate remoto. G1_DATA INSUFFICIENTE.
+Chiusura 2026-10-12: 688 mirati e 1678 backend offline PASS, zero rete esterna inattesa; Ruff/pip/diff/scanner Fase 2/tre review PASS. websockets==17.2 già installato e pinnato, host dati fissi/no redirect/retry implicito, receipt prima coda, write watchdog bounded. Collector esplicito con lease/cap globali/quota fisica e riserva; controls RAW+publication, PONG liveness congelati e confini GAP/restart riproducibili. ACK completi + barriera entrambi i buffer + checkpoint post-ACK necessario a LIVE; HALTED resta escluso. Migrazione additiva e pre-SP2b verificata; nessun bootstrap al boot/rete reale/ordine. Feature 582b9b9f9bd4455b7a837be93855836bd35ea94b e fast-forward main verificati. Questo commit documenta l'integrazione e sarà pubblicato/fast-forwardato; G1_DATA INSUFFICIENTE.
 
 ## Task 8 — Replay as-of unico e invarianti causali
 
