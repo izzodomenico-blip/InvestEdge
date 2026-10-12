@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–9 FATTI, prossimo Task 10 NON INIZIATO. Task 8 feature f39244849138647b6953c1d781193609d3133057 e main FF verificati; Task 9 feature 66ce090ae0b2855a7fe84152e5de092142744055, gate 899/1798/Ruff/pip/diff/scan e 3 review PASS, push branch e main FF verificati 2026-10-12. Questo registro documentale completa l’integrazione prima del Task 10.
+**Stato:** approvati il 2026-10-10; Task 1–10 FATTI, prossimo Task 11 NON INIZIATO. Base Task 10/integrazione Task 9 3d4649ea754ba7d046dea63403f4e52764b62baa verificata; Task 10 1400 mirati precedenti, 52/1852 finali offline, Ruff/pip e tre review PASS. Commit/push/FF e scanner in chiusura; SHA proprio nel registro successivo.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -168,11 +168,13 @@ Chiusura 2026-10-12: 49 regressioni nuove; 899 mirati e 1798 backend offline PAS
 **Files create:** backend/app/intraday/handlers.py, backend/app/api/intraday_routes.py, backend/app/models/intraday.py, tests/test_intraday_api.py, tests/test_intraday_jobs.py.
 **Files modify:** backend/app/database.py, backend/app/main.py, backend/app/lab/jobs.py, backend/app/models/lab.py, backend/app/models/__init__.py, tests/test_lab_jobs.py, tests/test_api.py.
 **Produces:** route della spec §10, quattro nuovi kind job e schema migrate compatibile; stato collector distinto dai JobOut.
-- [ ] RED: kind CHECK rifiuta nuovo job, migration perde queued/running, 202 trattato sincrono, cancel pubblica snapshot parziale; start al boot/GET compie rete.
-- [ ] Implementare rebuild controllato del solo CHECK lab_jobs se necessario, preservando ID/FK/risultati/deduplica e trigger/indici; test DB storico con job di tutti gli stati.
-- [ ] GREEN: DB vuoto -> metadata/refresh (config/budget, senza calendario preesistente) -> preview/apply identità -> backfill RESEARCH_ONLY; start CONNECTING con ack/cattura -> checkpoint status raccordato senza gap -> LIVE/nuova capture. Precheck dei prerequisiti per le operazioni successive prima della rete, 422/404/409 sanitizzati, terminali/restart/cancel/dedup, GET senza side effect; no params segreti/URL.
-- [ ] Import con flag disabilitati non avvia collector/socket; SP1 worker continua FIFO e regressioni restart conservate. Gate completo/review.
+- [x] RED: kind CHECK rifiuta nuovo job, migration perde queued/running, 202 trattato sincrono, cancel pubblica snapshot parziale; start al boot/GET compie rete.
+- [x] Implementare rebuild controllato del solo CHECK lab_jobs se necessario, preservando ID/FK/risultati/deduplica e trigger/indici; test DB storico con job di tutti gli stati.
+- [x] GREEN: DB vuoto -> metadata/refresh (config/budget, senza calendario preesistente) -> preview/apply identità -> backfill RESEARCH_ONLY; start CONNECTING con ack/cattura -> checkpoint status raccordato senza gap -> LIVE/nuova capture. Precheck dei prerequisiti per le operazioni successive prima della rete, 422/404/409 sanitizzati, terminali/restart/cancel/dedup, GET senza side effect; no params segreti/URL.
+- [x] Import con flag disabilitati non avvia collector/socket; SP1 worker continua FIFO e regressioni restart conservate. Gate completo/review.
 **Commit:** feat: expose bounded intraday jobs and data APIs
+
+Chiusura 2026-10-12: 52 regressioni finali e 1852 backend finali offline PASS; precedenti 1400 cumulativi PASS, zero rete esterna inattesa. Migrazione compatibile, API bounded/as-of, NEW kind JobOut centrale senza edit models/lab.py, collector distinto, cancellazione e restart; tre review PASS. Sono incluse coverage news e correzioni di paginazione/ownership. Push/FF autorizzati; registro SHA proprio successivo.
 
 ## Task 11 — Stato dati e news nelle viste esistenti
 
@@ -221,4 +223,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 10 dal remoto investedge/sp2b-task-9 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 11 dal remoto investedge/sp2b-task-10 dopo gate SHA. Commit/push/merge FF di ogni task richiesti il 2026-10-12. Il piano non autorizza ordini, credenziali, spese, raccolta live o riduzione dei gate.

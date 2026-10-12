@@ -260,6 +260,24 @@ class _RecordingJobService:
         self.events.append("jobs-stop")
 
 
+def test_lifespan_stops_collector_then_jobs_even_if_collector_cleanup_fails(monkeypatch):
+    from backend.app import main
+    events = []
+    monkeypatch.setattr(main, 'prepare_database', lambda **kwargs: events.append('prepare'))
+    monkeypatch.setattr(main, 'get_job_service', lambda: _RecordingJobService(events))
+    def stop():
+        events.append('collector-stop')
+        raise RuntimeError('cleanup unavailable')
+    monkeypatch.setattr(main, 'stop_active_collector', stop)
+    async def run():
+        async with main.lifespan(None):
+            events.append('yield')
+    import pytest
+    with pytest.raises(RuntimeError, match='cleanup unavailable'):
+        asyncio.run(run())
+    assert events == ['prepare', 'jobs-recover', 'jobs-start', 'yield', 'collector-stop', 'jobs-stop']
+
+
 def test_lifespan_backs_up_before_initializing_outside_tests(monkeypatch) -> None:
     from backend.app import main
 

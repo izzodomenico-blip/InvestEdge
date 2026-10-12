@@ -26,7 +26,10 @@ from backend.app.database import get_connection
 from backend.app.lab.contracts import LabError
 from backend.app.services.common import now_utc
 
-JobKind = Literal["BACKTEST", "COMPARE", "WALK_FORWARD", "EVIDENCE", "FEATURE_REFRESH", "FX_BACKFILL", "ML_TRAIN"]
+JobKind = Literal[
+    "BACKTEST", "COMPARE", "WALK_FORWARD", "EVIDENCE", "FEATURE_REFRESH", "FX_BACKFILL", "ML_TRAIN",
+    "INTRADAY_METADATA", "INTRADAY_BACKFILL", "INTRADAY_SNAPSHOT", "INTRADAY_QUALITY",
+]
 JobStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "INTERRUPTED"]
 JobExecutor = Literal["thread", "inline"]
 JOB_KINDS: frozenset[str] = frozenset(get_args(JobKind))

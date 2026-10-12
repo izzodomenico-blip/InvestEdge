@@ -6,13 +6,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.api.intraday_routes import router as intraday_router
 from backend.app.api.lab_routes import router as lab_router
 from backend.app.api.routes import router
 from backend.app.config import ROOT_DIR, get_settings
+from backend.app.intraday.handlers import OperationError, stop_active_collector
 from backend.app.lab.jobs import get_job_service
 from backend.app.services.backup_service import prepare_database
 
@@ -31,7 +35,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        jobs.stop()
+        try:
+            stop_active_collector()
+        finally:
+            jobs.stop()
 
 
 def create_app() -> FastAPI:
@@ -59,8 +66,20 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error", "type": exc.__class__.__name__},
         )
 
+    @application.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
+        if request.url.path == '/intraday' or request.url.path.startswith('/intraday/'):
+            return JSONResponse(status_code=422, content={'detail': {'reason_code': 'INVALID_REQUEST'}})
+        return await request_validation_exception_handler(request, exc)
+
+    @application.exception_handler(OperationError)
+    async def intraday_error_handler(_: Request, exc: OperationError):
+        code = 404 if exc.code == 'RESOURCE_NOT_FOUND' else 422 if exc.code in ('INVALID_REQUEST', 'METADATA_INVALID') else 409
+        return JSONResponse(status_code=code, content={'detail': {'reason_code': exc.code, 'message': exc.message}})
+
     application.include_router(router)
     application.include_router(lab_router)
+    application.include_router(intraday_router)
 
     if os.getenv("INVESTEDGE_SERVE_FRONTEND", "0") == "1":
         _mount_frontend(application)

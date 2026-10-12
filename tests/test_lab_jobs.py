@@ -43,6 +43,29 @@ def _wait_for(service: JobService, job_id: int, statuses: set[str], timeout: flo
         time.sleep(0.02)
 
 
+def test_intraday_and_sp1_share_fifo_and_restart_rules(lab_connection, handlers):
+    seen = []
+    for kind in ('EVIDENCE', 'INTRADAY_QUALITY', 'ML_TRAIN'):
+        register_job_handler(kind, lambda context, params: (seen.append(params['order']), JobOutcome())[1])
+    service = JobService('thread')
+    first = service.enqueue('EVIDENCE', {'order': 1})
+    interrupted = service.enqueue('INTRADAY_QUALITY', {'order': 0})
+    lab_connection.execute("UPDATE lab_jobs SET status='RUNNING' WHERE id=?", (interrupted.id,))
+    lab_connection.commit()
+    second = service.enqueue('INTRADAY_QUALITY', {'order': 2})
+    third = service.enqueue('ML_TRAIN', {'order': 3})
+    assert service.recover_interrupted() == 1
+    assert service.get(interrupted.id).status == 'INTERRUPTED'
+    assert service.get(first.id).status == 'QUEUED'
+    try:
+        service.start()
+        assert _wait_for(service, third.id, {'SUCCEEDED'}).status == 'SUCCEEDED'
+        assert seen == [1, 2, 3]
+        assert service.get(second.id).status == 'SUCCEEDED'
+    finally:
+        service.stop()
+
+
 def test_inline_job_runs_and_stores_result(lab_connection: sqlite3.Connection, handlers: dict) -> None:
     seen: list[tuple[int, dict]] = []
 

@@ -820,7 +820,8 @@ CREATE TABLE IF NOT EXISTS features_daily (
 CREATE TABLE IF NOT EXISTS lab_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL CHECK(kind IN ('BACKTEST', 'COMPARE', 'WALK_FORWARD', 'EVIDENCE',
-                                      'FEATURE_REFRESH', 'FX_BACKFILL', 'ML_TRAIN')),
+                                      'FEATURE_REFRESH', 'FX_BACKFILL', 'ML_TRAIN',
+                                      'INTRADAY_METADATA', 'INTRADAY_BACKFILL', 'INTRADAY_SNAPSHOT', 'INTRADAY_QUALITY')),
     status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED')),
     params_json TEXT NOT NULL,
     params_hash TEXT NOT NULL CHECK(length(params_hash) = 64),
@@ -1746,7 +1747,89 @@ def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
     return {row["name"] for row in rows}
 
 
+def _migrate_intraday_job_kinds(connection: sqlite3.Connection) -> None:
+    """Widen only the recognized kind CHECK, preserving user schema and history."""
+    import re
+
+    additions = ('INTRADAY_METADATA', 'INTRADAY_BACKFILL', 'INTRADAY_SNAPSHOT', 'INTRADAY_QUALITY')
+    legacy = {'BACKTEST', 'COMPARE', 'WALK_FORWARD', 'EVIDENCE', 'FEATURE_REFRESH', 'FX_BACKFILL', 'ML_TRAIN'}
+    pattern = re.compile(
+        r"\bCHECK\s*\(\s*(?:kind|\"kind\"|`kind`|\[kind\])\s+IN\s*\(\s*"
+        r"(?P<values>'(?:''|[^'])*'(?:\s*,\s*'(?:''|[^'])*')*)\s*\)\s*\)", re.I,
+    )
+
+    def schema():
+        row = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='lab_jobs'").fetchone()
+        if row is None:
+            return None
+        sql = row[0]
+        ignored = [m.span() for m in re.finditer(
+            r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|--[^\r\n]*|/\*[\s\S]*?\*/", sql,
+        )]
+        checks = [m for m in pattern.finditer(sql) if not any(a <= m.start() < b for a, b in ignored)]
+        if len(checks) != 1:
+            raise sqlite3.OperationalError('LAB_JOBS_MIGRATION_SCHEMA_UNSUPPORTED')
+        check = checks[0]
+        existing = {v.replace("''", "'") for v in re.findall(r"'((?:''|[^'])*)'", check['values'])}
+        if not legacy <= existing:
+            raise sqlite3.OperationalError('LAB_JOBS_MIGRATION_SCHEMA_UNSUPPORTED')
+        missing = [kind for kind in additions if kind not in existing]
+        if not missing:
+            return None
+        expanded = sql[:check.end('values')] + ''.join(", '" + kind + "'" for kind in missing) + sql[check.end('values'):]
+        expanded, count = re.subn(
+            r'\ACREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:lab_jobs|"lab_jobs"|`lab_jobs`|\[lab_jobs\])(?=\s*\()',
+            'CREATE TABLE "_lab_jobs_intraday_upgrade"', expanded, count=1, flags=re.I,
+        )
+        if count != 1:
+            raise sqlite3.OperationalError('LAB_JOBS_MIGRATION_SCHEMA_UNSUPPORTED')
+        return expanded
+
+    if schema() is None:
+        return
+    if connection.in_transaction:
+        raise sqlite3.OperationalError('LAB_JOBS_MIGRATION_REQUIRES_AUTOCOMMIT')
+    foreign_keys = connection.execute('PRAGMA foreign_keys').fetchone()[0]
+    legacy_alter = connection.execute('PRAGMA legacy_alter_table').fetchone()[0]
+    try:
+        connection.execute('PRAGMA foreign_keys=OFF')
+        connection.execute('PRAGMA legacy_alter_table=ON')
+        connection.execute('BEGIN IMMEDIATE')
+        expanded = schema()
+        if expanded is None:
+            connection.commit()
+            return
+        dependencies = [row[0] for row in connection.execute('''SELECT sql FROM sqlite_master
+            WHERE tbl_name='lab_jobs' AND type IN ('index','trigger') AND sql IS NOT NULL
+            ORDER BY CASE type WHEN 'index' THEN 0 ELSE 1 END,name''')]
+        columns = ','.join('"' + row[1].replace('"', '""') + '"' for row in connection.execute('PRAGMA table_info(lab_jobs)'))
+        sequence = connection.execute("SELECT MAX(seq) FROM sqlite_sequence WHERE name='lab_jobs'").fetchone()[0]
+        connection.execute(expanded)
+        connection.execute(f'INSERT INTO "_lab_jobs_intraday_upgrade" ({columns}) SELECT {columns} FROM lab_jobs')
+        connection.execute('DROP TABLE lab_jobs')
+        connection.execute('ALTER TABLE "_lab_jobs_intraday_upgrade" RENAME TO lab_jobs')
+        for statement in dependencies:
+            connection.execute(statement)
+        if sequence is not None:
+            current = connection.execute("SELECT MAX(seq) FROM sqlite_sequence WHERE name='lab_jobs'").fetchone()[0]
+            high_water = max(sequence, current or 0)
+            cursor = connection.execute("UPDATE sqlite_sequence SET seq=? WHERE name='lab_jobs'", (high_water,))
+            if cursor.rowcount == 0:
+                connection.execute("INSERT INTO sqlite_sequence(name,seq) VALUES('lab_jobs',?)", (high_water,))
+        if connection.execute('PRAGMA foreign_key_check').fetchone() is not None:
+            raise sqlite3.IntegrityError('LAB_JOBS_MIGRATION_FOREIGN_KEY')
+        connection.commit()
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.execute(f'PRAGMA legacy_alter_table={legacy_alter}')
+        connection.execute(f'PRAGMA foreign_keys={foreign_keys}')
+
+
 def migrate_db(connection: sqlite3.Connection) -> None:
+    _migrate_intraday_job_kinds(connection)
     asset_columns_before = _table_columns(connection, "assets")
     position_columns_before = _table_columns(connection, "portfolio_positions")
     order_columns_before = _table_columns(connection, "simulated_orders")
