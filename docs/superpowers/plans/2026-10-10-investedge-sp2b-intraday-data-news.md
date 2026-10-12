@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** spec/piano approvati dall'utente il 2026-10-10 con «Procedi con il piano»; Task 1–6 FATTI, prossimo Task 7 NON INIZIATO. Feature Task 6 2478b1d082c45f8dd92d1eeb0c71663d5466f38e pubblicata e integrata in main con fast-forward verificato; registro documentale successivo sullo stesso branch, SHA corrente da verificare al Task 7.
+**Stato:** spec/piano approvati dall'utente il 2026-10-10; Task 1–7 FATTI, prossimo Task 8 NON INIZIATO. Base Task 7 verificata 701017e90e21572385cb06ed6c8b5b4bee40aa2d (registro integrazione Task 6); consegna e fast-forward main Task 7 richiesti esplicitamente, esito/SHA nel registro successivo.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -126,11 +126,13 @@ Chiusura 2026-10-11: 98 focus, 484 mirati e 1593 backend offline PASS; Ruff/pip/
 **Files create:** backend/app/data_providers/alpaca_stream.py, backend/app/intraday/collector.py, tests/test_alpaca_stream.py, tests/test_intraday_collector.py, tests/fixtures/market_data/alpaca_stream_replay.jsonl.
 **Files modify:** backend/app/intraday/store.py, backend/app/database.py, backend/app/config.py, backend/requirements.txt, .env.example, backend/.env.example, tests/test_config.py, tests/test_provider_budget.py.
 **Produces:** socket factory fake/reale, gestore esplicito bounded + lease/nonce, stato/gap e cattura durable; nessun avvio al boot.
-- [ ] RED: auth frame segreto loggato, ack parziale LIVE, symbol cap senza benchmark, duplicate collector/lease scaduta, socket silence/overflow/restart, reconnect che finge continuità; NORMAL@t5/HALT@t8/ACK@t10 erroneamente LIVE.
-- [ ] Implementare una dipendenza WS diretta compatibile se necessaria, dichiarata/pinnata; solo host/path dati, frame bounded/sanitizzati prima del DB, quota disco hard-stop. Client differente dal FIFO lab.
-- [ ] GREEN con transcript fake: received_at prima della coda, admission dopo durabilità e backlog identico live/replay al cutoff, ack/capacità e stato LIVE coerenti, backoff, resubscription, record gap persistito; start CONNECTING con buffer durable -> checkpoint con snapshot_at interno alla cattura continua dopo ack -> applicazione di tutti gli eventi successivi -> LIVE. Checkpoint vecchio/gap richiede nuovo bootstrap e resta UNKNOWN; REST recovery non ricrea availability passata.
-- [ ] Leak test entrambi i segreti in auth/error/echo; stop/start idempotenti e shutdown pulito. Gate/review, zero socket reale/ordine.
+- [x] RED: auth frame segreto loggato, ack parziale LIVE, symbol cap senza benchmark, duplicate collector/lease scaduta, socket silence/overflow/restart, reconnect che finge continuità; NORMAL@t5/HALT@t8/ACK@t10 erroneamente LIVE.
+- [x] Implementare una dipendenza WS diretta compatibile se necessaria, dichiarata/pinnata; solo host/path dati, frame bounded/sanitizzati prima del DB, quota disco hard-stop. Client differente dal FIFO lab.
+- [x] GREEN con transcript fake: received_at prima della coda, admission dopo durabilità e backlog identico live/replay al cutoff, ack/capacità e stato LIVE coerenti, backoff, resubscription, record gap persistito; start CONNECTING con buffer durable -> checkpoint con snapshot_at interno alla cattura continua dopo ack -> applicazione di tutti gli eventi successivi -> LIVE. Checkpoint vecchio/gap richiede nuovo bootstrap e resta UNKNOWN; REST recovery non ricrea availability passata.
+- [x] Leak test entrambi i segreti in auth/error/echo; stop/start idempotenti e shutdown pulito. Gate/review, zero socket reale/ordine.
 **Commit:** feat: capture Alpaca streams with explicit continuity
+
+Chiusura 2026-10-12: 688 mirati e 1678 backend offline PASS, zero rete esterna inattesa; Ruff/pip/diff/scanner Fase 2/tre review PASS. websockets==17.2 già installato e pinnato, host dati fissi/no redirect/retry implicito, receipt prima coda, write watchdog bounded. Collector esplicito con lease/cap globali/quota fisica e riserva; controls RAW+publication, PONG liveness congelati e confini GAP/restart riproducibili. ACK completi + barriera entrambi i buffer + checkpoint post-ACK necessario a LIVE; HALTED resta escluso. Migrazione additiva e pre-SP2b verificata; nessun bootstrap al boot/rete reale/ordine. Fast-forward main autorizzato, registrazione dopo gate remoto. G1_DATA INSUFFICIENTE.
 
 ## Task 8 — Replay as-of unico e invarianti causali
 
@@ -215,4 +217,4 @@ Task 13 produrrà spec/piano dettagliati e allowlist per I3 legacy, fondamentali
 | §13 backlog/resto programma | Task 13 addendum successivo |
 | §14 decisioni | approvazione prima Task 1; configurazione reale prima capture |
 
-**Prossimo passo sequenziale:** Task 7 dal remoto investedge/sp2b-task-6 verificato, comprensivo del registro integrazione; feature Task 6 2478b1d. L'approvazione del piano non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.
+**Prossimo passo sequenziale:** Task 8 dal remoto investedge/sp2b-task-7 dopo gate SHA e integrazione verificati. Il Task 7 non autorizza ordini, inserimento credenziali, spese, raccolta live o riduzione dei gate.

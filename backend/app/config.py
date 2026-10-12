@@ -27,9 +27,9 @@ def _unique(values: list[str]) -> list[str]:
 
 
 
-def _alpaca_cap(name: str) -> int:
+def _alpaca_cap(name: str, default: int = 0) -> int:
     try:
-        value = int(os.getenv(name, "0"))
+        value = int(os.getenv(name, str(default)))
         if not 0 <= value <= 2**63 - 1:
             raise ValueError
         return value
@@ -146,6 +146,13 @@ class Settings:
     alpaca_max_frame_bytes: int = 0
     alpaca_max_queue_events: int = 0
     alpaca_max_archive_bytes: int = 0
+    alpaca_collector_lease_seconds: int = 60
+    alpaca_stream_silence_seconds: int = 30
+    alpaca_stream_max_reconnects: int = 3
+    alpaca_stream_backoff_seconds: int = 1
+    alpaca_stream_backoff_cap_seconds: int = 30
+    alpaca_stream_control_reserve_bytes: int = 262144
+    alpaca_stream_clock_skew_seconds: int = 2
 
     @property
     def database_url(self) -> str:
@@ -186,6 +193,13 @@ class Settings:
             alpaca_max_frame_bytes=_alpaca_cap("ALPACA_MAX_FRAME_BYTES"),
             alpaca_max_queue_events=_alpaca_cap("ALPACA_MAX_QUEUE_EVENTS"),
             alpaca_max_archive_bytes=_alpaca_cap("ALPACA_MAX_ARCHIVE_BYTES"),
+            alpaca_collector_lease_seconds=_alpaca_cap("ALPACA_COLLECTOR_LEASE_SECONDS", 60),
+            alpaca_stream_silence_seconds=_alpaca_cap("ALPACA_STREAM_SILENCE_SECONDS", 30),
+            alpaca_stream_max_reconnects=_alpaca_cap("ALPACA_STREAM_MAX_RECONNECTS", 3),
+            alpaca_stream_backoff_seconds=_alpaca_cap("ALPACA_STREAM_BACKOFF_SECONDS", 1),
+            alpaca_stream_backoff_cap_seconds=_alpaca_cap("ALPACA_STREAM_BACKOFF_CAP_SECONDS", 30),
+            alpaca_stream_control_reserve_bytes=_alpaca_cap("ALPACA_STREAM_CONTROL_RESERVE_BYTES", 262144),
+            alpaca_stream_clock_skew_seconds=_alpaca_cap("ALPACA_STREAM_CLOCK_SKEW_SECONDS", 2),
 
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY") or None,
             coingecko_api_key=os.getenv("COINGECKO_API_KEY") or None,

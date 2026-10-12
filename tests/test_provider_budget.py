@@ -1359,3 +1359,61 @@ def test_configured_chat_id_is_never_fingerprinted_or_persisted(echo_phase):
     assert caught.value.code == ("SECRET_IN_REQUEST" if echo_phase == "request" else "SECRET_IN_RESPONSE")
     assert len(calls) == int(echo_phase == "response")
     assert not connection.execute("SELECT * FROM api_cache").fetchall()
+
+
+def test_stream_429_creates_shared_rest_cooldown_and_defers_before_next_attempt():
+    from test_intraday_collector import SECOND, setup
+
+    from backend.app.data_providers.alpaca_stream import StreamError
+    s = setup()
+    attempts = []
+    def fail(**kwargs):
+        attempts.append(kwargs)
+        raise StreamError('RATE_LIMITED', retry_after_seconds=5)
+    s.collector.socket_factory = fail
+    s.collector.start((s.listing,))
+    assert s.collector.status()['state'] == 'BACKOFF'
+    assert s.archive.provider.availability('bars').reason_code == 'RATE_LIMITED'
+    s.clock.now += 2 * SECOND
+    s.collector.step()
+    assert len(attempts) == 1
+    assert s.db.execute("SELECT count(*) FROM provider_request_log WHERE operation='STREAM_CONNECT'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('reason', ['AUTHENTICATION_FAILED', 'FEED_NOT_ENTITLED'])
+def test_stream_auth_or_entitlement_failure_does_not_retry(reason):
+    from test_intraday_collector import SECOND, setup
+
+    from backend.app.data_providers.alpaca_stream import StreamError
+    s = setup()
+    attempts = []
+    def fail(**kwargs):
+        attempts.append(kwargs)
+        raise StreamError(reason)
+    s.collector.socket_factory = fail
+    s.collector.start((s.listing,))
+    assert s.collector.status()['state'] == 'FAILED'
+    s.clock.now += 2 * SECOND
+    s.collector.step()
+    assert len(attempts) == 1
+
+
+def test_stream_long_cooldown_renews_lease_without_retrying_early():
+    from test_intraday_collector import SECOND, setup
+
+    from backend.app.data_providers.alpaca_stream import StreamError
+    s = setup()
+    attempts = []
+    def open_after_cooldown(**kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise StreamError('RATE_LIMITED', retry_after_seconds=60)
+        return s.factory(**kwargs)
+    s.collector.socket_factory = open_after_cooldown
+    s.collector.start((s.listing,))
+    s.clock.now += 59 * SECOND
+    s.collector.step()
+    assert len(attempts) == 1 and s.collector.status()['state'] == 'BACKOFF'
+    s.clock.now += SECOND
+    s.collector.step()
+    assert len(attempts) == 3 and s.collector.status()['state'] == 'CONNECTING'

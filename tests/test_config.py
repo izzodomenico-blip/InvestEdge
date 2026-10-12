@@ -10,6 +10,28 @@ import backend.app.config as config_module
 from backend.app.config import Settings
 
 
+def test_collector_limits_from_env_preserve_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv('ENABLE_ALPACA_COLLECTOR', 'false')
+    monkeypatch.setenv('ALPACA_COLLECTOR_LEASE_SECONDS', '90')
+    monkeypatch.setenv('ALPACA_STREAM_SILENCE_SECONDS', '40')
+    monkeypatch.setenv('ALPACA_STREAM_MAX_RECONNECTS', '0')
+    monkeypatch.setenv('ALPACA_STREAM_CONTROL_RESERVE_BYTES', '524288')
+    settings = Settings.from_env()
+    assert not settings.enable_alpaca_collector
+    assert settings.alpaca_collector_lease_seconds == 90
+    assert settings.alpaca_stream_silence_seconds == 40
+    assert settings.alpaca_stream_max_reconnects == 0
+    assert settings.alpaca_stream_control_reserve_bytes == 524288
+
+
+def test_invalid_collector_limit_env_is_static_and_never_opens_socket(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv('ALPACA_STREAM_BACKOFF_SECONDS', '-1')
+    with pytest.raises(ValueError, match='ALPACA_CONFIG_INVALID'):
+        Settings.from_env()
+
+
 def test_config_uses_process_database_path(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "process.db"
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(database_path))

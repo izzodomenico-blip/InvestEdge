@@ -51,11 +51,12 @@ class StoreError(ValueError):
 
 class IntradayStore:
     def __init__(self, provider, *, clock_ns=time.time_ns, data_mode="REAL",
-                 provenance="CAPTURED", replay_grade="STRICT_PIT"):
+                 provenance="CAPTURED", replay_grade="STRICT_PIT", write_guard=None):
         self.archive = AlpacaMetadataService(provider, clock_ns=clock_ns, data_mode=data_mode,
                                             provenance=provenance, replay_grade=replay_grade)
         self.provider, self.connection, self.profile = provider, provider.connection, provider.profile
         self.data_mode, self.provenance, self.replay_grade = data_mode, provenance, replay_grade
+        self.write_guard = write_guard
 
     @property
     def namespace(self):
@@ -65,7 +66,13 @@ class IntradayStore:
         if self.connection.in_transaction:
             raise StoreError("TRANSACTION_ALREADY_OPEN")
         self.connection.execute("BEGIN IMMEDIATE")
-        self._used = self.archive._archive_bytes()
+        try:
+            if self.write_guard is not None:
+                self.write_guard()
+            self._used = self.archive._archive_bytes()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def _sequence(self, run):
         return self.connection.execute("""
@@ -80,6 +87,8 @@ class IntradayStore:
             raise StoreError("MODE_MISMATCH")
 
     def _insert(self, table, envelope, run, fields):
+        if self.write_guard is not None:
+            self.write_guard()
         if table == "intraday_observations":
             # Keep original intake order separately from the globally unique storage sequence.
             envelope = replace(envelope, payload_json=self.archive.safe_json(
@@ -212,6 +221,81 @@ class IntradayStore:
         if run_id is None:
             self._finish(run, "COMPLETE")
         return tuple(ids)
+
+    def append_capture(self, kind, payload, *, run_id, capture_id, lease_nonce,
+                       received_at_ns, listing_id=None):
+        """RAW control commit, then immutable post-commit publication in its epoch.
+
+        ADMISSION is reserved for observations/news/events. Control consumers use
+        read_capture_as_of, never a raw ACK or mutable collector state as evidence.
+        """
+        if kind not in {'CAPTURE_START', 'ACK', 'GAP', 'BOOTSTRAP', 'CLOCK', 'STOP'}:
+            raise StoreError('OBSERVATION_INVALID')
+        stamp = self.archive.now()
+        envelope = EventEnvelope('alpaca', self.profile.feed, *self.namespace[:2], *self.namespace[2:],
+            'EVENT', listing_id, f'collector:{kind}:{capture_id}', capture_id, 1,
+            received_at_ns, received_at_ns, stamp, None, self.archive.safe_json(payload))
+        fields = {'kind': kind, 'lease_nonce': lease_nonce, 'observation_id': None,
+                  'news_version_id': None, 'event_version_id': None}
+        self._begin()
+        try:
+            self._run(run_id)
+            row_id = self._insert('intraday_capture_events', envelope, run_id, fields)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        durable = self.archive.now()
+        self._begin()
+        try:
+            now = self.archive.now()
+            proof = replace(envelope, event_time_ns=durable, received_at_ns=durable,
+                persisted_at_ns=now, admitted_at_ns=now, logical_key=f'collector-publication:{row_id}',
+                payload_json=self.archive.safe_json({'metadata_kind': 'COLLECTOR_PUBLICATION',
+                    'version': 'collector-publication-v1', 'durable_at_ns': durable,
+                    'reference': {'id': row_id, 'hash': envelope.payload_hash, 'kind': kind}}))
+            proof.validate_at(now)
+            self._insert('intraday_capture_events', proof, run_id, {**fields, 'kind': 'BOOTSTRAP'})
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return row_id
+
+    def read_capture_as_of(self, *, cutoff_ns, capture_id=None):
+        check_ns(cutoff_ns)
+        query = """SELECT raw.*, pub.id AS proof_id, pub.payload_json AS proof_json,
+            pub.payload_hash AS proof_hash, pub.available_at_ns AS proof_available
+            FROM intraday_capture_events raw JOIN intraday_capture_events pub
+              ON json_extract(pub.payload_json,'$.reference.id')=raw.id
+              AND pub.ingest_run_id=raw.ingest_run_id AND pub.capture_id=raw.capture_id
+              AND pub.lease_nonce=raw.lease_nonce AND pub.kind='BOOTSTRAP'
+              AND pub.profile_id=raw.profile_id AND pub.data_mode=raw.data_mode
+              AND pub.provenance=raw.provenance AND pub.replay_grade=raw.replay_grade
+              AND pub.provider=raw.provider AND pub.feed=raw.feed AND pub.listing_id IS raw.listing_id
+              AND json_extract(pub.payload_json,'$.metadata_kind')='COLLECTOR_PUBLICATION'
+            WHERE raw.profile_id=? AND raw.data_mode=? AND raw.provenance=? AND raw.replay_grade=?
+              AND pub.available_at_ns<=?"""
+        params = (*self.namespace, cutoff_ns)
+        if capture_id is not None:
+            query += ' AND raw.capture_id=?'
+            params += (capture_id,)
+        result = []
+        for raw in self.connection.execute(query + ' ORDER BY pub.available_at_ns,raw.ingest_sequence', params):
+            raw = dict(raw)
+            item = decode_row({key: raw[key] for key in raw if not key.startswith('proof_')})
+            proof = decode_row({'payload_json': raw['proof_json'], 'payload_hash': raw['proof_hash']})['payload']
+            durable = proof.get('durable_at_ns')
+            check_ns(durable)
+            if (proof.get('version') != 'collector-publication-v1'
+                or proof.get('reference') != {'id': item['id'], 'hash': item['payload_hash'], 'kind': item['kind']}
+                or durable < item['persisted_at_ns']):
+                raise StoreError('OBSERVATION_INVALID')
+            item['available_at_ns'] = max(raw['proof_available'], durable)
+            item['publication_id'], item['publication_hash'] = raw['proof_id'], raw['proof_hash']
+            if item['available_at_ns'] <= cutoff_ns:
+                result.append(item)
+        return result
 
     def admit(self, observation_ids):
         ids = tuple(dict.fromkeys(observation_ids))

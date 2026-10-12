@@ -951,7 +951,10 @@ def _intraday_schema() -> tuple[str, str]:
         profile_id TEXT NOT NULL REFERENCES intraday_feed_profiles(id) ON DELETE RESTRICT,
         data_mode TEXT NOT NULL CHECK(data_mode IN ('REAL','DEMO')),
         state TEXT NOT NULL CHECK(state IN ('STOPPED','CONNECTING','LIVE','DEGRADED','BACKOFF','FAILED')),
-        owner_nonce TEXT, {ns('lease_expires_at_ns')}, UNIQUE(profile_id,data_mode)""",
+        owner_nonce TEXT, {ns('lease_expires_at_ns')}, capture_id TEXT,
+        ingest_run_id INTEGER REFERENCES intraday_ingest_runs(id) ON DELETE RESTRICT,
+        connection_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(connection_count)='integer' AND connection_count>=0),
+        UNIQUE(profile_id,data_mode)""",
         [("profile_id","data_mode")], [])
 
     refs = {
@@ -1509,6 +1512,11 @@ SCHEMA = BASE_SCHEMA + INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA
 
 
 MIGRATIONS = {
+    "intraday_collector_state": [
+        ("capture_id", "ALTER TABLE intraday_collector_state ADD COLUMN capture_id TEXT"),
+        ("ingest_run_id", "ALTER TABLE intraday_collector_state ADD COLUMN ingest_run_id INTEGER REFERENCES intraday_ingest_runs(id) ON DELETE RESTRICT"),
+        ("connection_count", "ALTER TABLE intraday_collector_state ADD COLUMN connection_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(connection_count)='integer' AND connection_count>=0)"),
+    ],
     "instruments": [
         (
             "quality_reason_code",
@@ -1776,6 +1784,10 @@ def migrate_db(connection: sqlite3.Connection) -> None:
 
     for table_name, migrations in MIGRATIONS.items():
         columns = _table_columns(connection, table_name)
+        # Pre-SP2b fixtures can normalize legacy tables before the additive schema
+        # exists. init_db creates the new collector table with all columns later.
+        if table_name == "intraday_collector_state" and not columns:
+            continue
         for column_name, statement in migrations:
             if column_name not in columns:
                 connection.execute(statement)

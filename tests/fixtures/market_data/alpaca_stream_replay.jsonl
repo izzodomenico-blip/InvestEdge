@@ -1,0 +1,6 @@
+{"channel":"market","rows":[{"T":"success","msg":"connected"}]}
+{"channel":"news","rows":[{"T":"success","msg":"connected"}]}
+{"channel":"market","rows":[{"T":"success","msg":"authenticated"}]}
+{"channel":"news","rows":[{"T":"success","msg":"authenticated"}]}
+{"channel":"market","rows":[{"T":"subscription","bars":["AAPL"],"updatedBars":["AAPL"],"quotes":["AAPL"],"statuses":["AAPL"],"lulds":["AAPL"],"trades":[],"dailyBars":[]}]}
+{"channel":"news","rows":[{"T":"subscription","news":["AAPL"]}]}
