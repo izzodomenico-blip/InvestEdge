@@ -1,6 +1,6 @@
 # InvestEdge — piano SP2b: dati e news intraday
 
-**Stato:** approvati il 2026-10-10; Task 1–10 FATTI, prossimo Task 11 NON INIZIATO. Base Task 10/integrazione Task 9 3d4649ea754ba7d046dea63403f4e52764b62baa verificata; Task 10 1400 mirati precedenti, 52/1852 finali offline, Ruff/pip e tre review PASS. Commit/push/FF e scanner in chiusura; SHA proprio nel registro successivo.
+**Stato:** approvati il 2026-10-10; Task 1–10 FATTI, prossimo Task 11 NON INIZIATO. Base Task 10/integrazione Task 9 3d4649ea754ba7d046dea63403f4e52764b62baa verificata; feature Task 10 100e858c74dc5c63a5121d181dc577df66483775 pubblicata e main FF verificato. Gate 1400 mirati precedenti, 52/1852 finali offline, Ruff/pip/diff/scanner e tre review PASS. Questo registro documentale completa l’integrazione prima del Task 11; proprio SHA nel registro successivo.
 **Spec:** ../specs/2026-10-10-investedge-sp2b-intraday-data-news-design.md.
 **Goal:** archivio versionato e replay condiviso per dati/news USA 1/5/15 minuti, idoneità point-in-time esplicita per SP3 e Alpaca paper successivo.
 **Architettura:** backend/app/intraday separato dal laboratorio daily; adapter ufficiali e trasporto governato; SQLite additivo; collector bounded distinto dal FIFO lab; API /intraday e aggiunte alle viste correnti.
@@ -175,6 +175,8 @@ Chiusura 2026-10-12: 49 regressioni nuove; 899 mirati e 1798 backend offline PAS
 **Commit:** feat: expose bounded intraday jobs and data APIs
 
 Chiusura 2026-10-12: 52 regressioni finali e 1852 backend finali offline PASS; precedenti 1400 cumulativi PASS, zero rete esterna inattesa. Migrazione compatibile, API bounded/as-of, NEW kind JobOut centrale senza edit models/lab.py, collector distinto, cancellazione e restart; tre review PASS. Sono incluse coverage news e correzioni di paginazione/ownership. Push/FF autorizzati; registro SHA proprio successivo.
+
+Integrazione verificata 2026-10-12: feature 100e858c74dc5c63a5121d181dc577df66483775, push/gate SHA branch Task 10 PASS e fast-forward main da 3d4649ea754ba7d046dea63403f4e52764b62baa PASS, SHA remoto main uguale feature. Questo registro è solo documentale, con ulteriore push/FF e gate SHA prima del Task 11.
 
 ## Task 11 — Stato dati e news nelle viste esistenti
 
