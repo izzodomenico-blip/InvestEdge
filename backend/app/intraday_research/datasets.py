@@ -37,7 +37,7 @@ class DatasetChild:
             raise ValueError("BUNDLE_INVALID")
 
 
-_BUNDLE_REFS = '''WITH child_refs AS (
+_CHILD_REFS = '''WITH child_refs AS (
     SELECT json_extract(m.payload_json,'$.reference') AS reference_json
     FROM intraday_research_bundle_children c JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id
     WHERE c.bundle_id=:snapshot AND json_extract(m.payload_json,'$.replay')=1
@@ -45,11 +45,38 @@ _BUNDLE_REFS = '''WITH child_refs AS (
     SELECT dependency.value FROM intraday_research_bundle_children c
     JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id,json_each(m.payload_json,'$.dependencies') dependency
     WHERE c.bundle_id=:snapshot AND json_extract(m.payload_json,'$.replay')=1
-), ranked_refs AS (
+)'''
+
+_BUNDLE_REFS = _CHILD_REFS + ''', ranked_refs AS (
     SELECT *,ROW_NUMBER() OVER(PARTITION BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
         ORDER BY COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807),reference_json) AS ordinal
     FROM child_refs
 ), refs AS (SELECT reference_json,1 AS replay FROM ranked_refs WHERE ordinal=1)'''
+
+# Child validation precedes this selector. Start from the requested news's
+# typed links; dependencies use their small partial index and retain all refs.
+_NEWS_LINK_REFS = '''WITH link_refs AS (
+    SELECT json_extract(m.payload_json,'$.reference') AS reference_json
+    FROM intraday_news_links l CROSS JOIN intraday_research_bundle_children c
+    CROSS JOIN intraday_dataset_members m
+    WHERE l.news_version_id=:news AND c.bundle_id=:snapshot AND m.snapshot_id=c.snapshot_id
+      AND m.news_link_id=l.id AND json_extract(m.payload_json,'$.replay')=1
+    UNION ALL
+    SELECT dependency.value FROM intraday_research_bundle_children c
+    CROSS JOIN intraday_dataset_members m CROSS JOIN json_each(m.payload_json,'$.dependencies') dependency
+    CROSS JOIN intraday_news_links l
+    WHERE c.bundle_id=:snapshot AND m.snapshot_id=c.snapshot_id
+      AND json_array_length(m.payload_json,'$.dependencies')>0
+      AND json_extract(m.payload_json,'$.replay')=1
+      AND json_extract(dependency.value,'$.table')='intraday_news_links'
+      AND l.id=json_extract(dependency.value,'$.id') AND l.news_version_id=:news
+), ranked_refs AS (
+    SELECT reference_json,ROW_NUMBER() OVER(
+        PARTITION BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
+        ORDER BY COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807),
+                 reference_json) AS ordinal
+    FROM link_refs
+) SELECT reference_json FROM ranked_refs WHERE ordinal=1 ORDER BY json_extract(reference_json,'$.id')'''
 
 
 def _json(value):
@@ -79,15 +106,16 @@ class DatasetService:
         if type(request) is not DatasetBundle:
             raise ValueError('BUNDLE_INVALID')
         result = []
-        for child in request.children:
-            dataset = self.snapshots.open(child.snapshot_id)
-            expected = (child.digest,child.start_at_ns,child.end_at_ns,child.cutoff_ns,child.known_at_ns,
-                        child.publication_id,child.publication_hash)
-            actual = (dataset.digest,dataset.manifest['start_at_ns'],dataset.manifest['end_at_ns'],dataset.manifest['cutoff_ns'],
-                      dataset.known_at_ns,dataset.publication_id,dataset.publication_hash)
-            if actual != expected or tuple(dataset.manifest['namespace']) != request.namespace.key:
-                raise MetadataError('SNAPSHOT_INPUT_MISSING')
-            result.append(dataset)
+        with self.snapshots.validated_sources([child.snapshot_id for child in request.children]) as source_scope:
+            for child in request.children:
+                dataset = self.snapshots.open(child.snapshot_id, _source_scope=source_scope)
+                expected = (child.digest,child.start_at_ns,child.end_at_ns,child.cutoff_ns,child.known_at_ns,
+                            child.publication_id,child.publication_hash)
+                actual = (dataset.digest,dataset.manifest['start_at_ns'],dataset.manifest['end_at_ns'],dataset.manifest['cutoff_ns'],
+                          dataset.known_at_ns,dataset.publication_id,dataset.publication_hash)
+                if actual != expected or tuple(dataset.manifest['namespace']) != request.namespace.key:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                result.append(dataset)
         return result
 
     def _insert(self, table, namespace, payload, recorded, **fields):
@@ -199,16 +227,20 @@ class DatasetService:
         return self.open_bundle(bundle_id)
 
     def _links(self, bundle_id, news_id):
-        rows = self.db.execute(_BUNDLE_REFS + ''' SELECT r.reference_json FROM refs r
-            JOIN intraday_news_links l ON l.id=json_extract(r.reference_json,'$.id')
-            WHERE json_extract(r.reference_json,'$.table')='intraday_news_links' AND l.news_version_id=:news ORDER BY l.id''',
-            {'snapshot':bundle_id,'news':news_id})
+        rows = self.db.execute(_NEWS_LINK_REFS,{'snapshot':bundle_id,'news':news_id})
         result = []
         for reference in rows:
             row = self.snapshots._hydrate(json.loads(reference[0]))
             row.pop('table',None)
             result.append(row)
         return result
+
+    def _bundle_count(self, bundle_id):
+        # All child references have already passed full validation. Counting
+        # typed identities needs no projection ranking or reference sorting.
+        return self.db.execute(_CHILD_REFS + ''' SELECT COUNT(*) FROM (
+            SELECT json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
+            FROM child_refs GROUP BY 1,2)''', {'snapshot':bundle_id}).fetchone()[0]
 
     def open_bundle(self, bundle_id):
         try:
@@ -298,18 +330,20 @@ class DatasetService:
             or manifest['end_at_ns']!=max(child.end_at_ns for child in request.children)
             or manifest['cutoff_ns']!=max(child.cutoff_ns for child in request.children)):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        count = self.db.execute(_BUNDLE_REFS + ' SELECT COUNT(*) FROM refs',{'snapshot':bundle_id}).fetchone()[0]
+        count = self._bundle_count(bundle_id)
         if count != evidence['timeline_count']:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         candidates = tuple(value for name,value in self.snapshots._secret_fields() if isinstance(value,str) and value)
-        if candidates and SafeProviderTransport._payload_contains_secret(evidence,candidates):
-            raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        if signature!=self.snapshots._read_signature():
+        if candidates and SafeProviderTransport._payload_contains_secret(
+            {'evidence':evidence,'digest':header['bundle_digest']},candidates):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         timeline = FrozenTimeline(self.snapshots,bundle_id,manifest,count,refs_sql=_BUNDLE_REFS,
-                                  links=lambda news_id:self._links(bundle_id,news_id))
+                                  links=lambda news_id:self._links(bundle_id,news_id),_signature=signature)
         timeline.validator = lambda:self.open_bundle(bundle_id)
-        return ValidatedBundle(bundle_id,header['bundle_digest'],manifest,evidence['report'],timeline,seal['recorded_at_ns'])
+        result = ValidatedBundle(bundle_id,header['bundle_digest'],manifest,evidence['report'],timeline,seal['recorded_at_ns'])
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return result
 
 
 @dataclass(frozen=True)

@@ -154,11 +154,11 @@ def test_cumulative_batch_identity_reuse_invalidates_on_database_writes(monkeypa
 
 
 def test_cumulative_scoped_read_decodes_only_requested_listings(monkeypatch):
-    from backend.app.intraday import store
+    from backend.app.intraday import snapshots
     s = prepared(second=True)
     quote = event(s, kind='QUOTE')
     s.store.persist((quote, replace(quote, listing_id=s.second, logical_key='QUOTE:second:one')))
-    original, seen = store.decode_row, []
+    original, seen = snapshots._decode_evidence, []
 
     def measured(value):
         if 'listing_id' in value:
@@ -166,7 +166,7 @@ def test_cumulative_scoped_read_decodes_only_requested_listings(monkeypatch):
         return original(value)
 
     expected = [row for row in read(s, kind='QUOTE') if row['listing_id'] == s.listing]
-    monkeypatch.setattr(store, 'decode_row', measured)
+    monkeypatch.setattr(snapshots, '_decode_evidence', measured)
     assert s.store.read_as_of('QUOTE', cutoff_ns=s.clock.now, listing_ids=(s.listing, s.listing)) == expected
     assert set(seen) == {s.listing}
     seen.clear()
@@ -663,3 +663,48 @@ def test_interleaved_capture_with_tied_receipt_cannot_promote_older_intake():
     before = read(s)
     s.store.persist((replace(event(s, change={"c": 100}), ingest_sequence=1),))
     assert read(s) == before
+
+
+def test_asof_reader_preserves_rows_without_materializing_sqlite_row_mappings():
+    s = prepared()
+    s.store.persist((event(s),event(s,kind='QUOTE')))
+    expected = {kind:s.store.read_as_of(kind,cutoff_ns=s.clock.now) for kind in ('BAR','QUOTE')}
+    original = s.db.row_factory
+    class SlowMapping:
+        def keys(self):
+            raise AssertionError('SQLITE_ROW_MAPPING_MATERIALIZATION')
+    s.db.row_factory = lambda cursor,values:SlowMapping()
+    try:
+        for kind in ('BAR','QUOTE'):
+            assert s.store.read_as_of(kind,cutoff_ns=s.clock.now) == expected[kind]
+    finally:
+        s.db.row_factory = original
+
+
+def test_asof_receipt_lookup_uses_covering_index_without_table_fetch():
+    s = prepared()
+    s.store.persist((event(s,kind='QUOTE'),))
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    try:
+        assert s.store.read_as_of('QUOTE',cutoff_ns=s.clock.now,listing_ids=(s.listing,))
+    finally:
+        s.db.set_trace_callback(None)
+    query = next(sql for sql in queries if 'SELECT raw.*, proof.id AS proof_id' in sql)
+    plan = s.db.execute('EXPLAIN QUERY PLAN '+query).fetchall()
+    assert any('COVERING INDEX idx_intraday_observation_receipt_read' in row[3] for row in plan)
+
+
+def test_asof_source_lookup_covers_the_complete_raw_envelope():
+    s = prepared()
+    s.store.persist((event(s,kind='QUOTE'),))
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    try:
+        rows = s.store.read_as_of('QUOTE',cutoff_ns=s.clock.now,listing_ids=(s.listing,))
+    finally:
+        s.db.set_trace_callback(None)
+    assert len(rows) == 1 and rows[0]['payload']['raw']['bp'] == 100
+    query = next(sql for sql in queries if 'SELECT raw.*, proof.id AS proof_id' in sql)
+    plan = s.db.execute('EXPLAIN QUERY PLAN '+query).fetchall()
+    assert any('SEARCH raw USING COVERING INDEX idx_intraday_observation_source_read' in row[3] for row in plan)

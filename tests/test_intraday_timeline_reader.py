@@ -12,6 +12,69 @@ from test_intraday_store import OPEN, SECOND, event, prepared
 from backend.app.intraday.contracts import canonical_json
 
 
+def test_member_digest_scan_uses_index_order_without_temporary_sort():
+    s = prepared()
+    plan = s.db.execute('EXPLAIN QUERY PLAN SELECT * FROM intraday_dataset_members '
+                        'WHERE snapshot_id=? ORDER BY ingest_sequence', (1,)).fetchall()
+    assert not any('TEMP B-TREE' in row[3] for row in plan)
+    assert any('idx_intraday_dataset_member_sequence' in row[3] for row in plan)
+
+
+def test_canonical_integer_evidence_avoids_python_reencoding(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'dependencies': [], 'reference': {'id': 2**63-1, 'text': 'é😀\\\n"'}, 'replay': True}
+    text = canonical_json(payload)
+    def forbidden(value):
+        raise AssertionError('PYTHON_REENCODING_OF_CANONICAL_INTEGER_EVIDENCE')
+    monkeypatch.setattr(snapshots, '_envelope_bytes', forbidden)
+    row = snapshots._decode_evidence({'payload_json': text, 'payload_hash': hashlib.sha256(text.encode()).hexdigest()})
+    assert row['payload'] == payload
+
+
+def test_native_price_float_encoding_requires_exact_v1_scalar_byte_parity(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'prices':[100.0,99.9,1.25,-0.0]}
+    text = canonical_json(payload)
+    def forbidden(value):
+        raise AssertionError('REENCODING_NATIVE_V1_EQUIVALENT_PRICES')
+    monkeypatch.setattr(snapshots,'_envelope_bytes',forbidden)
+    assert snapshots._decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload']==payload
+
+
+@pytest.mark.parametrize('payload', [
+    {'a': [1e-6, 1e20, -0.0, 1.25]}, {'a': int('1'+'0'*308)},
+    {'a': {'b': ['\u0000', 'é', '😀', '\\', '"']}},
+])
+def test_evidence_codec_keeps_v1_canonical_bytes_and_finite_numbers(payload):
+    from backend.app.intraday.snapshots import _decode_evidence
+
+    text = canonical_json(payload)
+    assert _decode_evidence({'payload_json': text, 'payload_hash': hashlib.sha256(text.encode()).hexdigest()})['payload'] == payload
+
+
+@pytest.mark.parametrize('depth', [99, 200])
+def test_evidence_codec_preserves_v1_supported_nested_payloads(depth):
+    from backend.app.data_providers.alpaca_metadata import decode_row
+    from backend.app.intraday.snapshots import _decode_evidence
+
+    value = 1
+    for _ in range(depth):
+        value = [value]
+    text = canonical_json({'a': value})
+    raw = {'payload_json': text, 'payload_hash': hashlib.sha256(text.encode()).hexdigest()}
+    assert _decode_evidence(raw) == decode_row(raw)
+
+
+@pytest.mark.parametrize('text', ['{"a":1e999}', '{"a":'+('9'*400)+'}', '{"a":{"z":1,"a":2}}'])
+def test_evidence_codec_rejects_nested_noncanonical_or_nonfinite_values(text):
+    from backend.app.intraday.snapshots import _decode_evidence
+
+    with pytest.raises(ValueError, match='METADATA_INVALID'):
+        _decode_evidence({'payload_json': text, 'payload_hash': hashlib.sha256(text.encode()).hexdigest()})
+
+
 def test_frozen_validation_and_iteration_bound_source_lookup_queries():
     s = prepared()
     service(s).register_policy()
@@ -29,6 +92,53 @@ def test_frozen_validation_and_iteration_bound_source_lookup_queries():
     assert len(sources) < 100
 
 
+def test_timeline_order_extracts_each_typed_reference_once_and_keeps_exact_order():
+    from collections import Counter
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist(tuple(event(s,at=OPEN+index*SECOND) for index in range(20)))
+    saved = freeze(s)
+    timeline = reader.open(saved.snapshot_id).timeline
+    expected = [(row['table'],row['id']) for row in timeline]
+    calls = Counter()
+    def extract(text,path):
+        calls[path] += 1
+        value = json.loads(text)
+        for key in path[2:].split('.'):
+            if not isinstance(value,dict) or key not in value:
+                return None
+            value = value[key]
+        return canonical_json(value) if isinstance(value,(dict,list)) else value
+    s.db.create_function('json_extract',2,extract,deterministic=True)
+    before = s.db.total_changes
+    try:
+        result = [json.loads(row[0]) for row in timeline._ordered(timeline.manifest['cutoff_ns'])]
+        assert [(ref['table'],ref['id']) for ref in result]==expected
+        assert calls['$.table']<=len(result)
+        assert s.db.total_changes==before
+    finally:
+        s.db.close()
+
+
+def test_admission_closure_checks_binding_without_rehydrating_full_receipt(monkeypatch):
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    dataset = reader.open(saved.snapshot_id)
+    rows = [row for row in dataset.timeline if row['table'] == 'intraday_observations']
+    assert rows and all(row.get('admission_id') for row in rows)
+    original = reader._hydrated_batches
+    def no_receipt_envelope(refs, *, validated=False):
+        assert not validated, 'REDUNDANT_FULL_RECEIPT_HYDRATION'
+        yield from original(refs, validated=validated)
+    monkeypatch.setattr(reader, '_hydrated_batches', no_receipt_envelope)
+    reader._closure_batch(saved.snapshot_id, rows)
+
+
 @pytest.mark.parametrize('text', ['{ "a":1}', '{"a":1,"a":1}', '{"b":1,"a":1}',
                                   '{"a":"\\u00e9"}', '{"a":-0}', '{"a":1e0}', '{"a":NaN}'])
 def test_fast_decoder_rejects_noncanonical_payload_even_with_matching_hash(text):
@@ -36,6 +146,136 @@ def test_fast_decoder_rejects_noncanonical_payload_even_with_matching_hash(text)
 
     with pytest.raises(ValueError, match='METADATA_INVALID'):
         _decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})
+
+
+def test_owned_envelope_size_reuses_canonical_payload_and_preserves_exact_utf8_bytes(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'text': 'é😀\\\n"', 'number': 1.25, 'nested': [None, True, {'id': 123}]}
+    row = {'table': 'intraday_news_versions', 'payload': payload, 'payload_json': canonical_json(payload),
+           'available_at_ns': OPEN, 'links': [{'text': 'é\\"'}]}
+    expected = len(snapshots._envelope_bytes(row))
+    original = snapshots._envelope_bytes
+    def header_only(value,**kwargs):
+        assert 'payload' not in value and 'payload_json' not in value, 'REENCODED_CANONICAL_PAYLOAD'
+        return original(value,**kwargs)
+    monkeypatch.setattr(snapshots, '_envelope_bytes', header_only)
+    assert snapshots._row_byte_bound(row, _decoded=True) == expected
+    monkeypatch.setattr(snapshots, '_envelope_bytes', original)
+    row['payload'] = {'changed': 'payload'}
+    assert snapshots._row_byte_bound(row) == len(original(row))
+
+
+def test_evidence_decoder_parses_the_single_bounded_utf8_buffer(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'text':'é😀\\\n"', 'value':1.25}
+    text = canonical_json(payload)
+    original = snapshots.from_json
+    def bytes_only(value, **kwargs):
+        assert type(value) is bytes, 'DUPLICATE_UTF8_CONVERSION'
+        return original(value, **kwargs)
+    monkeypatch.setattr(snapshots, 'from_json', bytes_only)
+    assert snapshots._decode_evidence({'payload_json':text,
+        'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload'] == payload
+
+
+def test_owned_size_counts_escapes_without_allocating_a_second_payload(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'text':'é😀\\\n\t\x00"', 'value':1.25}
+    text = canonical_json(payload)
+    row = {'payload':payload, 'payload_json':text, 'id':1, 'links':[{'text':'é\\"'}]}
+    expected = len(snapshots._envelope_bytes(row))
+    original = json.encoder.encode_basestring
+    def header_only(value):
+        assert value != text, 'ALLOCATED_ESCAPED_CANONICAL_PAYLOAD'
+        return original(value)
+    monkeypatch.setattr(json.encoder, 'encode_basestring', header_only)
+    assert snapshots._row_byte_bound(row, _decoded=True) == expected
+
+
+@pytest.mark.parametrize('operation',['source','size'])
+def test_owned_headers_reuse_the_stdlib_codec_without_rebuilding_it(monkeypatch,operation):
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    s.store.persist((event(s),))
+    reader = service(s)
+    raw = reader._raw_source('intraday_observations',1)
+    expected = reader._decode_source('intraday_observations',1,raw=raw)
+    projected = expected[1] | {'table':'intraday_observations'}
+    size = len(snapshots._envelope_bytes(projected))
+    def forbidden(value):
+        raise AssertionError('REBUILT_OWNED_HEADER_ENCODER')
+    monkeypatch.setattr(snapshots._ENVELOPE_ENCODER,'encode',forbidden)
+    if operation=='source':
+        assert reader._decode_source('intraday_observations',1,raw=raw) == expected
+    else:
+        assert snapshots._row_byte_bound(projected,_decoded=True) == size
+
+
+def test_reference_batches_bound_utf8_working_set_before_decoding():
+    import backend.app.intraday.snapshots as snapshots
+
+    texts = ['{"value":"é😀"}']*1201
+    limit = 3*len(texts[0].encode())
+    batches = list(snapshots._reference_batches(((text,) for text in texts), max_bytes=limit))
+    assert sum(len(batch) for batch in batches) == len(texts)
+    assert all(sum(len(item[0].encode()) for item in batch)<=limit and len(batch)<=1000 for batch in batches)
+    with pytest.raises(ValueError,match='RESOURCE_LIMIT'):
+        list(snapshots._reference_batches(iter([(texts[0],)]), max_bytes=1))
+
+
+@pytest.mark.parametrize('field', ['digest','publication_hash'])
+def test_open_rejects_current_sensitive_inventory_matching_public_derived_hash(field):
+    from dataclasses import replace
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    value = getattr(reader.open(saved.snapshot_id),field)
+    reader.archive.settings = replace(reader.archive.settings,alpaca_api_secret_key=value)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        reader.open(saved.snapshot_id)
+
+
+def test_open_fences_mutation_during_timeline_handle_construction(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    s.db.execute('DROP TRIGGER trg_intraday_observations_no_update')
+    original = snapshots.FrozenTimeline.__init__
+    def changed(self,*args,**kwargs):
+        s.db.execute('UPDATE intraday_observations SET payload_json=?',('{"corrupt":true}',))
+        return original(self,*args,**kwargs)
+    monkeypatch.setattr(snapshots.FrozenTimeline,'__init__',changed)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        reader.open(saved.snapshot_id)
+
+
+def test_reference_preserves_exact_hash_and_projection_without_decoding_source_twice(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    s.store.persist((event(s),))
+    reader = service(s)
+    row = s.store.read_as_of('BAR', cutoff_ns=s.clock.now)[0]
+    row['table'] = 'intraday_observations'
+    expected = reader._reference(row)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('SOURCE_DECODED_TWICE')
+    monkeypatch.setattr(snapshots, 'decode_row', forbidden)
+    assert reader._reference(row) == expected
+    row['payload'] = {'changed': True}
+    with pytest.raises(ValueError, match='SNAPSHOT_INPUT_MISSING'):
+        reader._reference(row)
 
 
 def test_snapshot_validation_and_page_do_not_compute_replay_projections(monkeypatch):

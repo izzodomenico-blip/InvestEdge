@@ -12,6 +12,7 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from itertools import islice
+from operator import itemgetter
 from zoneinfo import ZoneInfo
 
 from backend.app.data_providers.alpaca_market import (
@@ -360,6 +361,8 @@ class IntradayStore:
             raise
 
     def read_as_of(self, kind, *, cutoff_ns, listing_ids=None, start_ns=None, end_ns=None, revisions=False):
+        from backend.app.intraday.snapshots import _decode_evidence
+
         check_ns(cutoff_ns)
         if kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
@@ -378,29 +381,40 @@ class IntradayStore:
                 return []
             sql += f" AND raw.listing_id IN ({','.join('?' for _ in listing_ids)})"
             params += listing_ids
-        rows = self.connection.execute(sql, params)
+        rows = self.connection.cursor()
+        rows.row_factory = None
+        rows.execute(sql, params)
+        positions = {}
+        for index,column in enumerate(rows.description):
+            positions.setdefault(column[0],index)
+        source_names = tuple(key for key in positions if not key.startswith('proof_'))
+        source_values = itemgetter(*(positions[key] for key in source_names))
+        proof_values = itemgetter(*(positions[key] for key in ('proof_json','proof_hash','proof_available','proof_id')))
         result = []
-        for row in rows:
-            raw = dict(row)
-            proof = decode_row({"payload_json": raw["proof_json"], "payload_hash": raw["proof_hash"]})["payload"]
-            item = decode_row({k: v for k, v in raw.items() if not k.startswith("proof_")})
-            durable = proof.get("durable_at_ns")
-            check_ns(durable)
-            if (proof.get("observation_id") != item["id"] or proof.get("payload_hash") != item["payload_hash"] or
-                    durable < item["persisted_at_ns"]):
-                raise StoreError("OBSERVATION_INVALID")
-            item["available_at_ns"] = max(raw["proof_available"], durable, item["availability_floor_ns"])
-            if item["available_at_ns"] > cutoff_ns:
-                continue
-            if listing_ids is not None and item["listing_id"] not in listing_ids:
-                continue
-            if start_ns is not None and item["event_time_ns"] < start_ns:
-                continue
-            if end_ns is not None and item["event_time_ns"] >= end_ns:
-                continue
-            item["admission_id"] = raw["proof_id"]
-            item["capture_ingest_sequence"] = item["payload"].get("intake_sequence", item["ingest_sequence"])
-            result.append(item)
+        try:
+            for row in rows:
+                proof_json,proof_hash,proof_available,proof_id = proof_values(row)
+                proof = _decode_evidence({'payload_json':proof_json,'payload_hash':proof_hash})['payload']
+                item = _decode_evidence(dict(zip(source_names,source_values(row),strict=True)))
+                durable = proof.get("durable_at_ns")
+                check_ns(durable)
+                if (proof.get("observation_id") != item["id"] or proof.get("payload_hash") != item["payload_hash"] or
+                        durable < item["persisted_at_ns"]):
+                    raise StoreError("OBSERVATION_INVALID")
+                item["available_at_ns"] = max(proof_available, durable, item["availability_floor_ns"])
+                if item["available_at_ns"] > cutoff_ns:
+                    continue
+                if listing_ids is not None and item["listing_id"] not in listing_ids:
+                    continue
+                if start_ns is not None and item["event_time_ns"] < start_ns:
+                    continue
+                if end_ns is not None and item["event_time_ns"] >= end_ns:
+                    continue
+                item["admission_id"] = proof_id
+                item["capture_ingest_sequence"] = item["payload"].get("intake_sequence", item["ingest_sequence"])
+                result.append(item)
+        finally:
+            rows.close()
         # A total order within each logical observation/receipt, using visible evidence only.
         # Intake ordinals are comparable inside a capture; first visible ID orders separate captures.
         return select_versions(result, family=kind, cutoff_ns=cutoff_ns, revisions=revisions, _decoded=True)

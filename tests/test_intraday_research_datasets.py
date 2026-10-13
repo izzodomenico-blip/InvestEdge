@@ -1,11 +1,131 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sqlite3
 
 import pytest
 from test_intraday_snapshots import service
 from test_intraday_store import MINUTE, OPEN, event, prepared
+
+
+def _bundle_query_fixture():
+    from types import SimpleNamespace
+
+    from backend.app.intraday_research.datasets import DatasetService
+
+    db = sqlite3.connect(':memory:')
+    db.executescript('''CREATE TABLE intraday_research_bundle_children(bundle_id,snapshot_id);
+        CREATE TABLE intraday_dataset_members(id INTEGER PRIMARY KEY,snapshot_id,news_link_id,payload_json,
+            UNIQUE(snapshot_id,news_link_id));
+        CREATE TABLE intraday_news_links(id INTEGER PRIMARY KEY,news_version_id);
+        CREATE INDEX idx_intraday_news_links_news ON intraday_news_links(news_version_id,id);
+        CREATE INDEX idx_intraday_dataset_member_dependencies ON intraday_dataset_members(snapshot_id)
+            WHERE json_array_length(payload_json,'$.dependencies')>0;''')
+    db.executemany('INSERT INTO intraday_research_bundle_children VALUES(?,?)', [(1,1),(1,2),(2,3)])
+    db.executemany('INSERT INTO intraday_news_links VALUES(?,?)', [(1,9),(2,10),(3,9)])
+    def ref(table, source_id, available):
+        return {'table':table,'id':source_id,'projection':{'available_at_ns':available}}
+    references = [ref('intraday_observations',index,20) for index in range(1,1001)]
+    references += [ref('intraday_news_links',1,30),ref('intraday_news_links',2,10)]
+    for snapshot_id in (1,2):
+        for reference in references:
+            changed = reference | {'projection':{'available_at_ns':10 if snapshot_id==2 else 20}}
+            body = {'reference':changed,'replay':True,'dependencies':[ref('intraday_capture_events',1,20)]}
+            link_id = reference['id'] if reference['table']=='intraday_news_links' else None
+            db.execute('INSERT INTO intraday_dataset_members(snapshot_id,news_link_id,payload_json) VALUES(?,?,?)',
+                       (snapshot_id,link_id,json.dumps(body)))
+    db.execute('INSERT INTO intraday_dataset_members(snapshot_id,news_link_id,payload_json) VALUES(?,?,?)',
+        (3,3,json.dumps({'reference':ref('intraday_news_links',3,1),'replay':True,'dependencies':[]})))
+    calls = []
+    def extract(text, path):
+        value = json.loads(text)
+        if path=='$.projection.available_at_ns':
+            calls.append(value['table'])
+        for key in path[2:].split('.'):
+            if not isinstance(value,dict) or key not in value:
+                return None
+            value = value[key]
+        return json.dumps(value,separators=(',',':')) if isinstance(value,(dict,list)) else value
+    db.create_function('json_extract',2,extract,deterministic=True)
+    reader = SimpleNamespace(connection=db,_hydrate=lambda reference:reference.copy())
+    return db,DatasetService(reader),calls
+
+
+def test_bundle_count_deduplicates_typed_identity_without_ranking_projections():
+    db,research,calls = _bundle_query_fixture()
+    try:
+        before = db.total_changes
+        assert research._bundle_count(1)==1003
+        assert not calls
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_bundle_news_links_rank_only_matching_news_and_keep_earliest_reference():
+    db,research,calls = _bundle_query_fixture()
+    try:
+        before = db.total_changes
+        assert research._links(1,9)==[{'id':1,'projection':{'available_at_ns':10}}]
+        assert calls and set(calls)=={'intraday_news_links'}
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_bundle_news_links_do_not_decode_unrelated_main_references():
+    db,research,_ = _bundle_query_fixture()
+    def extract(text,path):
+        value = json.loads(text)
+        if path=='$.reference' and value['reference']['table']!='intraday_news_links':
+            raise AssertionError('UNRELATED_MEMBER_REFERENCE_DECODE')
+        for key in path[2:].split('.'):
+            if not isinstance(value,dict) or key not in value:
+                return None
+            value = value[key]
+        return json.dumps(value,separators=(',',':')) if isinstance(value,(dict,list)) else value
+    db.create_function('json_extract',2,extract,deterministic=True)
+    try:
+        before = db.total_changes
+        assert research._links(1,9)==[{'id':1,'projection':{'available_at_ns':10}}]
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_bundle_news_links_include_dependency_references_and_exclude_audit_members():
+    db,research,_ = _bundle_query_fixture()
+    def body(available,replay):
+        return json.dumps({'reference':{'table':'intraday_observations','id':9000,
+            'projection':{'available_at_ns':available}},'replay':replay,
+            'dependencies':[{'table':'intraday_news_links','id':3,'projection':{'available_at_ns':available}}]})
+    db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,payload_json) VALUES(?,?)',
+                   [(1,body(15,True)),(2,body(5,True)),(1,body(1,False))])
+    try:
+        before = db.total_changes
+        assert research._links(1,9)==[{'id':1,'projection':{'available_at_ns':10}},
+                                     {'id':3,'projection':{'available_at_ns':5}}]
+        assert research._links(1,10)==[{'id':2,'projection':{'available_at_ns':10}}]
+        assert research._links(2,9)==[{'id':3,'projection':{'available_at_ns':1}}]
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_bundle_staging_liveness_reads_covering_metadata_without_envelope_payload():
+    from backend.app.intraday.snapshots import _StagedTimeline
+
+    s = prepared()
+    stage = _StagedTimeline.from_frozen(service(s),{'cutoff_ns':s.clock.now},
+        {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2,'max_chunk_bytes':8388608},[])
+    try:
+        plan = s.db.execute(f'''EXPLAIN QUERY PLAN SELECT capture_id,MAX(received_at_ns) FROM {stage.stage}
+            WHERE kind IN ('BAR','QUOTE','NEWS') AND available_at_ns<? GROUP BY capture_id,kind='NEWS' ''',
+            (s.clock.now,)).fetchall()
+        assert any('COVERING INDEX' in row[3] for row in plan)
+    finally:
+        stage.close()
 
 
 def test_research_bundle_contract_is_pure_and_requires_frozen_child_references():
@@ -30,7 +150,7 @@ def test_window_freeze_uses_versioned_selection_and_refuses_replay_before_carry(
         reader.replay(saved.snapshot_id, cutoff_ns=OPEN - 2)
 
 
-def test_bundle_overlap_is_counted_once_and_global_quality_is_recomputed():
+def test_bundle_overlap_is_counted_once_and_global_quality_is_recomputed(monkeypatch):
     datasets = importlib.import_module('backend.app.intraday_research.datasets')
     from backend.app.database import RESEARCH_INDEX_SCHEMA
     from backend.app.intraday_research.contracts import ResearchNamespace
@@ -50,6 +170,9 @@ def test_bundle_overlap_is_counted_once_and_global_quality_is_recomputed():
             OPEN + 3 * MINUTE, s.clock.now, frozen.known_at_ns, frozen.publication_id, frozen.publication_hash))
     request = datasets.DatasetBundle(tuple(children), ResearchNamespace(*reader.open(children[0].snapshot_id).manifest['namespace']), **resources)
     research = datasets.DatasetService(reader)
+    def forbidden(row):
+        raise AssertionError('REVALIDATING_ALREADY_FROZEN_REFERENCE_DURING_BUNDLE_STAGING')
+    monkeypatch.setattr(reader, '_reference', forbidden)
     result = research.freeze_bundle(request)
     before = s.db.total_changes
     reopened = research.open_bundle(result.bundle_id)
@@ -65,6 +188,30 @@ def test_bundle_overlap_is_counted_once_and_global_quality_is_recomputed():
         s.db.execute('DELETE FROM intraday_research_dataset_bundles WHERE id=?', (result.bundle_id,))
 
 
+def test_bundle_reference_identity_distinguishes_boolean_and_integer_projection():
+    from backend.app.intraday.snapshots import _StagedTimeline
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2,'max_chunk_bytes':8388608}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    frozen = reader.open(saved.snapshot_id)
+    stage = _StagedTimeline.from_frozen(reader,frozen.manifest,resources,[])
+    try:
+        row = next(row for row in frozen.timeline if row['table']=='intraday_observations')
+        ref = reader._reference(row)
+        ref['projection']['capture_ingest_sequence'] = 1
+        stage._frozen_batch(frozen,[ref])
+        changed = ref | {'projection':ref['projection'] | {'capture_ingest_sequence':True}}
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+            stage._frozen_batch(frozen,[changed])
+    finally:
+        stage.close()
+
+
 def test_bundle_quality_period_can_span_the_preregistered_multi_year_experiment():
     from test_intraday_quality import manifest
 
@@ -73,6 +220,235 @@ def test_bundle_quality_period_can_span_the_preregistered_multi_year_experiment(
     body.update(version='intraday-bundle-quality-v1',end_at_ns=OPEN+700*86400*1_000_000_000,
                 cutoff_ns=OPEN+700*86400*1_000_000_000,carry_at_ns=OPEN-1)
     validate_manifest(body)
+
+
+@pytest.mark.parametrize('cache_bytes', [67108864, 32768])
+def test_child_source_validation_is_shared_only_in_a_bounded_read_scope(monkeypatch, cache_bytes):
+    from collections import Counter
+
+    import backend.app.intraday.snapshots as snapshot_module
+    from backend.app.intraday_research.contracts import ResearchNamespace
+    from backend.app.intraday_research.datasets import DatasetBundle, DatasetChild, DatasetService
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes': 4 * 1024**3, 'min_free_bytes': 512 * 1024**2,
+                 'max_cache_bytes': cache_bytes}
+    children = []
+    for start in (OPEN, OPEN + 1):
+        saved = reader.freeze_window(start_at_ns=start, end_at_ns=OPEN + 3 * MINUTE,
+            cutoff_ns=s.clock.now, listing_ids=[s.listing], benchmarks={}, resources=resources)
+        frozen = reader.open(saved.snapshot_id)
+        children.append(DatasetChild(saved.snapshot_id, saved.digest, start, OPEN + 3 * MINUTE,
+            s.clock.now, frozen.known_at_ns, frozen.publication_id, frozen.publication_hash))
+    request = DatasetBundle(tuple(children), ResearchNamespace(*frozen.manifest['namespace']),
+        max_disk_bytes=resources['max_disk_bytes'], min_free_bytes=resources['min_free_bytes'])
+    calls = Counter()
+    size_headers = Counter()
+    original_encoder = snapshot_module._envelope_bytes
+    def counted_encoder(value,**kwargs):
+        if (value.get('table') in snapshot_module._SOURCE_TABLES and 'id' in value
+            and 'payload' not in value and 'payload_json' not in value and 'projection' not in value):
+            size_headers[(value['table'],value['id'])] += 1
+        return original_encoder(value,**kwargs)
+    monkeypatch.setattr(snapshot_module, '_envelope_bytes', counted_encoder)
+    original = reader._decode_source
+    def counted(table, source_id, **kwargs):
+        calls[(table, source_id)] += 1
+        return original(table, source_id, **kwargs)
+    monkeypatch.setattr(reader, '_decode_source', counted)
+    before = s.db.total_changes
+    datasets = DatasetService(reader)._children(request)
+    assert s.db.total_changes == before
+    assert max(calls.values()) == (1 if cache_bytes > 32768 else 2)
+    assert max(size_headers.values()) == (1 if cache_bytes > 32768 else 2)
+    first_counts = calls.copy()
+    DatasetService(reader)._children(request)
+    assert calls == Counter({key: 2 * value for key, value in first_counts.items()})
+    first = list(datasets[0].timeline)
+    assert all(not hasattr(row, '_byte_bound') for row in first)
+    first[0]['payload'].clear()
+    assert list(datasets[0].timeline)[0]['payload']
+
+
+def test_identical_child_references_reuse_completed_validation_but_check_each_child_closure(monkeypatch):
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    raw_queries = []
+    closures = []
+    original = reader._closure_batch
+    def closure(snapshot_id,rows):
+        closures.extend(row['id'] for row in rows if row['table']=='intraday_observations')
+        return original(snapshot_id,rows)
+    monkeypatch.setattr(reader,'_closure_batch',closure)
+    before = s.db.total_changes
+    try:
+        first = reader.open(saved.snapshot_id,_source_scope=scope)
+        s.db.set_trace_callback(raw_queries.append)
+        second = reader.open(saved.snapshot_id,_source_scope=scope)
+        s.db.set_trace_callback(None)
+        assert second.digest==first.digest and len(second.timeline)==len(first.timeline)
+        assert closures==[1,1]
+        assert not any('SELECT * FROM intraday_observations WHERE id IN' in query for query in raw_queries)
+        assert s.db.total_changes==before
+    finally:
+        s.db.set_trace_callback(None)
+        scope.close()
+
+
+def test_completed_reference_proof_requires_successful_child_and_exact_cutoff_and_local_receipt():
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    row = next(row for row in reader.open(saved.snapshot_id).timeline if row['table']=='intraday_observations')
+    ref = reader._reference(row)
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    try:
+        decoded = reader._hydrate_batch([ref],_source_scope=scope)[0]
+        scope.complete(ref,decoded)
+        assert scope.completed(ref,s.clock.now,8388608) is None
+        scope.finish_child(valid=False)
+        assert scope.completed(ref,s.clock.now,8388608) is None
+        scope.complete(ref,decoded)
+        scope.finish_child(valid=True)
+        completed = scope.completed(ref,s.clock.now,8388608)
+        assert completed is not None
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+            scope.completed(ref,row['available_at_ns']-1,8388608)
+        with pytest.raises(ValueError,match='RESOURCE_LIMIT'):
+            scope.completed(ref,s.clock.now,1)
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+            reader._closure_batch(saved.snapshot_id+1,[completed])
+        for changed in (ref | {'source_hash':'f'*64},ref | {'payload_hash':'f'*64},
+                        ref | {'projection':ref['projection'] | {'available_at_ns':row['available_at_ns']+1}}):
+            assert scope.completed(changed,s.clock.now,8388608) is None
+    finally:
+        scope.close()
+
+
+def test_cached_receipt_and_observation_in_same_batch_still_validate_typed_binding():
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    rows = [row for row in reader.open(saved.snapshot_id).timeline
+            if row['table']=='intraday_observations' or row.get('kind')=='ADMISSION']
+    refs = [reader._reference(row) for row in rows]
+    for ref,row in zip(refs,rows,strict=True):
+        ref['projection']['available_at_ns'] = row['available_at_ns']
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    try:
+        decoded = reader._hydrate_batch(refs,_source_scope=scope)
+        reader._closure_batch(saved.snapshot_id,decoded)
+        for ref,row in zip(refs,decoded,strict=True):
+            scope.complete(ref,row)
+        scope.finish_child(valid=True)
+        completed = [scope.completed(ref,s.clock.now,8388608) for ref in refs]
+        assert len(completed)==2 and all(row is not None for row in completed)
+        reader._closure_batch(saved.snapshot_id,completed)
+    finally:
+        scope.close()
+
+
+def test_completed_receipt_keeps_exact_raw_availability_when_projection_omits_it():
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    row = next(row for row in reader.open(saved.snapshot_id).timeline if row.get('kind')=='ADMISSION')
+    ref = reader._reference(row)
+    assert 'available_at_ns' not in ref['projection']
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    try:
+        decoded = reader._hydrate_batch([ref],_source_scope=scope)[0]
+        scope.complete(ref,decoded)
+        scope.finish_child(valid=True)
+        completed = scope.completed(ref,row['available_at_ns'],8388608)
+        assert completed is not None
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+            scope.completed(ref,row['available_at_ns']-1,8388608)
+    finally:
+        scope.close()
+
+
+def test_failed_child_open_discards_pending_proof_after_unexpected_exception(monkeypatch):
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    row = next(row for row in reader.open(saved.snapshot_id).timeline if row['table']=='intraday_observations')
+    ref = reader._reference(row)
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    complete = scope.complete
+    def stop_after_complete(reference,item):
+        complete(reference,item)
+        if item['table']=='intraday_observations':
+            raise RuntimeError('OFFLINE_VALIDATION_INTERRUPTED')
+    monkeypatch.setattr(scope,'complete',stop_after_complete)
+    try:
+        with pytest.raises(RuntimeError,match='OFFLINE_VALIDATION_INTERRUPTED'):
+            reader.open(saved.snapshot_id,_source_scope=scope)
+        assert scope.completed(ref,s.clock.now,8388608) is None
+        monkeypatch.setattr(scope,'complete',complete)
+        reader.open(saved.snapshot_id,_source_scope=scope)
+        assert scope.completed(ref,s.clock.now,8388608) is not None
+    finally:
+        scope.close()
+
+
+def test_failed_handle_construction_does_not_promote_child_proof(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    resources = {'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources=resources)
+    row = next(row for row in reader.open(saved.snapshot_id).timeline if row['table']=='intraday_observations')
+    ref = reader._reference(row)
+    scope = snapshots._ValidatedSources(reader,67108864,reader._read_signature())
+    def stop(*args,**kwargs):
+        raise RuntimeError('OFFLINE_HANDLE_INTERRUPTED')
+    monkeypatch.setattr(snapshots.FrozenTimeline,'__init__',stop)
+    try:
+        with pytest.raises(RuntimeError,match='OFFLINE_HANDLE_INTERRUPTED'):
+            reader.open(saved.snapshot_id,_source_scope=scope)
+        assert scope.completed(ref,s.clock.now,8388608) is None
+    finally:
+        scope.close()
 
 
 @pytest.mark.parametrize('stop', ['cancel', 'budget'])
@@ -112,6 +488,76 @@ def test_bundle_staging_checks_every_processed_occurrence_including_duplicates(m
                                    [SimpleNamespace(timeline=rows())], **kwargs)
     assert processed <= 1000
     assert s.db.execute("SELECT COUNT(*) FROM sqlite_temp_master WHERE name LIKE 'timeline_stage_%'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('changed_hash', ['uppercase', 'different', 'payload'])
+def test_cached_source_still_rejects_each_wrong_exact_reference(changed_hash):
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    s.store.persist((event(s),))
+    row = reader._decode_source('intraday_observations', 1)[1]
+    row['table'] = 'intraday_observations'
+    ref = reader._reference(row)
+    scope = _ValidatedSources(reader, 67108864, reader._read_signature())
+    try:
+        reader._hydrate_batch([ref], _source_scope=scope)
+        bad = dict(ref)
+        if changed_hash == 'payload':
+            bad['payload_hash'] = 'f' * 64
+        else:
+            bad['source_hash'] = ref['source_hash'].upper() if changed_hash == 'uppercase' else 'f' * 64
+        with pytest.raises(ValueError, match='SNAPSHOT_INPUT_MISSING'):
+            reader._hydrate_batch([bad], _source_scope=scope)
+    finally:
+        scope.close()
+
+
+@pytest.mark.parametrize('change', ['database', 'inventory', 'schema'])
+def test_source_scope_fences_transient_writes_inventory_and_schema(change):
+    from dataclasses import replace
+
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    scope = _ValidatedSources(reader, 67108864, reader._read_signature())
+    if change == 'database':
+        s.db.execute('CREATE TEMP TABLE scope_probe(value INTEGER)')
+        s.db.execute('INSERT INTO scope_probe VALUES(1)')
+        s.db.execute('DELETE FROM scope_probe')
+    elif change == 'inventory':
+        import uuid
+        reader.archive.settings = replace(reader.archive.settings, alpaca_api_secret_key=uuid.uuid4().hex)
+    else:
+        s.db.execute('CREATE TABLE scope_probe(value INTEGER)')
+    try:
+        with pytest.raises(ValueError, match='SNAPSHOT_INPUT_MISSING'):
+            scope.check(reader, full=True)
+    finally:
+        scope.close()
+    assert scope.closed and not scope.pages
+
+
+def test_source_scope_lru_is_global_and_high_ids_allocate_only_one_fixed_page():
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    scope = _ValidatedSources(reader, 170000, reader._read_signature())
+    table = 'intraday_observations'
+    try:
+        scope.remember(reader, table, 1, 'a' * 64)
+        scope.remember(reader, table, 1025, 'b' * 64)
+        assert scope.get(reader, table, 1) == 'a' * 64
+        scope.remember(reader, table, 2**62, 'c' * 64)
+        assert scope.get(reader, table, 1025) is None
+        assert scope.get(reader, table, 1) == 'a' * 64
+        assert scope.get(reader, 'intraday_capture_events', 1) is None
+        assert len(scope.pages) * scope._PAGE_CHARGE <= scope.budget
+    finally:
+        scope.close()
 
 
 def test_bundle_cancel_during_staging_rolls_back_before_raw_or_seal():
@@ -246,6 +692,31 @@ def _small_bundle():
     research = DatasetService(reader)
     result = research.freeze_bundle(DatasetBundle((child,),ResearchNamespace(*frozen.manifest['namespace']),**resources))
     return s,research,result
+
+
+def test_bundle_rejects_current_sensitive_inventory_matching_public_bundle_digest():
+    from dataclasses import replace
+
+    s,research,result = _small_bundle()
+    reader = research.snapshots
+    reader.archive.settings = replace(reader.archive.settings,alpaca_api_secret_key=result.digest)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        research.open_bundle(result.bundle_id)
+
+
+def test_bundle_fences_mutation_during_public_timeline_handle_construction(monkeypatch):
+    import backend.app.intraday_research.datasets as datasets
+
+    s,research,result = _small_bundle()
+    s.db.execute('DROP TRIGGER trg_intraday_observations_no_update')
+    original = datasets.FrozenTimeline.__init__
+    def changed(self,reader,snapshot_id,*args,**kwargs):
+        if 'refs_sql' in kwargs:
+            s.db.execute('UPDATE intraday_observations SET payload_json=?',('{"corrupt":true}',))
+        return original(self,reader,snapshot_id,*args,**kwargs)
+    monkeypatch.setattr(datasets.FrozenTimeline,'__init__',changed)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        research.open_bundle(result.bundle_id)
 
 
 @pytest.mark.parametrize('column',['recorded_at_ns','feed'])

@@ -11,9 +11,14 @@ import sqlite3
 import sys
 import tempfile
 import uuid
+from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass
-from itertools import chain, islice
+from itertools import chain
+from operator import attrgetter
 from pathlib import Path
+
+from pydantic_core import from_json, to_json
 
 from backend.app.data_providers.alpaca_metadata import (
     MAX_NS,
@@ -64,11 +69,20 @@ def _hash(value):
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
-def _envelope_bytes(row):
+_ENVELOPE_ENCODER = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+# Fresh SQLite headers and decoded projections are acyclic. This encoder has
+# no shared markers or caller values; its v1 options match JSONEncoder exactly.
+_OWNED_HEADER_ENCODER = (json.encoder.c_make_encoder(None,_ENVELOPE_ENCODER.default,
+    json.encoder.encode_basestring,None,':',',',True,False,False)
+    if json.encoder.c_make_encoder is not None else None)
+
+
+def _envelope_bytes(row, *, _owned=False):
     # Payloads have already passed their own canonical/hash validation. The
     # decoded envelope also contains payload_json and has a separate chunk cap.
-    return json.dumps(row, ensure_ascii=False, sort_keys=True,
-                      separators=(',', ':'), allow_nan=False).encode()
+    if _owned and _OWNED_HEADER_ENCODER is not None:
+        return ''.join(_OWNED_HEADER_ENCODER(row,0)).encode()
+    return _ENVELOPE_ENCODER.encode(row).encode()
 
 
 def _json_integer(text):
@@ -78,19 +92,55 @@ def _json_integer(text):
     return value
 
 
+_EVIDENCE_DECODER = json.JSONDecoder(parse_int=_json_integer)
+
+
+def _native_canonical(value):
+    """Native JSON keeps integer/string bytes; v1 float formatting stays stdlib."""
+    pending,native = [value],True
+    while pending:
+        item = pending.pop()
+        kind = type(item)
+        if kind is dict:
+            if tuple(item)!=tuple(sorted(item)):
+                native = False
+            pending.extend(item.values())
+        elif kind is list:
+            pending.extend(item)
+        elif kind is float:
+            # JSONEncoder uses float.__repr__. Native output is eligible only
+            # when each scalar has exactly those v1 bytes (including -0/exponents).
+            native = (to_json(item)==float.__repr__(item).encode()) and native
+        elif kind is int and item.bit_length()>=1024 and not math.isfinite(float(item)):
+            raise ValueError('METADATA_INVALID')
+    return native
+
+
 def _decode_evidence(raw):
     """Same canonical/hash contract, with JSON-native types validated once."""
     if raw is None:
         raise MetadataError('METADATA_MISSING')
     row = dict(raw)
     try:
-        if type(row['payload_json']) is not str or len(row['payload_json'].encode())>1_048_576:
+        if type(row['payload_json']) is not str:
             raise ValueError
-        payload = json.loads(row['payload_json'],parse_int=_json_integer)
+        raw_utf8 = row['payload_json'].encode()
+        if len(raw_utf8)>1_048_576:
+            raise ValueError
+        try:
+            payload = from_json(raw_utf8, allow_inf_nan=False, cache_strings=False)
+        except ValueError:
+            payload = _EVIDENCE_DECODER.decode(row['payload_json'])
         if type(payload) is not dict:
             raise ValueError
-        encoded = _envelope_bytes(payload)
-        if (len(encoded)>1_048_576 or encoded.decode()!=row['payload_json']
+        if _native_canonical(payload):
+            try:
+                encoded = to_json(payload)
+            except ValueError:
+                encoded = _envelope_bytes(payload)
+        else:
+            encoded = _envelope_bytes(payload)
+        if (len(encoded)>1_048_576 or encoded!=raw_utf8
             or hashlib.sha256(encoded).hexdigest()!=row['payload_hash']):
             raise ValueError
     except (ValueError,TypeError,KeyError,OverflowError,RecursionError):
@@ -99,7 +149,24 @@ def _decode_evidence(raw):
     return row
 
 
-def _row_byte_bound(row):
+class _ValidationRow(dict):
+    """Job/read-local size proof; never part of a public timeline envelope."""
+    __slots__ = ('_byte_bound',)
+
+
+def _row_byte_bound(row, *, _decoded=False):
+    if _decoded and isinstance(row, _ValidationRow):
+        return row._byte_bound
+    if _decoded and 'payload_json' in row and 'payload' in row:
+        # Only freshly decoded, validated archive rows use this path. The
+        # canonical payload has exactly these UTF-8 bytes; key order changes
+        # no length. Public/caller-owned values keep the full encoder below.
+        header = {key:value for key,value in row.items() if key not in {'payload','payload_json'}}
+        text = row['payload_json']
+        # Canonical JSON has no literal control characters: quoting its text
+        # adds one byte per quote/backslash and the two enclosing quotes.
+        return (len(_envelope_bytes(header,_owned=True)) + bool(header) + 28 + 2*len(text.encode())
+                + text.count('"') + text.count('\\'))
     return len(_envelope_bytes(row))
 
 
@@ -122,6 +189,11 @@ def _peak_rss_bytes():
 
 def _source_hash(row):
     return _hash({key: value for key, value in row.items() if key != 'payload_json'})
+
+
+def _reference_identity(reference):
+    return _envelope_bytes(reference | {'projection':{
+        key:value for key,value in reference['projection'].items() if key!='available_at_ns'}})
 
 
 def _digest(manifest, members):
@@ -149,6 +221,22 @@ class DatasetSnapshot:
     report_id: int
 
 
+def _reference_batches(cursor, *, max_bytes=2_097_152):
+    """Bound canonical reference texts before allocating their decoded trees."""
+    batch, size = [], 0
+    for item in cursor:
+        item_size = len(item[0].encode())
+        if item_size > max_bytes:
+            raise SnapshotError('RESOURCE_LIMIT')
+        if batch and (len(batch)==1000 or size+item_size>max_bytes):
+            yield batch
+            batch, size = [], 0
+        batch.append(item)
+        size += item_size
+    if batch:
+        yield batch
+
+
 @dataclass(frozen=True)
 class ValidatedDataset:
     snapshot_id: int
@@ -169,13 +257,13 @@ class ValidatedDataset:
 class FrozenTimeline:
     """Re-iterable exact references. Full validation precedes every public handle."""
     def __init__(self, reader, snapshot_id, manifest, count, *, max_occurrences=10_000, max_bytes=8_388_608,
-                 refs_sql=_REFS_SQL, links=None):
+                 refs_sql=_REFS_SQL, links=None, _signature=None):
         self.reader, self.snapshot_id, self.manifest, self.count = reader, snapshot_id, manifest, count
         self.max_occurrences, self.max_bytes = max_occurrences, max_bytes
         self.refs_sql = refs_sql
         self.links = links or (lambda news_id: reader._frozen_links(snapshot_id,news_id))
         self.validator = lambda: reader.open(snapshot_id,max_occurrences=max_occurrences,max_bytes=max_bytes)
-        self.signature = reader._read_signature()
+        self.signature = reader._read_signature() if _signature is None else _signature
 
     def __len__(self):
         return self.count
@@ -219,7 +307,7 @@ class FrozenTimeline:
             raise SnapshotError('RESOURCE_LIMIT')
         self._fence()
         cursor = self._ordered(cutoff)
-        while items := list(islice(cursor,1_000)):
+        for items in _reference_batches(cursor):
             for rows in self.reader._hydrated_batches([json.loads(item[0]) for item in items],validated=True):
                 if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
                     raise SnapshotError('RESOURCE_LIMIT')
@@ -236,7 +324,7 @@ class FrozenTimeline:
     def chunks(self, *, cutoff_ns=None):
         chunk, size = [], 0
         for row in self.iter_rows(cutoff_ns=cutoff_ns):
-            row_size = _row_byte_bound(row)
+            row_size = _row_byte_bound(row, _decoded=True)
             if row_size>self.max_bytes:
                 row_size = len(_envelope_bytes(row))
             if row_size > self.max_bytes:
@@ -269,7 +357,7 @@ class FrozenTimeline:
                            or input_type == 'UNIVERSE' and row['table'] == 'intraday_universe_members'))
             if matched:
                 if offset <= total < offset + limit and not full:
-                    row_size = _row_byte_bound(row)
+                    row_size = _row_byte_bound(row, _decoded=True)
                     if row_size>self.max_bytes:
                         row_size = len(_envelope_bytes(row))
                     if row_size>self.max_bytes:
@@ -285,6 +373,134 @@ class FrozenTimeline:
         self._fence(buffered=True)
         return {'items': items, 'total': total, 'offset': offset, 'limit': limit,
                 'next_offset': offset + len(items) if offset + len(items) < total else None}
+
+
+class _ValidatedSources:
+    """One read scope: digest/size proofs, bounded global LRU, no durable cache."""
+    _PAGE_IDS = 1024
+    _ENTRY_BYTES = 76  # two SHA256, exact envelope size, effective availability ns
+    # Include page buffers, bitmap, key/node/allocator overhead and transients.
+    _PAGE_CHARGE = _PAGE_IDS * _ENTRY_BYTES + 128 + _PAGE_IDS + 1024
+    _PROMOTE = bytes(value & 127 for value in range(256))
+    _DISCARD = bytes(0 if value & 128 else value for value in range(256))
+
+    def __init__(self, reader, budget, signature):
+        self.reader, self.connection, self.signature = reader, reader.connection, signature
+        self.namespace = self._namespace()
+        self.budget = max(0, budget - 4096)
+        self.pages = OrderedDict()
+        self.closed = False
+
+    def _namespace(self):
+        store = self.reader.store
+        return (store.profile.profile_id, store.profile.feed, *store.namespace[1:])
+
+    def check(self, reader, *, full=False):
+        if (self.closed or reader is not self.reader or reader.connection is not self.connection
+            or self.connection.total_changes-getattr(reader,'_scratch_changes',0) != self.signature[0]
+            or reader._secret_fields() != self.signature[3]
+            or full and (self._namespace()!=self.namespace or reader._read_signature()!=self.signature)):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+
+    def get(self, reader, table, source_id):
+        self.check(reader)
+        key, offset = (table, source_id // self._PAGE_IDS), source_id % self._PAGE_IDS
+        page = self.pages.get(key)
+        if page is None or not page[1][offset//8] & (1 << (offset%8)):
+            return None
+        self.pages.move_to_end(key)
+        position = self._ENTRY_BYTES*offset
+        return page[0][position:position+32].hex()
+
+    def remember(self, reader, table, source_id, source_hash):
+        self.check(reader)
+        if self.budget < self._PAGE_CHARGE:
+            return
+        key, offset = (table, source_id // self._PAGE_IDS), source_id % self._PAGE_IDS
+        page = self.pages.get(key)
+        if page is None:
+            while (len(self.pages)+1)*self._PAGE_CHARGE > self.budget:
+                self.pages.popitem(last=False)
+            page = (bytearray(self._PAGE_IDS*self._ENTRY_BYTES), bytearray(self._PAGE_IDS//8),
+                    bytearray(self._PAGE_IDS))
+            self.pages[key] = page
+        self.pages.move_to_end(key)
+        position = self._ENTRY_BYTES*offset
+        page[0][position:position+32] = bytes.fromhex(source_hash)
+        page[2][offset] = 0
+        page[1][offset//8] |= 1 << (offset%8)
+
+    def byte_bound(self, row, reference):
+        self.check(self.reader)
+        key, offset = (reference['table'],reference['id']//self._PAGE_IDS), reference['id']%self._PAGE_IDS
+        page = self.pages.get(key)
+        if page is None:
+            return _row_byte_bound(row, _decoded=True)
+        position = self._ENTRY_BYTES*offset
+        proof = hashlib.sha256(_envelope_bytes(reference)).digest()
+        size = int.from_bytes(page[0][position+64:position+68])
+        if size and page[0][position+32:position+64] == proof:
+            self.pages.move_to_end(key)
+            return size
+        size = _row_byte_bound(row, _decoded=True)
+        page[2][offset] = 0
+        page[0][position+32:position+64] = proof
+        page[0][position+64:position+68] = size.to_bytes(4)
+        return size
+
+    def complete(self, reference, row):
+        """Attest only simple replay rows, after source/visibility/closure pass."""
+        if (type(row.get('available_at_ns')) is not int or row.get('publication_id') is not None
+            or row['table']=='intraday_capture_events' and (row.get('admission_id') is not None
+                or row.get('kind')!='ADMISSION' or row['payload'].get('orphan_raw_proof')
+                or row['payload'].get('metadata_kind')=='COLLECTOR_HANDSHAKE'
+                or row['payload'].get('version')!='intraday-admission-v1'
+                or set(row['payload'])!={'version','observation_id','payload_hash','durable_at_ns'})):
+            return
+        flag = (1 if row['table']=='intraday_capture_events' else
+                2 if row['table']=='intraday_observations' and row.get('admission_id') is not None else 0)
+        key,offset = (reference['table'],reference['id']//self._PAGE_IDS),reference['id']%self._PAGE_IDS
+        page = self.pages.get(key)
+        if page is not None and flag:
+            position = self._ENTRY_BYTES*offset
+            page[0][position+68:position+76] = row['available_at_ns'].to_bytes(8)
+            page[2][offset] = flag | 128
+
+    def finish_child(self, *, valid):
+        if valid:
+            self.check(self.reader, full=True)
+        translation = self._PROMOTE if valid else self._DISCARD
+        for page in self.pages.values():
+            page[2][:] = page[2].translate(translation)
+
+    def completed(self, reference, cutoff, max_bytes):
+        self.check(self.reader)
+        key,offset = (reference['table'],reference['id']//self._PAGE_IDS),reference['id']%self._PAGE_IDS
+        page = self.pages.get(key)
+        if page is None or not page[2][offset] or page[2][offset] & 128:
+            return None
+        position = self._ENTRY_BYTES*offset
+        proof = hashlib.sha256(_envelope_bytes(reference)).digest()
+        if page[0][position+32:position+64] != proof:
+            return None
+        at = int.from_bytes(page[0][position+68:position+76])
+        size = int.from_bytes(page[0][position+64:position+68])
+        if at>cutoff:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if size>max_bytes:
+            raise SnapshotError('RESOURCE_LIMIT')
+        row = _ValidationRow({'table':reference['table'],'id':reference['id'],'payload_hash':reference['payload_hash'],
+                              'payload':{},**reference['projection']})
+        row['available_at_ns'] = at
+        if page[2][offset]==1:
+            row['kind'] = 'ADMISSION'
+        row._byte_bound = size
+        self.pages.move_to_end(key)
+        return row
+
+    def close(self):
+        self.pages.clear()
+        self.closed = True
 
 
 class _StagedTimeline:
@@ -308,12 +524,14 @@ class _StagedTimeline:
 
     def _create_stage(self):
         self.db.execute(f'''CREATE TEMP TABLE {self.stage}(source_table TEXT,source_id INTEGER,
-            row_json TEXT,reference_json TEXT,replay INTEGER NOT NULL,processed INTEGER NOT NULL DEFAULT 0,
+            replay INTEGER NOT NULL,processed INTEGER NOT NULL DEFAULT 0,
             kind TEXT,listing_id INTEGER,event_time_ns INTEGER,available_at_ns INTEGER,capture_id TEXT,received_at_ns INTEGER,
+            row_json TEXT,reference_json TEXT,
             PRIMARY KEY(source_table,source_id)) WITHOUT ROWID''')
         self.db.execute(f'CREATE INDEX {self.stage}_market ON {self.stage}(kind,listing_id,available_at_ns,event_time_ns)')
         self.db.execute(f'CREATE INDEX {self.stage}_event ON {self.stage}(event_time_ns)')
         self.db.execute(f'CREATE INDEX {self.stage}_pending ON {self.stage}(processed,source_table,source_id)')
+        self.db.execute(f'CREATE INDEX {self.stage}_liveness ON {self.stage}(kind,capture_id,received_at_ns,available_at_ns)')
 
     @classmethod
     def from_frozen(cls, reader, manifest, resources, datasets, *, cancelled=None):
@@ -326,6 +544,22 @@ class _StagedTimeline:
             processed = 0
             for dataset in datasets:
                 reader._cancel(cancelled, 'DURING_BUNDLE_STAGING')
+                if isinstance(dataset, ValidatedDataset):
+                    timeline = dataset.timeline
+                    if timeline.reader is not reader or timeline.snapshot_id != dataset.snapshot_id:
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                    timeline._fence(buffered=True)
+                    cursor = reader.connection.execute(_REFS_SQL+' SELECT reference_json FROM refs WHERE replay=1',
+                                                       {'snapshot':dataset.snapshot_id})
+                    for items in _reference_batches(cursor):
+                        processed += len(items)
+                        result.check_budget()
+                        reader._cancel(cancelled, 'DURING_BUNDLE_STAGING')
+                        timeline._fence(buffered=True)
+                        result._frozen_batch(dataset,[json.loads(item[0]) for item in items])
+                        timeline._fence(buffered=True)
+                    cursor.close()
+                    continue
                 for row in dataset.timeline:
                     processed += 1
                     if processed % 1000 == 0:
@@ -336,9 +570,7 @@ class _StagedTimeline:
                                                  (row['table'],row['id'])).fetchone()
                     if previous:
                         old = json.loads(previous[0])
-                        def identity(value):
-                            return value | {'projection': {key:item for key,item in value['projection'].items() if key!='available_at_ns'}}
-                        if identity(old) != identity(ref):
+                        if _reference_identity(old) != _reference_identity(ref):
                             raise MetadataError('SNAPSHOT_INPUT_MISSING')
                         previous_at = old['projection'].get('available_at_ns',row['available_at_ns'])
                         if previous_at <= row['available_at_ns']:
@@ -361,6 +593,49 @@ class _StagedTimeline:
         except Exception:
             result.close()
             raise
+
+    def _frozen_batch(self, dataset, references):
+        """Consume already validated refs, deduplicate before bounded hydration."""
+        by_table = {}
+        for ref in references:
+            by_table.setdefault(ref['table'],[]).append(ref['id'])
+        previous = {}
+        for table,ids in by_table.items():
+            placeholders = ','.join('?' for _ in ids)
+            query = f'SELECT source_id,reference_json FROM {self.stage} WHERE source_table=? AND source_id IN ({placeholders})'
+            previous.update({(table,item[0]):json.loads(item[1]) for item in self.db.execute(query,(table,*ids))})
+        pending = []
+        for ref in references:
+            old = previous.get((ref['table'],ref['id']))
+            if old is not None:
+                if _reference_identity(old) != _reference_identity(ref):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                old_at, new_at = old['projection'].get('available_at_ns'), ref['projection'].get('available_at_ns')
+                if old_at is None and new_at is None:
+                    continue
+                if old_at is None or new_at is None:
+                    raw_at = self.reader._raw_source(ref['table'],ref['id'])['available_at_ns']
+                    old_at = raw_at if old_at is None else old_at
+                    new_at = raw_at if new_at is None else new_at
+                if old_at <= new_at:
+                    continue
+            pending.append(ref)
+        offset = 0
+        for rows in self.reader._hydrated_batches(pending,validated=True) if pending else ():
+            values = []
+            for row,ref in zip(rows,pending[offset:offset+len(rows)],strict=True):
+                if row['table']=='intraday_news_versions':
+                    row['links'] = self.reader._frozen_links(dataset.snapshot_id,row['id'])
+                encoded = _envelope_bytes(row)
+                if len(encoded)>self.resources['max_chunk_bytes']:
+                    raise SnapshotError('RESOURCE_LIMIT')
+                values.append((row['table'],row['id'],encoded.decode(),canonical_json(ref),row.get('kind'),
+                    row.get('listing_id'),row.get('event_time_ns'),row['available_at_ns'],row['capture_id'],row['received_at_ns']))
+            changed = self.db.executemany(f'''INSERT OR REPLACE INTO {self.stage}
+                (source_table,source_id,row_json,reference_json,replay,processed,kind,listing_id,event_time_ns,
+                 available_at_ns,capture_id,received_at_ns) VALUES(?,?,?,?,1,1,?,?,?,?,?,?)''',values).rowcount
+            self.reader._scratch_changes = getattr(self.reader,'_scratch_changes',0)+changed
+            offset += len(rows)
 
     def check_budget(self):
         size = self.db.execute('PRAGMA temp.page_count').fetchone()[0] * self.db.execute('PRAGMA temp.page_size').fetchone()[0]
@@ -592,6 +867,23 @@ class SnapshotService:
     def __init__(self, store):
         self.store, self.archive, self.connection = store, store.archive, store.connection
 
+    @contextmanager
+    def validated_sources(self, snapshot_ids):
+        signature = self._read_signature()
+        budget = 67_108_864
+        for snapshot_id in snapshot_ids:
+            header = _decode_evidence(self.connection.execute(
+                'SELECT * FROM intraday_dataset_snapshots WHERE id=?', (snapshot_id,)).fetchone())
+            validate_manifest(header['payload'])
+            budget = min(budget, header['payload'].get('resources',{}).get('max_cache_bytes',67_108_864))
+        scope = _ValidatedSources(self, budget, signature)
+        try:
+            scope.check(self, full=True)
+            yield scope
+            scope.check(self, full=True)
+        finally:
+            scope.close()
+
     def register_policy(self):
         """Explicit ex-ante registration; freeze never installs today's policy retroactively."""
         if self.connection.in_transaction:
@@ -643,7 +935,7 @@ class SnapshotService:
     def _decode_source(self, table, source_id, *, raw=None):
         raw = self._raw_source(table,source_id) if raw is None else raw
         header = {key:value for key,value in raw.items() if key!='payload_json'}
-        encoded = _envelope_bytes(header)
+        encoded = _envelope_bytes(header,_owned=True)
         if len(encoded)>1_048_576:
             raise MetadataError('METADATA_INVALID')
         row = _decode_evidence(raw)
@@ -658,8 +950,15 @@ class SnapshotService:
         if getattr(self,'_secret_settings',None) is not settings:
             self._secret_names = tuple(name for name in vars(settings)
                 if name.endswith(('_api_key','_token','_chat_id')) or name in {'alpaca_api_key_id','alpaca_api_secret_key'})
+            self._secret_getter = (attrgetter(*self._secret_names)
+                if self._secret_names and not any('.' in name for name in self._secret_names) else None)
             self._secret_settings = settings
-        return tuple((name,getattr(settings,name)) for name in self._secret_names)
+        if self._secret_getter is None:
+            return tuple((name,getattr(settings,name)) for name in self._secret_names)
+        values = self._secret_getter(settings)
+        if len(self._secret_names)==1:
+            values = (values,)
+        return tuple(zip(self._secret_names,values,strict=True))
 
     def _read_signature(self):
         secret_fields = self._secret_fields()
@@ -667,15 +966,14 @@ class SnapshotService:
                 self.connection.execute('PRAGMA schema_version').fetchone()[0],secret_fields)
 
     def _reference(self, row):
-        raw = self._source(row['table'], row['id'])
-        decoded = decode_row(raw)
+        raw, decoded, source_hash = self._decode_source(row['table'], row['id'])
         if decoded['payload_hash'] != row['payload_hash'] or decoded['payload'] != row['payload']:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         projection = {key: value for key, value in row.items()
                       if key not in {'payload', 'payload_json', 'payload_hash', 'links'} and
                       (key not in raw or value != raw[key])}
         return {'table': row['table'], 'id': row['id'], 'payload_hash': raw['payload_hash'],
-                'source_hash': _source_hash(raw), 'projection': projection}
+                'source_hash': source_hash, 'projection': projection}
 
     def _hydrate(self, reference, *, _validated=False):
         allowed = {'available_at_ns','recorded_available_at_ns','admission_id','publication_id','publication_hash',
@@ -694,7 +992,7 @@ class SnapshotService:
         row['table'] = reference['table']
         return row
 
-    def _hydrate_batch(self, references, *, validated=False):
+    def _hydrate_batch(self, references, *, validated=False, _source_scope=None):
         """Bounded working set; tuple cursors avoid repeated sqlite Row key scans."""
         allowed = {'available_at_ns','recorded_available_at_ns','admission_id','publication_id','publication_hash',
                    'capture_ingest_sequence','metadata_dependency','first_received_at_ns','table'}
@@ -722,18 +1020,36 @@ class SnapshotService:
                     row = raw
                     row['payload'] = json.loads(row['payload_json'])
                 else:
-                    raw,row,source_hash = self._decode_source(table,raw['id'],raw=raw)
+                    source_hash = _source_scope.get(self,table,raw['id']) if _source_scope is not None else None
+                    cached = source_hash is not None
+                    if source_hash is None:
+                        raw,row,source_hash = self._decode_source(table,raw['id'],raw=raw)
+                    else:
+                        row = raw
+                        row['payload'] = _EVIDENCE_DECODER.decode(row['payload_json'])
                     if raw['payload_hash']!=ref['payload_hash'] or source_hash!=ref['source_hash']:
                         raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                    if _source_scope is not None and not cached:
+                        _source_scope.remember(self,table,raw['id'],source_hash)
                 row.update(ref['projection'])
                 row['table'] = table
+                if not validated:
+                    bound = _source_scope.byte_bound(row,ref) if _source_scope is not None else _row_byte_bound(row,_decoded=True)
+                    row = _ValidationRow(row)
+                    row._byte_bound = bound
                 sources[(table,row['id'])] = row
             cursor.close()
         if len(sources)!=sum(len(refs) for refs in by_table.values()):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         return [sources[(ref['table'],ref['id'])] for ref in references]
 
-    def _hydrated_batches(self, references, *, validated=False):
+    def _hydrated_batches(self, references, *, validated=False, _source_scope=None):
+        if _source_scope is not None:
+            _source_scope.check(self, full=True)
+        def hydrate(batch):
+            if _source_scope is None:
+                return self._hydrate_batch(batch, validated=validated)
+            return self._hydrate_batch(batch, validated=validated, _source_scope=_source_scope)
         # Inspect byte lengths before allocating envelopes. Large valid news
         # split into small working batches rather than rejecting a whole page.
         sizes = {}
@@ -754,12 +1070,12 @@ class SnapshotService:
             if key not in sizes:
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
             if batch and size+sizes[key]>8_388_608:
-                yield self._hydrate_batch(batch,validated=validated)
+                yield hydrate(batch)
                 batch,size = [],0
             batch.append(ref)
             size += sizes[key]
         if batch:
-            yield self._hydrate_batch(batch,validated=validated)
+            yield hydrate(batch)
 
     @staticmethod
     def _cancel(cancelled, stage):
@@ -1041,12 +1357,13 @@ class SnapshotService:
 
     def _closure_batch(self, snapshot_id, rows):
         sources = {(row['table'],row['id']):row for row in rows}
-        needed = set()
+        needed, admissions = set(), set()
         for row in rows:
             table,payload = row['table'],row['payload']
-            for key in ('admission_id','publication_id'):
-                if row.get(key) is not None:
-                    needed.add(('intraday_capture_events',row[key]))
+            if row.get('admission_id') is not None:
+                admissions.add(('intraday_capture_events',row['admission_id']))
+            if row.get('publication_id') is not None:
+                needed.add(('intraday_capture_events',row['publication_id']))
             identity = payload.get('identity') if table in {'intraday_event_versions','intraday_news_links'} else None
             if identity is not None:
                 needed.add(('intraday_identity_versions',identity['id']))
@@ -1069,6 +1386,28 @@ class SnapshotService:
                                        (table,ref['checkpoint_admission_id'])))
                         for status in ref['status_refs']:
                             needed.update((('intraday_observations',status['id']),(table,status['admission_id'])))
+        # These edges need only the typed binding. The receipt itself still
+        # undergoes the complete member/source pass before open can return.
+        # Other uses (publication/document/handshake) retain full hydration.
+        ids = [source_id for table,source_id in admissions-needed
+               if (table,source_id) not in sources
+               or 'observation_id' not in sources[(table,source_id)]
+               or 'payload_hash' not in sources[(table,source_id)]['payload']]
+        for start in range(0,len(ids),500):
+            part = ids[start:start+500]
+            placeholders = ','.join('?' for _ in part)
+            query = f'''SELECT raw.id,raw.kind,raw.observation_id,raw.news_version_id,raw.event_version_id,
+                raw.payload_hash,json_extract(raw.payload_json,'$.payload_hash') AS admitted_hash,
+                json_extract(m.payload_json,'$.reference.payload_hash') AS member_hash
+                FROM intraday_dataset_members m JOIN intraday_capture_events raw ON raw.id=m.capture_event_id
+                WHERE m.snapshot_id=? AND raw.id IN ({placeholders})'''
+            for receipt in self.connection.execute(query,(snapshot_id,*part)):
+                if receipt['payload_hash'] != receipt['member_hash']:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                sources[('intraday_capture_events',receipt['id'])] = {
+                    key:receipt[key] for key in ('id','kind','observation_id','news_version_id','event_version_id','payload_hash')}
+                sources[('intraday_capture_events',receipt['id'])]['payload'] = {'payload_hash':receipt['admitted_hash']}
+        needed.update(admissions)
         by_table = {}
         for table,source_id in needed-sources.keys():
             if table not in _SOURCE_TABLES or type(source_id) is not int or source_id<=0:
@@ -1092,10 +1431,10 @@ class SnapshotService:
                     params = {'snapshot':snapshot_id,'table':table,
                               **{f'source{index}':item for index,item in enumerate(part)}}
                 references.extend(json.loads(item[0]) for item in self.connection.execute(query,params))
-        size = sum(_row_byte_bound(row) for row in rows)
-        for batch in self._hydrated_batches(references,validated=True):
+        size = sum(_row_byte_bound(row, _decoded=True) for row in rows)
+        for batch in self._hydrated_batches(references,validated=True) if references else ():
             for row in batch:
-                size += _row_byte_bound(row)
+                size += _row_byte_bound(row, _decoded=True)
                 if size>67_108_864:
                     if len(rows)==1:
                         raise SnapshotError('RESOURCE_LIMIT')
@@ -1171,22 +1510,27 @@ class SnapshotService:
                     if observation.get('admission_id')!=status['admission_id'] or observation['capture_id']!=row['capture_id']:
                         raise MetadataError('SNAPSHOT_INPUT_MISSING')
 
-    def open(self, snapshot_id, *, max_occurrences=10_000, max_bytes=8_388_608):
+    def open(self, snapshot_id, *, max_occurrences=10_000, max_bytes=8_388_608, _source_scope=None):
         """Validate every exact member before returning a bounded timeline handle."""
         if (type(max_occurrences) is not int or not 1 <= max_occurrences <= 10_000
             or type(max_bytes) is not int or not 1 <= max_bytes <= 8_388_608):
             raise SnapshotError('RESOURCE_LIMIT')
         try:
-            return self._open(snapshot_id, max_occurrences, max_bytes)
+            return self._open(snapshot_id, max_occurrences, max_bytes, _source_scope)
         except SnapshotError:
             raise
         except (MetadataError, ValueError, KeyError, TypeError, OverflowError, RecursionError, sqlite3.DatabaseError):
             raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
+        finally:
+            if _source_scope is not None:
+                _source_scope.finish_child(valid=False)
 
-    def _open(self, snapshot_id, max_occurrences, max_bytes):
+    def _open(self, snapshot_id, max_occurrences, max_bytes, _source_scope=None):
         from backend.app.intraday.replay import visible_rows
 
         signature = self._read_signature()
+        if _source_scope is not None:
+            _source_scope.check(self, full=True)
         if type(snapshot_id) is not int or snapshot_id <= 0:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         header = _decode_evidence(self.connection.execute('SELECT * FROM intraday_dataset_snapshots WHERE id=?', (snapshot_id,)).fetchone())
@@ -1237,16 +1581,30 @@ class SnapshotService:
         hasher.update(text)
         members = replay_count = audit_count = 0
         latest = max(header['persisted_at_ns'], report['persisted_at_ns'])
-        pending = []
+        pending, pending_bytes = [], 0
         def validate_pending():
-            nonlocal replay_count,audit_count
+            nonlocal replay_count,audit_count,pending_bytes
             roles = {(ref['table'],ref['id']):replay for ref,replay in pending}
-            for rows in self._hydrated_batches([ref for ref,replay in pending]):
+            remaining,cached = [],[]
+            if _source_scope is not None:
+                _source_scope.check(self, full=True)
+            for ref,replay in pending:
+                row = _source_scope.completed(ref,manifest['cutoff_ns'],max_bytes) if _source_scope is not None and replay else None
+                if row is None:
+                    remaining.append(ref)
+                else:
+                    cached.append(row)
+            if cached:
+                # A shared proof does not attest inclusion in this child. Its
+                # receipt edges are checked again against this exact snapshot.
+                self._closure_batch(snapshot_id,cached)
+                replay_count += len(cached)
+            for rows in self._hydrated_batches(remaining, _source_scope=_source_scope) if remaining else ():
                 if _peak_rss_bytes()>rss_limit:
                     raise SnapshotError('RESOURCE_LIMIT')
                 replay_rows = []
                 for row in rows:
-                    if _row_byte_bound(row)>max_bytes:
+                    if _row_byte_bound(row, _decoded=True)>max_bytes:
                         raise SnapshotError('RESOURCE_LIMIT')
                     if roles[(row['table'],row['id'])]:
                         if len(visible_rows((row,),cutoff_ns=manifest['cutoff_ns'],namespace=namespace,_decoded=True))!=1:
@@ -1258,10 +1616,20 @@ class SnapshotService:
                             raise MetadataError('SNAPSHOT_INPUT_MISSING')
                         audit_count += 1
                 self._closure_batch(snapshot_id,replay_rows)
+                if _source_scope is not None:
+                    references = {(ref['table'],ref['id']):ref for ref in remaining}
+                    for row in replay_rows:
+                        _source_scope.complete(references[(row['table'],row['id'])],row)
                 if _peak_rss_bytes()>rss_limit:
                     raise SnapshotError('RESOURCE_LIMIT')
             pending.clear()
-        for raw in self.connection.execute('SELECT * FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence', (snapshot_id,)):
+            pending_bytes = 0
+        cursor = self.connection.cursor()
+        cursor.row_factory = None
+        cursor.execute('SELECT * FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence', (snapshot_id,))
+        keys = tuple(column[0] for column in cursor.description)
+        for values in cursor:
+            raw = dict(zip(keys, values, strict=True))
             member = _decode_evidence(raw)
             body = member['payload']
             if (tuple(member[key] for key in _SCOPE) != namespace or member['ingest_run_id'] != header['ingest_run_id']
@@ -1279,11 +1647,15 @@ class SnapshotService:
             members += 1
             latest = max(latest, member['persisted_at_ns'])
             for ref in chain((reference,), body['dependencies']):
+                if pending and pending_bytes+len(text)>2_097_152:
+                    validate_pending()
                 pending.append((ref,body['replay']))
+                pending_bytes += len(text)
                 if len(pending)==1_000:
                     validate_pending()
         if pending:
             validate_pending()
+        cursor.close()
         if (hasher.hexdigest() != header['digest'] or members != header['member_count']
             or members != manifest['typed_member_count'] or replay_count != manifest['timeline_count']
             or replay_count != proof['timeline_count'] or audit_count != manifest['audit_member_count']
@@ -1291,13 +1663,18 @@ class SnapshotService:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         self.archive.safe_json(manifest)
         self.archive.safe_json(report['payload'])
+        self.archive.safe_json({'digest':header['digest'],'publication_hash':pub['payload_hash']})
         if _peak_rss_bytes()>rss_limit:
             raise SnapshotError('RESOURCE_LIMIT')
+        timeline = FrozenTimeline(self, snapshot_id, manifest, replay_count,
+                                  max_occurrences=max_occurrences, max_bytes=max_bytes, _signature=signature)
+        result = ValidatedDataset(snapshot_id, header['digest'], pub['available_at_ns'], manifest, report['payload'],
+                                  timeline, pub['id'], pub['payload_hash'])
         if signature!=self._read_signature():
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        return ValidatedDataset(snapshot_id, header['digest'], pub['available_at_ns'], manifest, report['payload'],
-            FrozenTimeline(self, snapshot_id, manifest, replay_count,
-                           max_occurrences=max_occurrences, max_bytes=max_bytes), pub['id'], pub['payload_hash'])
+        if _source_scope is not None:
+            _source_scope.finish_child(valid=True)
+        return result
 
 
 def _validate_closure(rows, audits):

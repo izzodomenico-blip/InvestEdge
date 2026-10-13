@@ -1133,6 +1133,7 @@ def _intraday_schema() -> tuple[str, str]:
                       raw.availability_floor_ns,COALESCE(raw.available_at_ns,0)))
             BEGIN SELECT RAISE(ABORT,'INTRADAY_INVALID_ADMISSION'); END;""")
     for name,table,columns in (
+        ("dataset_member_sequence","intraday_dataset_members","snapshot_id,ingest_sequence"),
         ("observations_logical","intraday_observations","profile_id,data_mode,provenance,replay_grade,listing_id,kind,logical_key,capture_id"),
         ("observations_sequence","intraday_observations","ingest_sequence"),
         ("capture_sequence","intraday_capture_events","ingest_sequence"),
@@ -1144,6 +1145,20 @@ def _intraday_schema() -> tuple[str, str]:
     indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_observation_admission
         ON intraday_capture_events(observation_id,kind,available_at_ns)
         WHERE observation_id IS NOT NULL;""")
+    indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_observation_receipt_read
+        ON intraday_capture_events(observation_id,kind,available_at_ns,id,payload_hash,payload_json)
+        WHERE observation_id IS NOT NULL;""")
+    indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_observation_source_read
+        ON intraday_observations(profile_id,data_mode,provenance,replay_grade,listing_id,kind,
+            logical_key,capture_id,ingest_run_id,provider,feed,schema_version,ingest_sequence,
+            source_event_id,source_revision_id,event_time_ns,received_at_ns,persisted_at_ns,
+            admitted_at_ns,available_at_ns,availability_floor_ns,payload_json,payload_hash,
+            quality,reason_code,bar_end_ns);""")
+    indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_news_links_news
+        ON intraday_news_links(news_version_id,id);""")
+    indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_dataset_member_dependencies
+        ON intraday_dataset_members(snapshot_id)
+        WHERE json_array_length(payload_json,'$.dependencies')>0;""")
     return "\n".join(sql), "\n".join(indexes)
 
 
