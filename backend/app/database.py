@@ -1147,8 +1147,147 @@ def _intraday_schema() -> tuple[str, str]:
     return "\n".join(sql), "\n".join(indexes)
 
 
+def _intraday_research_schema() -> tuple[str, str]:
+    """SP3 evidence only: additive tables, exact namespace FKs, no executable jobs."""
+    namespace = "profile_id,feed,data_mode,provenance,replay_grade"
+    scoped = """
+        profile_id TEXT NOT NULL, feed TEXT NOT NULL CHECK(feed IN ('iex','sip','delayed_sip')),
+        data_mode TEXT NOT NULL CHECK(data_mode IN ('REAL','DEMO')),
+        provenance TEXT NOT NULL CHECK(provenance IN ('CAPTURED','HISTORICAL_CURRENT','SYNTHETIC')),
+        replay_grade TEXT NOT NULL CHECK(replay_grade IN ('STRICT_PIT','RESEARCH_ONLY'))
+    """
+
+    def ns(name, nullable=False):
+        null_check = f"{name} IS NULL OR " if nullable else ""
+        return (f"{name} INTEGER" + ("" if nullable else " NOT NULL") +
+                f" CHECK({null_check}(typeof({name})='integer' AND {name}>=0))")
+
+    def digest(name):
+        return f"{name} TEXT NOT NULL CHECK(length({name})=64 AND {name} NOT GLOB '*[^a-f0-9]*')"
+
+    common = f"""id INTEGER PRIMARY KEY, {scoped}, schema_version TEXT NOT NULL CHECK(schema_version='intraday-research-v1'),
+        payload_json TEXT NOT NULL CHECK(CASE WHEN json_valid(payload_json) THEN
+            json_type(payload_json)='object' AND length(CAST(payload_json AS BLOB))<=1048576 ELSE 0 END),
+        {digest('payload_hash')}, {ns('recorded_at_ns')}"""
+    scope_checks = f"""CHECK(data_mode='REAL' OR provenance='SYNTHETIC'),
+        CHECK(provenance='CAPTURED' OR replay_grade='RESEARCH_ONLY'),
+        FOREIGN KEY(profile_id,feed) REFERENCES intraday_feed_profiles(id,feed) ON DELETE RESTRICT ON UPDATE RESTRICT,
+        UNIQUE(id,{namespace})"""
+
+    def manifest_fk():
+        return f"FOREIGN KEY(manifest_id,{namespace}) REFERENCES intraday_research_manifests(id,{namespace}) ON DELETE RESTRICT ON UPDATE RESTRICT"
+
+    def trial_fk():
+        return f"FOREIGN KEY(trial_id,manifest_id,{namespace}) REFERENCES intraday_research_trials(id,manifest_id,{namespace}) ON DELETE RESTRICT ON UPDATE RESTRICT"
+
+    definitions = {
+        "intraday_research_manifests": f"""{digest('experiment_hash')}, {ns('start_at_ns')}, {ns('end_at_ns')},
+            {ns('cutoff_ns')}, trial_count INTEGER NOT NULL CHECK(trial_count=20),
+            policy_count INTEGER NOT NULL CHECK(policy_count=10),
+            CHECK(start_at_ns<end_at_ns AND end_at_ns<=cutoff_ns AND cutoff_ns<=recorded_at_ns),
+            UNIQUE(experiment_hash)""",
+        "intraday_research_trials": f"""manifest_id INTEGER NOT NULL, ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal BETWEEN 1 AND 20),
+            {digest('config_hash')}, policy_key TEXT NOT NULL CHECK(length(policy_key) BETWEEN 1 AND 128),
+            {manifest_fk()}, UNIQUE(manifest_id,ordinal), UNIQUE(manifest_id,config_hash), UNIQUE(id,manifest_id,{namespace})""",
+        "intraday_research_trial_events": f"""manifest_id INTEGER NOT NULL, trial_id INTEGER NOT NULL,
+            event_index INTEGER NOT NULL CHECK(typeof(event_index)='integer' AND event_index>0),
+            state TEXT NOT NULL CHECK(state IN ('REGISTERED','STARTED','COMPLETED','REJECTED','FAILED','CANCELLED','INTERRUPTED')),
+            reason_code TEXT NOT NULL CHECK(reason_code IN ('PREREGISTERED','EXECUTION_STARTED','FINISHED','NO_TRADES','INPUT_NOT_ELIGIBLE','INTERNAL_ERROR','USER_CANCELLED','EXECUTOR_INTERRUPTED')),
+            attempt INTEGER NOT NULL CHECK(typeof(attempt)='integer' AND attempt>=0),
+            previous_event_id INTEGER REFERENCES intraday_research_trial_events(id) ON DELETE RESTRICT,
+            {manifest_fk()}, {trial_fk()}, UNIQUE(trial_id,event_index)""",
+        "intraday_research_results": f"""manifest_id INTEGER NOT NULL, trial_id INTEGER,
+            outcome TEXT NOT NULL DEFAULT 'NOT_EVALUATED' CHECK(outcome IN ('NOT_EVALUATED','INSUFFICIENTE','NON_IDONEO','NON_VALIDATO','PASS')),
+            CHECK(outcome<>'PASS' OR (data_mode='REAL' AND provenance='CAPTURED' AND replay_grade='STRICT_PIT' AND feed='sip')),
+            {manifest_fk()}, {trial_fk()}""",
+        "intraday_research_holdout_events": f"""manifest_id INTEGER NOT NULL,
+            event_index INTEGER NOT NULL CHECK(typeof(event_index)='integer' AND event_index>0),
+            state TEXT NOT NULL CHECK(state IN ('SEALED','INTEGRITY_ATTESTED','CONTAMINATED','OPENED')),
+            {manifest_fk()}, UNIQUE(manifest_id,event_index)""",
+        "intraday_research_manifest_datasets": f"""manifest_id INTEGER NOT NULL,
+            snapshot_id INTEGER NOT NULL REFERENCES intraday_dataset_snapshots(id) ON DELETE RESTRICT,
+            {digest('dataset_digest')}, {manifest_fk()}, UNIQUE(manifest_id,snapshot_id)""",
+    }
+    attestation_tables = ("intraday_quote_size_attestations", "intraday_price_increment_attestations", "intraday_news_source_attestations")
+    for table in attestation_tables:
+        definitions[table] = f"""{digest('attestation_hash')}, {digest('source_hash')}, {digest('authority_hash')},
+            listing_id INTEGER REFERENCES instrument_listings(id) ON DELETE RESTRICT,
+            {ns('valid_from_ns')}, {ns('valid_to_ns',True)}, {ns('available_at_ns')},
+            CHECK(valid_to_ns IS NULL OR valid_to_ns>valid_from_ns),
+            CHECK(available_at_ns>=recorded_at_ns), UNIQUE(attestation_hash,{namespace})"""
+    definitions["intraday_research_manifest_attestations"] = f"""manifest_id INTEGER NOT NULL,
+        quote_size_id INTEGER REFERENCES intraday_quote_size_attestations(id) ON DELETE RESTRICT,
+        price_increment_id INTEGER REFERENCES intraday_price_increment_attestations(id) ON DELETE RESTRICT,
+        news_source_id INTEGER REFERENCES intraday_news_source_attestations(id) ON DELETE RESTRICT,
+        {digest('attestation_hash')}, {manifest_fk()},
+        CHECK((quote_size_id IS NOT NULL)+(price_increment_id IS NOT NULL)+(news_source_id IS NOT NULL)=1),
+        UNIQUE(manifest_id,quote_size_id), UNIQUE(manifest_id,price_increment_id), UNIQUE(manifest_id,news_source_id)"""
+    tables, guards = [], []
+    for table, extra in definitions.items():
+        tables.append(f"CREATE TABLE IF NOT EXISTS {table} ({common}, {extra}, {scope_checks});")
+        for operation in ("UPDATE", "DELETE"):
+            guards.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_no_{operation.lower()}
+                BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'RESEARCH_APPEND_ONLY'); END;""")
+        unique: list[tuple[str, ...]] = []
+        if table == "intraday_research_manifests":
+            unique = [("experiment_hash",)]
+        elif table == "intraday_research_trials":
+            unique = [("manifest_id", "ordinal"), ("manifest_id", "config_hash")]
+        elif table == "intraday_research_trial_events":
+            unique = [("trial_id", "event_index")]
+        elif table == "intraday_research_holdout_events":
+            unique = [("manifest_id", "event_index")]
+        elif table == "intraday_research_manifest_datasets":
+            unique = [("manifest_id", "snapshot_id")]
+        elif table == "intraday_research_manifest_attestations":
+            unique = [("manifest_id", column) for column in ("quote_size_id", "price_increment_id", "news_source_id")]
+        elif table in attestation_tables:
+            unique = [("attestation_hash", *namespace.split(','))]
+        else:
+            unique = []
+        collisions = ["id=NEW.id"] + [" AND ".join(f"{col}=NEW.{col}" for col in cols) for cols in unique]
+        guards.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_no_replace BEFORE INSERT ON {table}
+            WHEN EXISTS(SELECT 1 FROM {table} WHERE {' OR '.join('('+x+')' for x in collisions)})
+            BEGIN SELECT RAISE(ABORT,'RESEARCH_APPEND_ONLY'); END;""")
+        guards.append(f"""CREATE TRIGGER IF NOT EXISTS trg_{table}_finite BEFORE INSERT ON {table}
+            WHEN EXISTS(SELECT 1 FROM json_tree(CASE WHEN json_valid(NEW.payload_json) THEN NEW.payload_json ELSE '{{}}' END)
+                WHERE typeof(atom)='real' AND abs(atom)>1.7976931348623157e308)
+            BEGIN SELECT RAISE(ABORT,'RESEARCH_INVALID_JSON'); END;""")
+    guards.append("""CREATE TRIGGER IF NOT EXISTS trg_research_dataset_scope BEFORE INSERT ON intraday_research_manifest_datasets
+        WHEN NOT EXISTS(SELECT 1 FROM intraday_dataset_snapshots src WHERE src.id=NEW.snapshot_id
+            AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
+            AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade AND src.digest=NEW.dataset_digest)
+        BEGIN SELECT RAISE(ABORT,'RESEARCH_NAMESPACE_MISMATCH'); END;""")
+    for column, table in zip(("quote_size_id", "price_increment_id", "news_source_id"), attestation_tables, strict=True):
+        guards.append(f"""CREATE TRIGGER IF NOT EXISTS trg_research_{column}_scope BEFORE INSERT ON intraday_research_manifest_attestations
+            WHEN NEW.{column} IS NOT NULL AND NOT EXISTS(SELECT 1 FROM {table} src
+                JOIN intraday_research_manifests m ON m.id=NEW.manifest_id WHERE src.id=NEW.{column}
+                AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
+                AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade
+                AND src.attestation_hash=NEW.attestation_hash AND src.available_at_ns<=m.cutoff_ns)
+            BEGIN SELECT RAISE(ABORT,'RESEARCH_NAMESPACE_MISMATCH'); END;""")
+    guards.append("""CREATE TRIGGER IF NOT EXISTS trg_research_event_sequence BEFORE INSERT ON intraday_research_trial_events
+        WHEN NEW.event_index<>COALESCE((SELECT MAX(event_index)+1 FROM intraday_research_trial_events WHERE trial_id=NEW.trial_id),1)
+          OR (NEW.event_index=1 AND (NEW.state<>'REGISTERED' OR NEW.attempt<>0 OR NEW.previous_event_id IS NOT NULL))
+          OR (NEW.event_index>1 AND NOT EXISTS(SELECT 1 FROM intraday_research_trial_events p WHERE p.id=NEW.previous_event_id
+            AND p.trial_id=NEW.trial_id AND p.event_index=NEW.event_index-1 AND p.recorded_at_ns<=NEW.recorded_at_ns
+            AND ((p.state='REGISTERED' AND NEW.state IN ('STARTED','REJECTED','CANCELLED'))
+              OR (p.state='STARTED' AND NEW.state IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED'))
+              OR (p.state IN ('FAILED','CANCELLED','INTERRUPTED') AND NEW.state='STARTED'))
+            AND NEW.attempt=p.attempt+CASE WHEN NEW.state='STARTED' THEN 1 ELSE 0 END))
+          OR NEW.recorded_at_ns<(SELECT recorded_at_ns FROM intraday_research_manifests WHERE id=NEW.manifest_id)
+          OR (NEW.state='STARTED' AND ((SELECT COUNT(*) FROM intraday_research_trials WHERE manifest_id=NEW.manifest_id)<>20
+             OR (SELECT COUNT(*) FROM intraday_research_trial_events WHERE manifest_id=NEW.manifest_id AND state='REGISTERED')<>20))
+        BEGIN SELECT RAISE(ABORT,'RESEARCH_INVALID_TRANSITION'); END;""")
+    guards.append("CREATE INDEX IF NOT EXISTS idx_research_trials_manifest ON intraday_research_trials(manifest_id,ordinal);")
+    guards.append("CREATE INDEX IF NOT EXISTS idx_research_events_trial ON intraday_research_trial_events(trial_id,event_index);")
+    return '\n'.join(tables), '\n'.join(guards)
+
+
+RESEARCH_SCHEMA, RESEARCH_INDEX_SCHEMA = _intraday_research_schema()
 INTRADAY_SCHEMA, INTRADAY_INDEX_SCHEMA = _intraday_schema()
-BASE_SCHEMA += INTRADAY_SCHEMA
+# Keep the intraday suffix intact for the existing pre-SP2b migration fixtures.
+BASE_SCHEMA += RESEARCH_SCHEMA + INTRADAY_SCHEMA
 
 INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS idx_assets_symbol ON assets(symbol);
@@ -1548,7 +1687,7 @@ END;
 """
 
 
-SCHEMA = BASE_SCHEMA + INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA
+SCHEMA = BASE_SCHEMA + INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA + RESEARCH_INDEX_SCHEMA
 
 
 MIGRATIONS = {
@@ -2039,4 +2178,4 @@ def init_db() -> None:
     with get_connection() as connection:
         connection.executescript(BASE_SCHEMA)
         migrate_db(connection)
-        connection.executescript(INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA)
+        connection.executescript(INDEX_SCHEMA + INTRADAY_INDEX_SCHEMA + RESEARCH_INDEX_SCHEMA)

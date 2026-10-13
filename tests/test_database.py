@@ -1422,7 +1422,7 @@ def test_intraday_upgrade_backup_and_rerun_preserve_sp1_data(tmp_path, monkeypat
         with sqlite3.connect(path) as connection:
             connection.row_factory = sqlite3.Row
             # Full pre-SP2b SP1 schema, never the user's database.
-            connection.executescript(database.BASE_SCHEMA.removesuffix(database.INTRADAY_SCHEMA))
+            connection.executescript(database.BASE_SCHEMA.removesuffix(database.INTRADAY_SCHEMA).replace(database.RESEARCH_SCHEMA, "", 1))
             database.migrate_db(connection)
             connection.executescript(database.INDEX_SCHEMA)
             connection.execute("INSERT INTO assets(id,symbol,name,asset_type,currency) VALUES (1,'PRESERVE','Fixture','stock','USD')")
@@ -1464,5 +1464,51 @@ def test_intraday_upgrade_backup_and_rerun_preserve_sp1_data(tmp_path, monkeypat
                 assert contents(connection) == before
                 assert connection.execute("SELECT COUNT(*) FROM intraday_observations").fetchone()[0] == 0
                 assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        get_settings.cache_clear()
+
+
+def test_research_additive_upgrade_backup_and_rerun_preserve_entire_sp2b_graph(tmp_path, monkeypatch):
+    from intraday_fixtures import seed_graph
+    from intraday_research_fixtures import RESEARCH_TABLES
+
+    from backend.app import database
+
+    path = tmp_path / "sp2b-upgrade.db"
+    monkeypatch.setenv("INVESTEDGE_DB_PATH", str(path))
+    get_settings.cache_clear()
+
+    def contents(connection):
+        tables = [row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ) if row[0] not in RESEARCH_TABLES]
+        return {table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+                for table in tables}
+
+    try:
+        with sqlite3.connect(path) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.executescript(database.BASE_SCHEMA.replace(database.RESEARCH_SCHEMA, "", 1))
+            database.migrate_db(connection)
+            connection.executescript(database.INDEX_SCHEMA + database.INTRADAY_INDEX_SCHEMA)
+            seed_graph(connection)
+            before = contents(connection)
+            schemas = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        backup = backup_service.prepare_database()
+        assert backup["created"]
+        with sqlite3.connect(path.parent / "backups" / backup["file"]) as connection:
+            assert contents(connection) == before
+            assert connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").fetchall() == [tuple(row) for row in schemas]
+            assert not connection.execute("SELECT 1 FROM sqlite_master WHERE name='intraday_research_manifests'").fetchone()
+        for _ in range(2):
+            database.init_db()
+            with sqlite3.connect(path) as connection:
+                assert contents(connection) == before
+                assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+                for table in RESEARCH_TABLES:
+                    assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+                for name, sql in schemas:
+                    assert connection.execute("SELECT sql FROM sqlite_master WHERE name=?", (name,)).fetchone()[0] == sql
     finally:
         get_settings.cache_clear()

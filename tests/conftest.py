@@ -167,3 +167,19 @@ def lab_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     finally:
         connection.close()
         get_settings.cache_clear()
+
+
+@pytest.fixture()
+def research_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
+    """Temporary SP3 schema only; the existing network guard remains unchanged."""
+    from backend.app.config import get_settings
+    from backend.app.database import get_connection, init_db
+
+    _apply_client_env(monkeypatch, tmp_path / "research-fixture.db")
+    init_db()
+    connection = get_connection()
+    try:
+        yield connection
+    finally:
+        connection.close()
+        get_settings.cache_clear()

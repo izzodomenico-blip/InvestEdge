@@ -1,6 +1,6 @@
 # InvestEdge — SP3: strategie candidate intraday con holding 15/30 minuti
 
-**Stato: PROPOSTA documentale, da approvare prima del codice.** Le famiglie sono candidate; nessuna è dichiarata migliore o profittevole. Le soglie numeriche sotto sono scelte ex ante proposte per il progetto, non risultati empirici né requisiti imposti dalle fonti.
+**Stato: APPROVATA dall'utente il 2026-10-13, prima del Task1.** Le famiglie sono candidate; nessuna è dichiarata migliore o profittevole. Le soglie numeriche sotto sono scelte ex ante approvate per il progetto, non risultati empirici né requisiti imposti dalle fonti.
 
 **Base verificata il 2026-10-13:** origin/main = origin/investedge/sp2b-task-12 = `12ca2c36a2fc19451e70a08e37514089f3e11bb6`, registro successivo alla feature `d182cd547562b933ed1a2c92d4cab78dc8ed1316`. G1_TECH PASS; **G1_DATA INSUFFICIENTE**, nessun manifest REAL verificato. SP2b resta IN CORSO; Task 13 dopo SP3/SP6a.
 
@@ -8,7 +8,7 @@ Riferimenti: [programma operativo](../../../PROGRAMMA-OPERATIVO.md), [spec di pr
 
 ## 1. Risultato e confini
 
-Produrre un percorso di ricerca riproducibile che applica regole congelate, misura tecnica/news e holding dal fill, e può concludere che nessuna policy supera G2. SP3 comprende software offline e, soltanto quando esistono input idonei forniti/configurati dall'utente, valutazione economica offline di dataset REAL congelati. La consegna presente modifica esclusivamente documenti.
+Produrre un percorso di ricerca riproducibile che applica regole congelate, misura tecnica/news e holding dal fill, e può concludere che nessuna policy supera G2. SP3 comprende software offline e, soltanto quando esistono input idonei forniti/configurati dall'utente, valutazione economica offline di dataset REAL congelati. Task1 implementa soltanto contratti, schema additivo e registry; nessuna esecuzione economica o apertura holdout.
 
 Prima fase: azioni/ETF USA NMS, USD, long-only, sessione regolare del calendario versionato `America/New_York`, nessun overnight pianificato, short, prestito o ETF inverse/a leva. Trading, adapter ordini, collector live, credenziali, abbonamenti e runtime hosted restano fuori da questa proposta esecutiva. Trade Republic resta manuale.
 
@@ -248,11 +248,11 @@ Nuovi job finiti `INTRADAY_RESEARCH`, `INTRADAY_HOLDOUT` con parametri ID/config
 
 UI minima nel laboratorio esistente: dataset/feed/namespace, versioni/costi, split e contatori trial, arm/H, risultati OOS/holdout, stress e motivo del gate. Nessun bottone ordine/promozione paper, redesign o nuovo badge daily. Riusare `jobs.ts`, AbortController e serializer di ns esatti estendendone esplicitamente lo scope alle route ricerca. Un report sintetico mostra DEMO/RESEARCH e G2 non valutabile; risultati saved indipendenti da fonti latest. Campione/news/costo insufficienti sono informazioni di prodotto pertinenti, non stack trace.
 
-## 13. Verifica e decisioni da approvare
+## 13. Verifica e decisioni approvate
 
 TDD obbligatorio e test esclusivamente offline: valori manuali feature/fee/fill; future-prefix invariance di prezzi/news/daily/attestazioni/split; bundle vs reader v1, timeline e closure; ns tied/quote late/latency; size e scope; warm-up/sessioni/half-day/DST; parziali/timeouts/no exit; confronto ablation senza timing tecnico news-only; registry/cancel/crash; purge/embargo/holdout sealed; bootstrap dipendente/multiplicity/metriche non finite; migrazione legacy/API/UI e zero rete. Il piano specifica allowlist e test per task. Nessun accesso al DB reale `data/investedge.db`.
 
-Decisioni concrete richieste ora: approvare regole §4–7, profilo conservativo costi/fill/capitale di ricerca §6/8, campione/split/holdout/soglie §10–11, formato bounded e prerequisiti §3, sequenza del piano. Il consenso documentale non configura dati né avvia cattura/ordini. Budget/diritti/authority quote/status reali e campione sufficiente restano necessari prima della validazione economica; capitale/rischio/runtime del paper saranno scelti in SP6a.
+Decisioni approvate dall'utente il 2026-10-13: regole §4–7, profilo conservativo costi/fill/capitale di ricerca §6/8, campione/split/holdout/soglie §10–11, formato bounded e prerequisiti §3, sequenza del piano. Il consenso documentale non configura dati né avvia cattura/ordini. Budget/diritti/authority quote/status reali e campione sufficiente restano necessari prima della validazione economica; capitale/rischio/runtime del paper saranno scelti in SP6a.
 
 Backlog SP3 oltre il gate intraday: segnali weekly/monthly, fondamentali/macro realizzata, pesi appresi, altri mercati e indicatori challenger dopo SP6a/completamento SP2b; addendum documentale dedicato prima del codice. SP3 intero non diventa VERIFICATO solo col gate intraday.
 

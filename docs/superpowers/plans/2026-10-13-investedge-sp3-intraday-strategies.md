@@ -1,6 +1,6 @@
 # InvestEdge — piano SP3: gate strategie intraday 15/30 minuti
 
-**Stato: PROPOSTA da approvare prima del codice; Task 0 documentale FATTO.** Task 1–12 NON INIZIATI, dipendono dall'approvazione esplicita di spec/piano. Task 13 è addendum dopo SP6a e completamento del backlog SP2b. Nessuna implementazione SP3 in questa consegna.
+**Stato: APPROVATO dall'utente il 2026-10-13; Task 0 documentale e Task 1 FATTI.** Task 2–12 NON INIZIATI. Task 13 è addendum dopo SP6a e completamento del backlog SP2b. Task1 autorizzato con TDD offline, review, commit/push e merge FF; nessuna raccolta live, credenziale, ordine o paper.
 
 **Spec:** [strategie intraday](../specs/2026-10-13-investedge-sp3-intraday-strategies-design.md). **Base Task 0:** origin/main verificato a `12ca2c36a2fc19451e70a08e37514089f3e11bb6`, uguale origin/investedge/sp2b-task-12; feature precedente `d182cd547562b933ed1a2c92d4cab78dc8ed1316` già integrata. Stato: G1_TECH PASS, G1_DATA INSUFFICIENTE; [report SP2b](../../reports/2026-10-12-sp2b-intraday-data-gate.md).
 
@@ -57,13 +57,20 @@ Wrapper nello scratch replica guardia socket/DNS/flags SP2b, loopback ammesso so
 
 **Branch:** `investedge/sp3-task-1`; **Base:** origin/investedge/sp3-task-0.
 **Dipendenze:** Task0 FATTO + approvazione esplicita spec/piano.
+**Base verificata:** `9e493e6ee222645db1d86a823bedd0f22762cde6`; approvazione esplicita acquisita il 2026-10-13 prima del codice, lock pubblicato.
 **File nuovi:** `backend/app/intraday_research/__init__.py`, `contracts.py`, `registry.py` nel medesimo pacchetto; `tests/intraday_research_fixtures.py`, `tests/test_intraday_research_contracts.py`, `tests/test_intraday_research_registry.py`, `tests/test_intraday_research_schema.py`.
 **File modificati:** `backend/app/database.py`, `tests/test_database.py`, `tests/conftest.py` (solo fixture scratch/registry, guardia rete invariata).
 
-- [ ] RED: manifest/registry/tabelle assenti; ns/int64 non esatti, mixed namespace, cap non positivi, finite JSON; tutti i20 trial preregistrati prima del primo STARTED; FAILED/CANCELLED/REJECTED/no-trade non perduti; UPDATE/DELETE/REPLACE e FK cross-mode bloccati.
-- [ ] Implementare contratti versionati e tabelle §12, risorse/seed/split/costi/gate frozen, config_hash distinto da experiment_hash, eventi append-only di trial/holdout. Default nessuna promozione dati sintetici; nessun provider/job avviato.
-- [ ] GREEN: DB nuovo e fixture pre-SP2b/SP1/SP2b, backup fallito, rerun idempotente/rollback e righe/FK storiche identiche. Replica identica legata allo stesso esperimento, ipotesi nuova distinta; prova tamper e stato finale senza dati di esito inventati.
-- [ ] Mirati: test_intraday_research_contracts/registry/schema + test_database/config/lab_trials; gate comune e review. Policy capitale/risorse proposta non imposta il paper.
+- [x] RED: manifest/registry/tabelle assenti; ns/int64 non esatti, mixed namespace, cap non positivi, finite JSON; tutti i20 trial preregistrati prima del primo STARTED; FAILED/CANCELLED/REJECTED/no-trade non perduti; UPDATE/DELETE/REPLACE e FK cross-mode bloccati.
+- [x] Implementare contratti versionati e tabelle §12, risorse/seed/split/costi/gate frozen, config_hash distinto da experiment_hash, eventi append-only di trial/holdout. Default nessuna promozione dati sintetici; nessun provider/job avviato.
+- [x] GREEN: DB nuovo e fixture pre-SP2b/SP1/SP2b, backup fallito, rerun idempotente/rollback e righe/FK storiche identiche. Replica identica legata allo stesso esperimento, ipotesi nuova distinta; prova tamper e stato finale senza dati di esito inventati.
+- [x] Mirati: test_intraday_research_contracts/registry/schema + test_database/config/lab_trials; gate comune e review. Policy capitale/risorse approvata ex ante non imposta il paper.
+
+**Evidenza 2026-10-13:** RED iniziale3 collection error per package assente; GREEN88, poi RED delle review16/17+policykey1+clock2+referencebool1 e fix. Wrapper offline finale10 moduli mirati447 PASS e backend completo2027 PASS da JUnit (153 nuovi); zero external inattesi e due self-test intenzionali nel completo. Ruff backend/scripts/tests, pip check, scanner13 file con self-test Fase2/zero candidati, diff/scope e2 review read-only+root PASS senza Critical/Important. Migrazione/backup/rerun preservano righe e schema SP1/SP2b; race dueconnessioni e rollback batch20 verificati. No frontend modificato, gate UI non richiesto.
+
+Il bootstrap congela minimo10000 e formula adattiva preregistrata su M; repliche effettive al Task8. Letture revalidano integralmente config e hash/header/ref/clock/seal; holdout_state corrente separato dal SEALED iniziale. Task1 controlla header/digest/namespace dataset; publication/closure Task2, import size/tick/news Task3/5 e protocollo apertura/attestazioni holdout Task9/10. Costi UNVERIFIED/economia NOT_EVALUATED, G1_DATA INSUFFICIENTE e G2 NON VALUTATO. Nessuna strategia/API/job/ordine/paper/avvio live introdotti.
+
+Programma/checkbox chiusi nello stesso commit. Push del branch Task1/gate SHA, FF main/gate SHA e worktree pulito sono verifiche post-commit del protocollo autorizzato; esiti nella consegna, proprio SHA nel Task2. Prossimo Task2 NON INIZIATO.
 
 **Commit:** `feat: preregister bounded intraday research experiments`
 
@@ -261,4 +268,4 @@ Wrapper nello scratch replica guardia socket/DNS/flags SP2b, loopback ammesso so
 | §12 persistenza/API/UI | 1,10–11 |
 | §13 verifica/approvazione/backlog | ogni task,0,12–13 |
 
-**Prossimo:** Approvazione spec/piano SP3 dopo consegna documentale Task0. Poi, solo su approvazione, Task1 da origin/investedge/sp3-task-0 verificato. Non eseguire SP2b Task13 adesso. G1_DATA INSUFFICIENTE rimane prerequisito aperto per economia/SP6a; nessuna cattura live o ordine in questa proposta.
+**Prossimo:** Task2 NON INIZIATO, da origin/investedge/sp3-task-1 verificato dopo consegna Task1. Approvazione spec/piano acquisita e Task1 FATTO. Non eseguire SP2b Task13 adesso. G1_DATA INSUFFICIENTE rimane prerequisito aperto per economia/SP6a; nessuna cattura live, credenziale, ordine o paper in questa consegna.
