@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import bisect
 import json
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -31,20 +31,43 @@ def validate_manifest(manifest):
     for key in ('start_at_ns', 'end_at_ns', 'cutoff_ns'):
         check_ns(manifest[key])
     listings, benchmarks, namespace = manifest['listing_ids'], manifest['benchmarks'], manifest['namespace']
-    if (manifest.get('version') != 'intraday-dataset-v1' or
+    if (manifest.get('version') not in {'intraday-dataset-v1', 'intraday-dataset-v2','intraday-bundle-quality-v1'} or
             not manifest['start_at_ns'] < manifest['end_at_ns'] <= manifest['cutoff_ns'] or
-            manifest['end_at_ns'] - manifest['start_at_ns'] > 366 * 86400 * 1_000_000_000 or
+            manifest.get('version') != 'intraday-bundle-quality-v1' and manifest['end_at_ns'] - manifest['start_at_ns'] > 366 * 86400 * 1_000_000_000 or
             type(listings) is not list or not listings or listings != sorted(set(listings)) or
             any(type(item) is not int or item <= 0 for item in listings) or
             type(benchmarks) is not dict or not set(benchmarks) <= {'market', 'sector'} or
             any(type(item) is not int or item not in listings for item in benchmarks.values()) or
             type(namespace) is not list or len(namespace) != 5):
         raise ValueError('DATASET_INVALID')
+    if manifest['version'] == 'intraday-dataset-v2' and (manifest.get('selection') != 'window-dependency-closure-v2'
+            or type(manifest.get('carry_at_ns')) is not int
+            or manifest['carry_at_ns'] != manifest['start_at_ns'] - 1
+            or type(manifest.get('window_session_count')) is not int
+            or not 0 <= manifest['window_session_count'] <= 5
+            or type(manifest.get('history_sessions')) is not int
+            or not 1 <= manifest['history_sessions'] <= 30):
+        raise ValueError('DATASET_INVALID')
+    if manifest['version']=='intraday-dataset-v2':
+        caps = {'max_listings':30,'max_chunk_occurrences':10_000,'max_chunk_bytes':8_388_608,
+                'max_cache_bytes':67_108_864,'max_rss_bytes':2_147_483_648,'window_sessions':5,'history_sessions':30}
+        resources = manifest.get('resources')
+        if (type(resources) is not dict or set(resources)!={*caps,'max_disk_bytes','min_free_bytes'}
+            or any(type(value) is not int or value<=0 or key in caps and value>caps[key]
+                   for key,value in resources.items())
+            or len(listings)>resources['max_listings']
+            or manifest['window_session_count']>resources['window_sessions']
+            or manifest['history_sessions']!=resources['history_sessions']
+            or type(manifest.get('support_start_at_ns')) is not int
+            or not 0<=manifest['support_start_at_ns']<=manifest['start_at_ns']):
+            raise ValueError('DATASET_INVALID')
     for item in (frozen, manifest['profile']):
         check_ns(item['created_at_ns'])
         if item['created_at_ns'] > manifest['cutoff_ns']:
             raise ValueError('DATASET_INVALID')
-    _profile(manifest)
+    profile = _profile(manifest)
+    if manifest['version']=='intraday-bundle-quality-v1' and len(listings)>min(30,profile.max_symbols):
+        raise ValueError('DATASET_INVALID')
 
 
 def _profile(manifest):
@@ -69,14 +92,21 @@ def _day(stamp):
 def _percentiles(values):
     if not values:
         return {'count': 0, 'p50_ns': None, 'p95_ns': None, 'max_ns': None}
-    ordered = sorted(values)
-    return {'count': len(ordered), 'p50_ns': ordered[(len(ordered) - 1) // 2],
-            'p95_ns': ordered[((len(ordered) - 1) * 95 + 99) // 100], 'max_ns': ordered[-1]}
+    histogram = values if isinstance(values, Counter) else Counter(values)
+    count = sum(histogram.values())
+    ranks = ((count - 1) // 2, ((count - 1) * 95 + 99) // 100)
+    selected, cumulative = [], 0
+    for value, occurrences in sorted(histogram.items()):
+        cumulative += occurrences
+        while len(selected) < 2 and cumulative > ranks[len(selected)]:
+            selected.append(value)
+    return {'count': count, 'p50_ns': selected[0], 'p95_ns': selected[1], 'max_ns': max(histogram)}
 
 
 class _Index:
     """Small revision buckets and prefix maxima; never replay all market ticks per grid point."""
-    def __init__(self, rows):
+    def __init__(self, rows, *, max_cache_bytes=67_108_864):
+        self.max_cache_bytes,self.cache_bytes,self.cache_sizes = max_cache_bytes,0,{}
         self.family = defaultdict(list)
         self.bars = defaultdict(list)
         self.quotes = defaultdict(list)
@@ -118,16 +148,30 @@ class _Index:
         for listing, values in self.quotes.items():
             for row in values:
                 self.quote_buckets[listing, row['event_time_ns']].append(row)
-        self.contexts = {}
-        self.event_cache = {}
+        self.contexts = OrderedDict()
+        self.event_cache = OrderedDict()
         self.controls_received = defaultdict(list)
         for row in self.family['CONTROL']:
             self.controls_received[row['received_at_ns']].append(row)
 
     def event_versions(self, cutoff):
         if cutoff not in self.event_cache:
-            self.event_cache[cutoff] = select_versions(self.family['EVENT'], family='EVENT', cutoff_ns=cutoff)
+            self._cache('event_cache',cutoff,select_versions(self.family['EVENT'], family='EVENT', cutoff_ns=cutoff))
+        self.event_cache.move_to_end(cutoff)
         return self.event_cache[cutoff]
+
+    def _cache(self, label, key, value):
+        size = len(json.dumps(value,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode())
+        if size>self.max_cache_bytes:
+            raise ValueError('RESOURCE_LIMIT')
+        for name in (label,'contexts' if label=='event_cache' else 'event_cache'):
+            cache = getattr(self,name)
+            while cache and self.cache_bytes+size>self.max_cache_bytes:
+                evicted,_ = cache.popitem(last=False)
+                self.cache_bytes -= self.cache_sizes.pop((name,evicted))
+        getattr(self,label)[key] = value
+        self.cache_sizes[label,key] = size
+        self.cache_bytes += size
 
     def maximum(self, key, cutoff):
         stamps, top = self.maxima.get(key, ([], []))
@@ -141,6 +185,7 @@ class _Index:
 
     def context(self, cutoff):
         if cutoff in self.contexts:
+            self.contexts.move_to_end(cutoff)
             return self.contexts[cutoff]
         index = bisect.bisect_right(self.start_times, cutoff) - 1
         if index < 0:
@@ -177,7 +222,7 @@ class _Index:
             news = self.maximum(('receipt', (capture, 'news')), cutoff)
             result = capture_state_from_rows(compact, self.events[capture], observations, cutoff_ns=cutoff,
                                              news=() if news is None else (news,))
-        self.contexts[cutoff] = result
+        self._cache('contexts',cutoff,result)
         return result
 
     def continuity(self, listing, start, end, decision):
@@ -325,7 +370,7 @@ def planned_listing_ids(manifest, rows):
     return sorted(planned)
 
 
-def quality_report(manifest, rows):
+def quality_report(manifest, rows, *, row_factory=None,resource_guard=None):
     validate_manifest(manifest)
     policy = QualityPolicy()
     rows = visible_rows(rows, cutoff_ns=manifest['cutoff_ns'], namespace=tuple(manifest['namespace']))
@@ -347,9 +392,13 @@ def quality_report(manifest, rows):
         reasons.add('BENCHMARKS_MISSING')
     sessions = _sessions(manifest, index, reasons)
     raw_planned = raw_valid = eligible_sessions = 0
-    grid, ages, delays = [], [], []
+    grid, ages, delays = [], Counter(), Counter()
     status_exclusions = Counter()
     for calendar, valid_calendar in sessions:
+        if resource_guard is not None:
+            resource_guard()
+        if row_factory is not None:
+            index = _Index(row_factory(calendar),max_cache_bytes=manifest.get('resources',{}).get('max_cache_bytes',67_108_864))
         opening, closing = calendar['open_at_ns'], calendar['close_at_ns']
         eligibility = {listing: _eligibility(index, calendar, listing, valid_calendar) for listing in listings}
         eligible_count = sum(reason is None for reason in eligibility.values())
@@ -370,7 +419,7 @@ def quality_report(manifest, rows):
                 selected = select_versions(index.bars[listing, at], family='BAR', cutoff_ns=min(decision, manifest['cutoff_ns']))
                 if selected and selected[-1]['quality'] == 'VALID' and selected[-1]['bar_end_ns'] == at + MINUTE_NS:
                     delay = selected[-1]['available_at_ns'] - (at + MINUTE_NS)
-                    delays.append(max(0, delay))
+                    delays[max(0, delay)] += 1
                     if 0 <= delay <= policy.bar_max_delay_ns and decision <= manifest['cutoff_ns']:
                         raw_valid += 1
             for minutes in policy.timeframes_minutes:
@@ -396,7 +445,7 @@ def quality_report(manifest, rows):
                             reason = 'BAR_DELAY'
                     quote = index.quote(listing, min(decision, manifest['cutoff_ns']), policy)
                     if quote is not None:
-                        ages.append(max(0, decision - quote['event_time_ns']))
+                        ages[max(0, decision - quote['event_time_ns'])] += 1
                     if reason is None and (quote is None or not quote['executable']):
                         reason = 'QUOTE_MISSING' if quote is None else quote['reason_code'] or 'QUOTE_INVALID'
                     if reason is None:
@@ -422,6 +471,8 @@ def quality_report(manifest, rows):
         reasons.add('NAMESPACE_NON_IDONEO')
     technical_reasons = reasons - {'NAMESPACE_NON_IDONEO'}
     halts = defaultdict(list)
+    if row_factory is not None:
+        index = _Index(rows)
     for row in select_versions(index.family['STATUS'], family='STATUS', cutoff_ns=manifest['cutoff_ns']):
         if (row['listing_id'] in listings and manifest['start_at_ns'] <= row['event_time_ns'] < manifest['end_at_ns'] and
                 row['payload'].get('state') == 'HALTED'):
@@ -434,6 +485,8 @@ def quality_report(manifest, rows):
                    for (listing, day), values in sorted(halts.items())]
     carried = []
     for calendar, _ in sessions:
+        if row_factory is not None:
+            index = _Index(row_factory(calendar))
         opening = calendar['open_at_ns']
         checkpoints = defaultdict(list)
         for row in index.event_versions(opening - 1):

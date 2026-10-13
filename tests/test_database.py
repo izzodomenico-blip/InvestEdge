@@ -1474,6 +1474,10 @@ def test_research_additive_upgrade_backup_and_rerun_preserve_entire_sp2b_graph(t
 
     from backend.app import database
 
+    research_tables = (*RESEARCH_TABLES, 'intraday_research_dataset_bundles',
+                       'intraday_research_bundle_children', 'intraday_research_bundle_chunks',
+                       'intraday_research_bundle_seals')
+
     path = tmp_path / "sp2b-upgrade.db"
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(path))
     get_settings.cache_clear()
@@ -1481,7 +1485,7 @@ def test_research_additive_upgrade_backup_and_rerun_preserve_entire_sp2b_graph(t
     def contents(connection):
         tables = [row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-        ) if row[0] not in RESEARCH_TABLES]
+        ) if row[0] not in research_tables]
         return {table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
                 for table in tables}
 
@@ -1506,7 +1510,7 @@ def test_research_additive_upgrade_backup_and_rerun_preserve_entire_sp2b_graph(t
             with sqlite3.connect(path) as connection:
                 assert contents(connection) == before
                 assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-                for table in RESEARCH_TABLES:
+                for table in research_tables:
                     assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
                 for name, sql in schemas:
                     assert connection.execute("SELECT sql FROM sqlite_master WHERE name=?", (name,)).fetchone()[0] == sql

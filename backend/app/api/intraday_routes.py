@@ -167,15 +167,9 @@ def read_snapshot(
     params = _namespace(profile_id, data_mode, provenance, replay_grade)
     with handlers.services(params) as store:
         frozen = handlers.frozen(store, snapshot_id)
-        tables = {'NEWS': 'intraday_news_versions', 'EVENT': 'intraday_event_versions',
-                  'IDENTITY': 'intraday_identity_versions', 'CALENDAR': 'intraday_calendar_versions',
-                  'UNIVERSE': 'intraday_universe_snapshots', 'CAPTURE': 'intraday_capture_events'}
-        timeline = [row for row in frozen['timeline'] if input_type == 'ALL' or
-                    input_type in ('BAR', 'QUOTE') and row.get('kind') == input_type or
-                    input_type in tables and (row.get('table') == tables[input_type] or
-                        input_type == 'UNIVERSE' and row.get('table') == 'intraday_universe_members')]
-        page = handlers.page(store, timeline, offset, limit)
-        inputs = page.pop('items')
+        page = frozen['timeline'].page(offset=offset, limit=limit, input_type=input_type)
+        inputs = handlers.page(store, page.pop('items'), 0, limit)['items']
+        page['next_offset'] = offset + len(inputs) if offset + len(inputs) < page['total'] else None
         return {key: value for key, value in frozen.items() if key != 'timeline'} | {
             'inputs': inputs, **page, 'input_type': input_type}
 

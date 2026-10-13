@@ -38,7 +38,7 @@ def _intake(row):
     return row.get('capture_ingest_sequence', row['payload'].get('intake_sequence', row['ingest_sequence']))
 
 
-def visible_rows(rows, *, cutoff_ns, namespace=None):
+def visible_rows(rows, *, cutoff_ns, namespace=None, _decoded=False):
     check_ns(cutoff_ns)
     result = []
     rows = [row for row in rows if row.get('available_at_ns') is not None and row['available_at_ns'] <= cutoff_ns]
@@ -66,9 +66,9 @@ def visible_rows(rows, *, cutoff_ns, namespace=None):
         persisted = row.get('persisted_at_ns', row['received_at_ns'])
         if at < persisted or persisted < row['received_at_ns']:
             raise ValueError('REPLAY_INPUT_INVALID')
-        if 'payload_json' in row and row.get('payload_hash') != hashlib.sha256(canonical_json(row['payload']).encode()).hexdigest():
+        if not _decoded and 'payload_json' in row and row.get('payload_hash') != hashlib.sha256(canonical_json(row['payload']).encode()).hexdigest():
             raise ValueError('REPLAY_INPUT_INVALID')
-        result.append(copy.deepcopy(row))
+        result.append(row if _decoded else copy.deepcopy(row))
     return result
 
 
@@ -85,8 +85,10 @@ def causal_order(rows, *, cutoff_ns, namespace=None):
         row['ingest_sequence'], row.get('table', ''), row['id']))
 
 
-def select_versions(rows, *, family, cutoff_ns, listing_ids=None, revisions=False):
-    rows = visible_rows(rows, cutoff_ns=cutoff_ns)
+def select_versions(rows, *, family, cutoff_ns, listing_ids=None, revisions=False, _decoded=False):
+    # Only fresh archive-decoded objects may transfer ownership. Public pure
+    # reducers retain validation and isolation from their caller's objects.
+    rows = visible_rows(rows, cutoff_ns=cutoff_ns, _decoded=_decoded)
     def key(row):
         if family in _MARKET:
             return (row['provider'], row['kind'], row['listing_id'], row['event_time_ns'])
@@ -275,8 +277,12 @@ def capture_state_from_rows(controls, events, observations, *, cutoff_ns, news=(
     return result
 
 
-def replay_as_of(rows, *, cutoff_ns, listing_ids=None, namespace=None, quote_max_age_ns=2_000_000_000):
+def replay_as_of(rows, *, cutoff_ns, listing_ids=None, namespace=None, quote_max_age_ns=2_000_000_000,
+                 timeline_only=False):
     timeline = causal_order(rows, cutoff_ns=cutoff_ns, namespace=namespace)
+    if timeline_only:
+        return {'version': 'intraday-replay-v1', 'cutoff_ns': cutoff_ns, 'namespace': namespace,
+                'timeline': timeline}
     families = {}
     for row in timeline:
         families.setdefault(_family(row), []).append(row)
@@ -332,7 +338,7 @@ def replay_frozen(manifest, rows, *, cutoff_ns=None, listing_ids=None):
     check_ns(frozen_cutoff)
     cutoff = frozen_cutoff if cutoff_ns is None else cutoff_ns
     check_ns(cutoff)
-    if cutoff > frozen_cutoff:
+    if cutoff > frozen_cutoff or (manifest.get('version') == 'intraday-dataset-v2' and cutoff < manifest['carry_at_ns']):
         raise ValueError('SNAPSHOT_CUTOFF')
     planned = manifest['listing_ids']
     if listing_ids is not None and any(item not in planned for item in listing_ids):

@@ -178,7 +178,7 @@ def frozen(store, snapshot_id):
         raise OperationError('RESOURCE_NOT_FOUND')
     if tuple(row) != store.namespace:
         raise OperationError('MODE_MISMATCH')
-    result = SnapshotService(store).read(snapshot_id)
+    result = SnapshotService(store).open(snapshot_id).as_dict()
     for key in ('manifest', 'report'):
         store.archive.safe_json(result[key])
     return result

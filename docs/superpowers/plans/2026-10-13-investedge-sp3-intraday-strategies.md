@@ -1,6 +1,6 @@
 # InvestEdge — piano SP3: gate strategie intraday 15/30 minuti
 
-**Stato: APPROVATO dall'utente il 2026-10-13; Task 0 documentale e Task 1 FATTI.** Task 2–12 NON INIZIATI. Task 13 è addendum dopo SP6a e completamento del backlog SP2b. Task1 autorizzato con TDD offline, review, commit/push e merge FF; nessuna raccolta live, credenziale, ordine o paper.
+**Stato: APPROVATO dall'utente il 2026-10-13; Task 0 documentale e Task 1 FATTI, Task 2 IN CORSO.** Task 3–12 NON INIZIATI. Task 13 è addendum dopo SP6a e completamento del backlog SP2b. Task2 autorizzato con TDD offline, review, commit/push e merge FF; nessuna raccolta live, credenziale, ordine o paper.
 
 **Spec:** [strategie intraday](../specs/2026-10-13-investedge-sp3-intraday-strategies-design.md). **Base Task 0:** origin/main verificato a `12ca2c36a2fc19451e70a08e37514089f3e11bb6`, uguale origin/investedge/sp2b-task-12; feature precedente `d182cd547562b933ed1a2c92d4cab78dc8ed1316` già integrata. Stato: G1_TECH PASS, G1_DATA INSUFFICIENTE; [report SP2b](../../reports/2026-10-12-sp2b-intraday-data-gate.md).
 
@@ -78,16 +78,27 @@ Programma/checkbox chiusi nello stesso commit. Push del branch Task1/gate SHA, F
 
 **Branch:** `investedge/sp3-task-2`; **Base:** origin/investedge/sp3-task-1.
 **Dipendenze:** Task1 FATTO.
+**Base verificata:** `7b708706c70a4d37d01bc10b73af299bc2052e25`; branch/main concordi e lock Task2 pubblicato il 2026-10-13.
 **File nuovi:** `backend/app/intraday_research/datasets.py`, `tests/test_intraday_research_datasets.py`, `tests/test_intraday_timeline_reader.py`, `backend/scripts/intraday_timeline_smoke.py`.
 **File modificati:** `backend/app/intraday/store.py`, `replay.py`, `snapshots.py`, `quality.py`, `handlers.py` nel medesimo pacchetto; `backend/app/api/intraday_routes.py`, `backend/app/database.py` (solo indici/formato v2 additive); `tests/test_intraday_store.py`, `tests/test_intraday_replay.py`, `tests/test_intraday_snapshots.py`, `tests/test_intraday_quality.py`, `tests/test_intraday_api.py`, `tests/test_intraday_collector.py` (solo benchmark runtime fake).
 
-- [ ] RED: pagina/freeze costruiscono proiezioni o lista prefisso intero; cap RAM/chunk violati; start recente ancora full-prefix; bundle con finestre overlapping cambia denominatori; stato iniziale usa revisioni future o omette receipt/macro/carry-in.
-- [ ] Separare iterazione validata dalla proiezione; digest incrementale/count/hash/closure prima della pubblicazione, vecchio v1 intatto. Formato window-dependency-closure-v2 e bundle ordinato/riferimenti esatti §3.1; nessun DELETE/retention finita. Quality sul bundle conserva minimi20/10, raw99%, ogni cella90%/>0; non etichettare child5sedute READY.
-- [ ] GREEN: timeline vecchia/nuova byte-equivalenti ai cutoff, A→B→A/shuffle/tie/cross-capture, superseded/pre-periodo/audit orfani, missing/tamper/rollback/cancel, macro globali, revisione BAR/news dopo freeze invarianti; SQLite authorizer/clock/provider negati nei GET e total_changes invariato. Confrontare proiezioni/carry-in/closure col v1; equivalenza di feature/policy/fill sarà verificata ai Task4/7/12 quando tali componenti esistono.
-- [ ] Smoke30×20 e scalare5/20/60: p95≤250ms, timeline replay≤60s, RSS≤2GiB, crescita disco misurata, zero perdite. Runtime socketfake completo con checkpoint/status/reconcile per batch, budget/GAP/lag espliciti. Gate sostenibilità necessario prima di esperimenti grandi; se manca, task non FATTO per questa definizione, registrare blocco/limite senza abbassare soglie o passare al task dipendente.
-- [ ] Mirati: test_intraday_timeline_reader/research_datasets + store/replay/snapshots/quality/API/collector/boundaries; suite/gate comune e review compatibilità v1. Script smoke rifiuta target esistente/data/investedge.db, dotenv e socket esterni.
+**Estensione autorizzata dall'utente il 2026-10-13:** `tests/test_database.py`, solo il test di migrazione additiva SP3: escludere anche le quattro nuove tabelle bundle dal confronto del grafo SP2b e verificarle vuote dopo migrazione/rerun; preservare controlli di backup, schema, dati e FK.
 
-**Commit:** `perf: bound intraday timeline and dataset reads`
+- [x] RED: pagina/freeze costruiscono proiezioni o lista prefisso intero; cap RAM/chunk violati; start recente ancora full-prefix; bundle con finestre overlapping cambia denominatori; stato iniziale usa revisioni future o omette receipt/macro/carry-in.
+- [x] Separare iterazione validata dalla proiezione; digest incrementale/count/hash/closure prima della pubblicazione, vecchio v1 intatto. Formato window-dependency-closure-v2 e bundle ordinato/riferimenti esatti §3.1; nessun DELETE/retention finita. Quality sul bundle conserva minimi20/10, raw99%, ogni cella90%/>0; non etichettare child5sedute READY.
+- [x] GREEN: timeline vecchia/nuova byte-equivalenti ai cutoff, A→B→A/shuffle/tie/cross-capture, superseded/pre-periodo/audit orfani, missing/tamper/rollback/cancel, macro globali, revisione BAR/news dopo freeze invarianti; SQLite authorizer/clock/provider negati nei GET e total_changes invariato. Confrontare proiezioni/carry-in/closure col v1; equivalenza di feature/policy/fill sarà verificata ai Task4/7/12 quando tali componenti esistono.
+- [ ] Smoke30×20 e scalare5/20/60: p95≤250ms, timeline replay≤60s, RSS≤2GiB, crescita disco misurata, zero perdite. Runtime socketfake completo con checkpoint/status/reconcile per batch, budget/GAP/lag espliciti. Gate sostenibilità necessario prima di esperimenti grandi; se manca, task non FATTO per questa definizione, registrare blocco/limite senza abbassare soglie o passare al task dipendente.
+- [x] Mirati: test_intraday_timeline_reader/research_datasets + store/replay/snapshots/quality/API/collector/boundaries; suite/gate comune e review compatibilità v1. Script smoke rifiuta target esistente/data/investedge.db, dotenv e socket esterni.
+
+**Verifica funzionale finale 2026-10-13:** wrapper offline `run_offline_tests.py -q -o addopts= -p no:cacheprovider`: 363 mirati (`targeted-checkpoint.xml`) e 2089 backend (`full-checkpoint.xml`) PASS, 62 nuovi sul baseline Task1; zero failure/error/skip e chiamate esterne inattese, due self-test intenzionali della guardia nel completo. Ruff backend/scripts/tests, pip check, diff/scope e scanner sui 15 file PASS. Review read-only e root del diff PASS nel perimetro funzionale; gate prestazionale separato e ancora non superato. Il fallimento intermedio della migrazione è stato corretto nell'estensione autorizzata sopra, preservando backup, dati, schema e FK SP2b.
+
+**Sostenibilità parziale:** 30×5 completo PASS: p95 119,175 ms, replay 38,839 s, picco RSS 417685504 B, disco 387702784 B; zero rete, perdite e GAP nel runtime fake. Nel 30×20, 228600 BAR e 228600 QUOTE, i replay delle quattro finestre sono 40,724 / 61,971 / 77,230 / 81,046 s: il limite approvato di 60 s è mancato. Smoke interrotto esplicitamente durante il freeze bundle prima di header/seal: p95 e replay dell'apertura nuova del bundle con validazione dei figli non misurati; 30×60 non eseguito. Sono misure precedenti all'ultimo fix di cancel/budget dello staging. Queste evidenze non chiudono il Task2 e non autorizzano Task3 o merge main; nessuna soglia viene abbassata.
+
+**Fix finale di review:** TDD RED3 su cancellazione cooperativa/budget dei duplicati nello staging bundle; il contatore ora include ogni occurrence, poll ogni 1000 e ai confini child/fine, rollback/cleanup prima di RAW/seal. GREEN61 nei due moduli (`cancel-green2.xml`), re-review indipendente con 3 probe RAM e suite finali 363/2089 PASS. Il checkpoint conserva codice/evidenze con Task2 IN CORSO; ripresa sullo stesso branch, profiling separato di validation/from_frozen/open_bundle/iterazione, correzione verificata e nuovi smoke completi 5/20/60 prima del commit finale e FF.
+
+**Checkpoint di questa consegna:** `chore: checkpoint SP3 Task2 sustainability gate`; push solo Task2/gate SHA e worktree pulito come verifiche post-commit riportate nella consegna, proprio SHA nel passo successivo. Nessun FF del checkpoint su main.
+
+**Commit finale dopo sostenibilità:** `perf: bound intraday timeline and dataset reads`
 
 ## Task 3 — Quote-size e incremento prezzo attestati point-in-time
 
@@ -268,4 +279,4 @@ Programma/checkbox chiusi nello stesso commit. Push del branch Task1/gate SHA, F
 | §12 persistenza/API/UI | 1,10–11 |
 | §13 verifica/approvazione/backlog | ogni task,0,12–13 |
 
-**Prossimo:** Task2 NON INIZIATO, da origin/investedge/sp3-task-1 verificato dopo consegna Task1. Approvazione spec/piano acquisita e Task1 FATTO. Non eseguire SP2b Task13 adesso. G1_DATA INSUFFICIENTE rimane prerequisito aperto per economia/SP6a; nessuna cattura live, credenziale, ordine o paper in questa consegna.
+**Prossimo:** riprendere Task2 IN CORSO dal checkpoint sul branch `investedge/sp3-task-2`; base storica Task1 `7b708706c70a4d37d01bc10b73af299bc2052e25`, main fermo al Task1. Sostenibilità non superata, Task3 e SP2b Task13 NON INIZIATI. Approvazione spec/piano acquisita e Task1 FATTO. G1_DATA INSUFFICIENTE rimane prerequisito aperto per economia/SP6a; nessuna cattura live, credenziale, ordine o paper in questa consegna.

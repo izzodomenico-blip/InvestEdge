@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sqlite3
 from datetime import date, timedelta
 from functools import lru_cache
 
@@ -206,6 +207,22 @@ def test_positive_fixed_grid_function_is_ready_but_synthetic_is_non_idoneo():
     assert report['metrics']['raw']['coverage'] == 1
     assert len(report['metrics']['grid']) == 600
     assert all(cell['planned'] == cell['usable'] > 0 for cell in report['metrics']['grid'])
+
+
+def test_staged_session_quality_preserves_post_close_decision_quotes():
+    from backend.app.intraday.snapshots import _StagedTimeline
+    body,rows = positive()
+    stage = _StagedTimeline.__new__(_StagedTimeline)
+    stage.db = sqlite3.connect(':memory:')
+    stage.stage = 'fixture_stage'
+    stage._create_stage()
+    for item in rows:
+        stage.db.execute(f'''INSERT INTO {stage.stage}(source_table,source_id,row_json,replay,kind,
+            listing_id,event_time_ns,available_at_ns,capture_id,received_at_ns) VALUES(?,?,?,1,?,?,?,?,?,?)''',
+            (item['table'],item['id'],json.dumps(item),item.get('kind'),item.get('listing_id'),
+             item.get('event_time_ns'),item['available_at_ns'],item['capture_id'],item['received_at_ns']))
+    expected = api().quality_report(body,rows)
+    assert api().quality_report(body,rows,row_factory=stage.session) == expected
 
 
 def test_future_revisions_cannot_change_quality_at_saved_cutoff():

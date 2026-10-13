@@ -1207,6 +1207,23 @@ def _intraday_research_schema() -> tuple[str, str]:
         "intraday_research_manifest_datasets": f"""manifest_id INTEGER NOT NULL,
             snapshot_id INTEGER NOT NULL REFERENCES intraday_dataset_snapshots(id) ON DELETE RESTRICT,
             {digest('dataset_digest')}, {manifest_fk()}, UNIQUE(manifest_id,snapshot_id)""",
+        "intraday_research_dataset_bundles": f"""{digest('bundle_digest')},
+            {ns('start_at_ns')}, {ns('end_at_ns')}, {ns('cutoff_ns')},
+            child_count INTEGER NOT NULL CHECK(typeof(child_count)='integer' AND child_count BETWEEN 1 AND 1000),
+            CHECK(start_at_ns<end_at_ns AND end_at_ns<=cutoff_ns AND cutoff_ns<=recorded_at_ns)""",
+        "intraday_research_bundle_children": f"""bundle_id INTEGER NOT NULL,
+            snapshot_id INTEGER NOT NULL REFERENCES intraday_dataset_snapshots(id) ON DELETE RESTRICT,
+            {digest('dataset_digest')}, ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
+            FOREIGN KEY(bundle_id,{namespace}) REFERENCES intraday_research_dataset_bundles(id,{namespace}) ON DELETE RESTRICT,
+            UNIQUE(bundle_id,snapshot_id), UNIQUE(bundle_id,ordinal)""",
+        "intraday_research_bundle_chunks": f"""bundle_id INTEGER NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
+            FOREIGN KEY(bundle_id,{namespace}) REFERENCES intraday_research_dataset_bundles(id,{namespace}) ON DELETE RESTRICT,
+            UNIQUE(bundle_id,ordinal)""",
+        "intraday_research_bundle_seals": f"""bundle_id INTEGER NOT NULL,
+            {digest('bundle_digest')},
+            FOREIGN KEY(bundle_id,{namespace}) REFERENCES intraday_research_dataset_bundles(id,{namespace}) ON DELETE RESTRICT,
+            UNIQUE(bundle_id)""",
     }
     attestation_tables = ("intraday_quote_size_attestations", "intraday_price_increment_attestations", "intraday_news_source_attestations")
     for table in attestation_tables:
@@ -1239,6 +1256,12 @@ def _intraday_research_schema() -> tuple[str, str]:
             unique = [("manifest_id", "event_index")]
         elif table == "intraday_research_manifest_datasets":
             unique = [("manifest_id", "snapshot_id")]
+        elif table == "intraday_research_bundle_children":
+            unique = [("bundle_id","snapshot_id"),("bundle_id","ordinal")]
+        elif table == "intraday_research_bundle_chunks":
+            unique = [("bundle_id","ordinal")]
+        elif table == "intraday_research_bundle_seals":
+            unique = [("bundle_id",)]
         elif table == "intraday_research_manifest_attestations":
             unique = [("manifest_id", column) for column in ("quote_size_id", "price_increment_id", "news_source_id")]
         elif table in attestation_tables:
@@ -1254,6 +1277,11 @@ def _intraday_research_schema() -> tuple[str, str]:
                 WHERE typeof(atom)='real' AND abs(atom)>1.7976931348623157e308)
             BEGIN SELECT RAISE(ABORT,'RESEARCH_INVALID_JSON'); END;""")
     guards.append("""CREATE TRIGGER IF NOT EXISTS trg_research_dataset_scope BEFORE INSERT ON intraday_research_manifest_datasets
+        WHEN NOT EXISTS(SELECT 1 FROM intraday_dataset_snapshots src WHERE src.id=NEW.snapshot_id
+            AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
+            AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade AND src.digest=NEW.dataset_digest)
+        BEGIN SELECT RAISE(ABORT,'RESEARCH_NAMESPACE_MISMATCH'); END;""")
+    guards.append("""CREATE TRIGGER IF NOT EXISTS trg_research_bundle_dataset_scope BEFORE INSERT ON intraday_research_bundle_children
         WHEN NOT EXISTS(SELECT 1 FROM intraday_dataset_snapshots src WHERE src.id=NEW.snapshot_id
             AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
             AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade AND src.digest=NEW.dataset_digest)

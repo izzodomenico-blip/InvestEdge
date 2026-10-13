@@ -1,11 +1,19 @@
 """Finite immutable datasets. RAW output is invisible until durable publication."""
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
+import math
+import os
+import shutil
 import sqlite3
+import sys
+import tempfile
 import uuid
 from dataclasses import dataclass
+from itertools import chain, islice
+from pathlib import Path
 
 from backend.app.data_providers.alpaca_metadata import (
     MAX_NS,
@@ -14,9 +22,10 @@ from backend.app.data_providers.alpaca_metadata import (
     decode_row,
     published_select,
 )
+from backend.app.data_providers.transport import SafeProviderTransport
 from backend.app.intraday.contracts import EventEnvelope, QualityPolicy, canonical_json
-from backend.app.intraday.quality import planned_listing_ids, quality_report, validate_manifest
-from backend.app.intraday.replay import check_ns, replay_frozen
+from backend.app.intraday.quality import _Index, _sessions, planned_listing_ids, quality_report, validate_manifest
+from backend.app.intraday.replay import causal_order, check_ns, replay_frozen, visible_rows
 from backend.app.intraday.universe import frozen_universe_dependencies
 
 _REFERENCES = {
@@ -30,13 +39,23 @@ _REFERENCES = {
     'intraday_capture_events': ('CAPTURE_EVENT', 'capture_event_id'),
 }
 _SOURCE_TABLES = {*_REFERENCES, 'intraday_universe_members'}
+_SCOPE = ('profile_id', 'feed', 'data_mode', 'provenance', 'replay_grade')
+_REFS_SQL = """WITH refs AS (
+    SELECT m.id AS member_id,json_extract(m.payload_json,'$.reference') AS reference_json,
+      json_extract(m.payload_json,'$.replay') AS replay
+    FROM intraday_dataset_members m WHERE m.snapshot_id=:snapshot
+    UNION ALL
+    SELECT m.id,dependency.value,json_extract(m.payload_json,'$.replay')
+    FROM intraday_dataset_members m,json_each(m.payload_json,'$.dependencies') dependency
+    WHERE m.snapshot_id=:snapshot
+)"""
 
 
 class SnapshotError(MetadataError):
     """Additional fixed public errors without reflecting caller or SQL text."""
     def __init__(self, code):
         self.code = code if code in {'POLICY_MISSING', 'QUALITY_POLICY_INVALID', 'SYMBOL_LIMIT',
-                                    'CANCELLED', 'FRAME_LIMIT'} else 'METADATA_INVALID'
+                                    'CANCELLED', 'FRAME_LIMIT', 'RESOURCE_LIMIT'} else 'METADATA_INVALID'
         self.reason_code = self.code
         ValueError.__init__(self, self.code)
 
@@ -45,13 +64,69 @@ def _hash(value):
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+def _envelope_bytes(row):
+    # Payloads have already passed their own canonical/hash validation. The
+    # decoded envelope also contains payload_json and has a separate chunk cap.
+    return json.dumps(row, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':'), allow_nan=False).encode()
+
+
+def _json_integer(text):
+    value = int(text)
+    if len(text)>308 and not math.isfinite(float(value)):
+        raise ValueError('METADATA_INVALID')
+    return value
+
+
+def _decode_evidence(raw):
+    """Same canonical/hash contract, with JSON-native types validated once."""
+    if raw is None:
+        raise MetadataError('METADATA_MISSING')
+    row = dict(raw)
+    try:
+        if type(row['payload_json']) is not str or len(row['payload_json'].encode())>1_048_576:
+            raise ValueError
+        payload = json.loads(row['payload_json'],parse_int=_json_integer)
+        if type(payload) is not dict:
+            raise ValueError
+        encoded = _envelope_bytes(payload)
+        if (len(encoded)>1_048_576 or encoded.decode()!=row['payload_json']
+            or hashlib.sha256(encoded).hexdigest()!=row['payload_hash']):
+            raise ValueError
+    except (ValueError,TypeError,KeyError,OverflowError,RecursionError):
+        raise MetadataError('METADATA_INVALID') from None
+    row['payload'] = payload
+    return row
+
+
+def _row_byte_bound(row):
+    return len(_envelope_bytes(row))
+
+
+def _peak_rss_bytes():
+    if os.name != 'nt':
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform=='darwin' else 1024)
+    class Counters(ctypes.Structure):
+        _fields_ = [('cb',ctypes.c_ulong),('faults',ctypes.c_ulong),
+            *[(name,ctypes.c_size_t) for name in ('peak','working','paged_peak','paged','nonpaged_peak','nonpaged','pagefile','pagefile_peak')]]
+    counters = Counters()
+    counters.cb = ctypes.sizeof(counters)
+    kernel,psapi = ctypes.WinDLL('kernel32'),ctypes.WinDLL('psapi')
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p,ctypes.POINTER(Counters),ctypes.c_ulong]
+    if not psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(),ctypes.byref(counters),counters.cb):
+        raise SnapshotError('RESOURCE_LIMIT')
+    return counters.peak
+
+
 def _source_hash(row):
     return _hash({key: value for key, value in row.items() if key != 'payload_json'})
 
 
 def _digest(manifest, members):
     result = hashlib.sha256()
-    for value in (manifest, *members):
+    for value in chain((manifest,), members):
         text = canonical_json(value).encode()
         result.update(len(text).to_bytes(8, 'big'))
         result.update(text)
@@ -72,6 +147,445 @@ class DatasetSnapshot:
     snapshot_id: int
     digest: str
     report_id: int
+
+
+@dataclass(frozen=True)
+class ValidatedDataset:
+    snapshot_id: int
+    digest: str
+    known_at_ns: int
+    manifest: dict
+    report: dict
+    timeline: FrozenTimeline
+    publication_id: int
+    publication_hash: str
+
+    def as_dict(self):
+        return {'snapshot_id': self.snapshot_id, 'digest': self.digest, 'known_at_ns': self.known_at_ns,
+                'manifest': json.loads(canonical_json(self.manifest)),
+                'report': json.loads(canonical_json(self.report)), 'timeline': self.timeline}
+
+
+class FrozenTimeline:
+    """Re-iterable exact references. Full validation precedes every public handle."""
+    def __init__(self, reader, snapshot_id, manifest, count, *, max_occurrences=10_000, max_bytes=8_388_608,
+                 refs_sql=_REFS_SQL, links=None):
+        self.reader, self.snapshot_id, self.manifest, self.count = reader, snapshot_id, manifest, count
+        self.max_occurrences, self.max_bytes = max_occurrences, max_bytes
+        self.refs_sql = refs_sql
+        self.links = links or (lambda news_id: reader._frozen_links(snapshot_id,news_id))
+        self.validator = lambda: reader.open(snapshot_id,max_occurrences=max_occurrences,max_bytes=max_bytes)
+        self.signature = reader._read_signature()
+
+    def __len__(self):
+        return self.count
+
+    def __iter__(self):
+        return self.iter_rows()
+
+    def _fence(self, *, buffered=False):
+        if self.signature!=self.reader._read_signature():
+            if buffered:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            self.validator()
+            self.signature = self.reader._read_signature()
+
+    def _ordered(self, cutoff):
+        selects = []
+        for table in sorted(_SOURCE_TABLES):
+            selects.append(f"""SELECT r.reference_json,raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                raw.id,'{table}' AS source_table,
+                COALESCE(json_extract(r.reference_json,'$.projection.available_at_ns'),raw.available_at_ns) AS available,
+                COALESCE(json_extract(r.reference_json,'$.projection.admission_id'),
+                         json_extract(r.reference_json,'$.projection.publication_id'),raw.id) AS proof_id,
+                COALESCE(json_extract(r.reference_json,'$.projection.capture_ingest_sequence'),
+                         json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence) AS intake
+                FROM refs r JOIN {table} raw ON raw.id=json_extract(r.reference_json,'$.id')
+                WHERE r.replay=1 AND json_extract(r.reference_json,'$.table')='{table}'""")
+        query = self.refs_sql + ', occurrences AS (' + ' UNION ALL '.join(selects) + """), visible AS (
+            SELECT *,MIN(proof_id) OVER(PARTITION BY received_at_ns,capture_id) AS anchor
+            FROM occurrences WHERE available<=:cutoff
+        ) SELECT reference_json FROM visible
+        ORDER BY available,received_at_ns,anchor,intake,proof_id,ingest_sequence,source_table,id"""
+        return self.reader.connection.execute(query, {'snapshot': self.snapshot_id, 'cutoff': cutoff})
+
+    def iter_rows(self, *, cutoff_ns=None):
+        cutoff = self.manifest['cutoff_ns'] if cutoff_ns is None else cutoff_ns
+        check_ns(cutoff)
+        if cutoff > self.manifest['cutoff_ns'] or (self.manifest.get('version') in {'intraday-dataset-v2','intraday-bundle-quality-v1'}
+                and cutoff < self.manifest['carry_at_ns']):
+            raise ValueError('SNAPSHOT_CUTOFF')
+        if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+            raise SnapshotError('RESOURCE_LIMIT')
+        self._fence()
+        cursor = self._ordered(cutoff)
+        while items := list(islice(cursor,1_000)):
+            for rows in self.reader._hydrated_batches([json.loads(item[0]) for item in items],validated=True):
+                if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+                    raise SnapshotError('RESOURCE_LIMIT')
+                for row in rows:
+                    self._fence(buffered=True)
+                    row.pop('capture_order', None)
+                    if row['table'] == 'intraday_news_versions':
+                        row['links'] = self.links(row['id'])
+                        if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+                            raise SnapshotError('RESOURCE_LIMIT')
+                        self._fence(buffered=True)
+                    yield row
+
+    def chunks(self, *, cutoff_ns=None):
+        chunk, size = [], 0
+        for row in self.iter_rows(cutoff_ns=cutoff_ns):
+            row_size = _row_byte_bound(row)
+            if row_size>self.max_bytes:
+                row_size = len(_envelope_bytes(row))
+            if row_size > self.max_bytes:
+                raise SnapshotError('RESOURCE_LIMIT')
+            if chunk and (len(chunk) == self.max_occurrences or size + row_size > self.max_bytes):
+                if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+                    raise SnapshotError('RESOURCE_LIMIT')
+                self._fence(buffered=True)
+                yield chunk
+                chunk, size = [], 0
+            chunk.append(row)
+            size += row_size
+        if chunk:
+            if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+                raise SnapshotError('RESOURCE_LIMIT')
+            self._fence(buffered=True)
+            yield chunk
+
+    def page(self, *, offset=0, limit=50, input_type='ALL'):
+        tables = {'NEWS': 'intraday_news_versions', 'EVENT': 'intraday_event_versions',
+                  'IDENTITY': 'intraday_identity_versions', 'CALENDAR': 'intraday_calendar_versions',
+                  'UNIVERSE': 'intraday_universe_snapshots', 'CAPTURE': 'intraday_capture_events'}
+        if (type(offset) is not int or not 0 <= offset <= 10_000_000 or type(limit) is not int
+            or not 1 <= limit <= 200 or type(input_type) is not str or input_type not in {'ALL', 'BAR', 'QUOTE', *tables}):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        items, total, size, full = [], 0, 0, False
+        for row in self:
+            matched = (input_type == 'ALL' or input_type in {'BAR', 'QUOTE'} and row.get('kind') == input_type
+                       or input_type in tables and (row['table'] == tables[input_type]
+                           or input_type == 'UNIVERSE' and row['table'] == 'intraday_universe_members'))
+            if matched:
+                if offset <= total < offset + limit and not full:
+                    row_size = _row_byte_bound(row)
+                    if row_size>self.max_bytes:
+                        row_size = len(_envelope_bytes(row))
+                    if row_size>self.max_bytes:
+                        raise SnapshotError('RESOURCE_LIMIT')
+                    if len(items)==self.max_occurrences or size+row_size>self.max_bytes:
+                        full = True
+                    else:
+                        items.append(row)
+                        size += row_size
+                total += 1
+        if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+            raise SnapshotError('RESOURCE_LIMIT')
+        self._fence(buffered=True)
+        return {'items': items, 'total': total, 'offset': offset, 'limit': limit,
+                'next_offset': offset + len(items) if offset + len(items) < total else None}
+
+
+class _StagedTimeline:
+    """Job-local disk index. Never created by a public GET or retained as a cache."""
+    def __init__(self, reader, manifest, resources):
+        self.reader, self.db, self.manifest = reader, reader.connection, manifest
+        self.resources = resources
+        suffix = uuid.uuid4().hex
+        self.index, self.stage = 'timeline_index_' + suffix, 'timeline_stage_' + suffix
+        store = reader.store
+        meta_provenance = 'CAPTURED' if store.data_mode == 'REAL' else 'SYNTHETIC'
+        meta_grade = 'STRICT_PIT' if store.data_mode == 'REAL' else 'RESEARCH_ONLY'
+        params = {'profile': store.profile.profile_id, 'mode': store.data_mode, 'provenance': store.provenance,
+                  'grade': store.replay_grade, 'meta_provenance': meta_provenance, 'meta_grade': meta_grade,
+                  'same_namespace': int((store.provenance, store.replay_grade) == (meta_provenance, meta_grade)),
+                  'cutoff': manifest['cutoff_ns']}
+        self.db.execute(f'CREATE TEMP TABLE {self.index} AS ' + store._timeline_query(), params)
+        self.db.execute(f'CREATE UNIQUE INDEX {self.index}_key ON {self.index}(source_table,source_id)')
+        self._create_stage()
+        self.check_budget()
+
+    def _create_stage(self):
+        self.db.execute(f'''CREATE TEMP TABLE {self.stage}(source_table TEXT,source_id INTEGER,
+            row_json TEXT,reference_json TEXT,replay INTEGER NOT NULL,processed INTEGER NOT NULL DEFAULT 0,
+            kind TEXT,listing_id INTEGER,event_time_ns INTEGER,available_at_ns INTEGER,capture_id TEXT,received_at_ns INTEGER,
+            PRIMARY KEY(source_table,source_id)) WITHOUT ROWID''')
+        self.db.execute(f'CREATE INDEX {self.stage}_market ON {self.stage}(kind,listing_id,available_at_ns,event_time_ns)')
+        self.db.execute(f'CREATE INDEX {self.stage}_event ON {self.stage}(event_time_ns)')
+        self.db.execute(f'CREATE INDEX {self.stage}_pending ON {self.stage}(processed,source_table,source_id)')
+
+    @classmethod
+    def from_frozen(cls, reader, manifest, resources, datasets, *, cancelled=None):
+        result = cls.__new__(cls)
+        result.reader, result.db, result.manifest, result.resources = reader, reader.connection, manifest, resources
+        suffix = uuid.uuid4().hex
+        result.index, result.stage = 'timeline_index_' + suffix, 'timeline_stage_' + suffix
+        result._create_stage()
+        try:
+            processed = 0
+            for dataset in datasets:
+                reader._cancel(cancelled, 'DURING_BUNDLE_STAGING')
+                for row in dataset.timeline:
+                    processed += 1
+                    if processed % 1000 == 0:
+                        result.check_budget()
+                        reader._cancel(cancelled, 'DURING_BUNDLE_STAGING')
+                    ref = reader._reference(row)
+                    previous = result.db.execute(f'SELECT reference_json FROM {result.stage} WHERE source_table=? AND source_id=?',
+                                                 (row['table'],row['id'])).fetchone()
+                    if previous:
+                        old = json.loads(previous[0])
+                        def identity(value):
+                            return value | {'projection': {key:item for key,item in value['projection'].items() if key!='available_at_ns'}}
+                        if identity(old) != identity(ref):
+                            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                        previous_at = old['projection'].get('available_at_ns',row['available_at_ns'])
+                        if previous_at <= row['available_at_ns']:
+                            continue
+                        changed = result.db.execute(f'DELETE FROM {result.stage} WHERE source_table=? AND source_id=?', (row['table'],row['id'])).rowcount
+                        reader._scratch_changes = getattr(reader,'_scratch_changes',0)+changed
+                    encoded = _envelope_bytes(row)
+                    if len(encoded) > resources['max_chunk_bytes']:
+                        raise SnapshotError('RESOURCE_LIMIT')
+                    changed = result.db.execute(f'''INSERT INTO {result.stage}(source_table,source_id,row_json,reference_json,replay,processed,
+                        kind,listing_id,event_time_ns,available_at_ns,capture_id,received_at_ns) VALUES(?,?,?,?,1,1,?,?,?,?,?,?)''',
+                        (row['table'],row['id'],encoded.decode(),canonical_json(ref),row.get('kind'),row.get('listing_id'),
+                         row.get('event_time_ns'),row['available_at_ns'],row['capture_id'],row['received_at_ns'])).rowcount
+                    # Only our private TEMP index writes are excluded from the
+                    # source epoch. Main writes, triggers and rotations still fence.
+                    reader._scratch_changes = getattr(reader,'_scratch_changes',0)+changed
+            result.check_budget()
+            reader._cancel(cancelled, 'DURING_BUNDLE_STAGING')
+            return result
+        except Exception:
+            result.close()
+            raise
+
+    def check_budget(self):
+        size = self.db.execute('PRAGMA temp.page_count').fetchone()[0] * self.db.execute('PRAGMA temp.page_size').fetchone()[0]
+        main = next((row[2] for row in self.db.execute('PRAGMA database_list') if row[1] == 'main'), '')
+        directory = Path(main).parent if main else Path(tempfile.gettempdir())
+        size += self.db.execute('PRAGMA main.page_count').fetchone()[0]*self.db.execute('PRAGMA main.page_size').fetchone()[0]
+        if (size > self.resources['max_disk_bytes'] or shutil.disk_usage(directory).free < self.resources['min_free_bytes']
+            or _peak_rss_bytes()>self.resources.get('max_rss_bytes',2_147_483_648)):
+            raise SnapshotError('RESOURCE_LIMIT')
+
+    def close(self):
+        for table in (self.stage, self.index):
+            self.db.execute(f'DROP TABLE IF EXISTS temp.{table}')
+
+    def seed(self, query, params=()):
+        self.db.execute(f'''INSERT OR IGNORE INTO {self.stage}(source_table,source_id,replay)
+            SELECT source_table,source_id,1 FROM ({query})''', params)
+
+    def select(self):
+        m = self.manifest
+        if m['version'] == 'intraday-dataset-v1':
+            self.seed(f'SELECT source_table,source_id FROM {self.index}')
+            return
+        start, end, carry = m['start_at_ns'], m['end_at_ns'], m['carry_at_ns']
+        # Economic changes are selected by availability, including late revisions
+        # of pre-period observations and news, and unrelated liveness receipts.
+        self.seed(f'SELECT source_table,source_id FROM {self.index} WHERE known>=?', (start,))
+        calendar_rows,size = [],0
+        query = f'''SELECT i.* FROM {self.index} i WHERE i.source_table='intraday_calendar_versions'
+            OR i.source_table='intraday_capture_events' AND EXISTS(SELECT 1 FROM intraday_capture_events raw
+                WHERE raw.id=i.source_id AND json_extract(raw.payload_json,'$.metadata_kind')='CALENDAR')'''
+        for occurrence in self.db.execute(query):
+            row = self.reader.store._timeline_row(occurrence,m['cutoff_ns'])
+            size += _row_byte_bound(row)
+            if size>self.resources['max_cache_bytes']:
+                raise SnapshotError('RESOURCE_LIMIT')
+            calendar_rows.append(row)
+        index = _Index(calendar_rows,max_cache_bytes=self.resources['max_cache_bytes'])
+        m['window_session_count'] = len(_sessions(m,index,set()))
+        earliest = min((row['open_at_ns'] for row in calendar_rows if row['table']=='intraday_calendar_versions'),default=start)
+        previous = []
+        if earliest<start:
+            history = _Index([row for row in calendar_rows if row['available_at_ns']<=carry],
+                             max_cache_bytes=self.resources['max_cache_bytes'])
+            candidates = _sessions(m | {'start_at_ns':earliest,'end_at_ns':start,'cutoff_ns':carry},history,set())
+            previous = [(row,valid) for row,valid in candidates if row['close_at_ns']<=start][-m['history_sessions']:]
+        warm_start = min((row['open_at_ns'] for row,valid in previous),default=start)
+        m['support_start_at_ns'] = warm_start
+        if m['window_session_count'] > self.resources['window_sessions']:
+            raise SnapshotError('RESOURCE_LIMIT')
+        availability_sessions = len(_sessions(m | {'end_at_ns':max(end,m['cutoff_ns'])},index,set()))
+        if availability_sessions>self.resources['window_sessions']:
+            raise SnapshotError('RESOURCE_LIMIT')
+        self.seed(f'''SELECT i.source_table,i.source_id FROM {self.index} i JOIN intraday_observations raw
+            ON raw.id=i.source_id WHERE i.source_table='intraday_observations' AND i.known<=?
+            AND raw.kind='BAR' AND raw.event_time_ns>=? AND raw.event_time_ns<?''', (carry, warm_start, start))
+        # A quote carry is the latest event time, even when invalid or stale. All
+        # its revisions are retained so ties use the same visible evidence.
+        self.seed(f'''WITH candidates AS MATERIALIZED (
+            SELECT i.source_table,i.source_id,raw.listing_id,raw.event_time_ns FROM {self.index} i
+            JOIN intraday_observations raw ON raw.id=i.source_id
+            WHERE i.source_table='intraday_observations' AND i.known<=? AND raw.kind='QUOTE'),
+            latest AS (SELECT listing_id,MAX(event_time_ns) AS event_time_ns FROM candidates GROUP BY listing_id)
+            SELECT c.source_table,c.source_id FROM candidates c JOIN latest l
+            ON l.listing_id=c.listing_id AND l.event_time_ns=c.event_time_ns''', (carry,))
+        for table, key, order, anchor in (
+            ('intraday_news_versions', 'provider,article_id', 'updated_at_ns DESC,received_at_ns DESC,local_anchor DESC,intake DESC,id DESC',
+             'raw.provider,raw.article_id,raw.updated_at_ns,raw.received_at_ns,raw.capture_id'),
+            ('intraday_event_versions', 'provider,logical_key', 'received_at_ns DESC,local_anchor DESC,intake DESC,id DESC',
+             'raw.provider,raw.logical_key,raw.received_at_ns,raw.capture_id'),
+            ('intraday_identity_versions', 'listing_id,valid_from_ns', 'known DESC,id DESC','raw.id')):
+            self.seed(f'''WITH candidates AS (SELECT i.source_table,i.source_id,i.known,i.intake,raw.*,
+                MIN(raw.id) OVER(PARTITION BY {anchor}) AS local_anchor FROM {self.index} i
+                JOIN {table} raw ON raw.id=i.source_id WHERE i.source_table=? AND i.known<=?)
+                SELECT source_table,source_id FROM (SELECT source_table,source_id,
+                ROW_NUMBER() OVER(PARTITION BY {key} ORDER BY {order}) AS rank FROM candidates) WHERE rank=1''', (table, carry))
+        for table, predicate in (
+            ('intraday_calendar_versions', 'raw.close_at_ns>:warm'),
+            ('intraday_universe_snapshots', "json_extract(raw.payload_json,'$.close_at_ns')>:warm"),
+            ('intraday_capture_events', "json_extract(raw.payload_json,'$.metadata_kind') IN ('ASSETS','ASSET_CHUNK','CALENDAR')")):
+            self.seed(f'''SELECT i.source_table,i.source_id FROM {self.index} i JOIN {table} raw ON raw.id=i.source_id
+                WHERE i.source_table=:table AND i.known<=:carry AND {predicate}''',
+                {'table': table, 'carry': carry, 'warm': warm_start})
+        active = self.db.execute(f'''SELECT raw.capture_id FROM {self.index} i JOIN intraday_capture_events raw ON raw.id=i.source_id
+            WHERE i.source_table='intraday_capture_events' AND i.known<=? AND raw.kind='CAPTURE_START'
+            ORDER BY i.known DESC,raw.received_at_ns DESC,i.anchor DESC,i.intake DESC,i.proof_id DESC LIMIT 1''', (carry,)).fetchone()
+        if active:
+            capture = active[0]
+            # Keep every invalid clock and protocol/state transition in the
+            # active epoch; none can be repaired by a later valid heartbeat.
+            for table, predicate in (
+                ('intraday_capture_events', "raw.kind!='ADMISSION' AND COALESCE(json_extract(raw.payload_json,'$.metadata_kind'),'') NOT IN ('PUBLICATION','COLLECTOR_PUBLICATION','DATASET_PUBLICATION','EVENT_DOCUMENT')"),
+                ('intraday_observations', "raw.kind IN ('STATUS','LULD')")):
+                self.seed(f'''SELECT i.source_table,i.source_id FROM {self.index} i JOIN {table} raw ON raw.id=i.source_id
+                    WHERE i.source_table=? AND i.known<=? AND raw.capture_id=? AND {predicate}''', (table, carry, capture))
+        for table in ('intraday_observations', 'intraday_news_versions'):
+            self.seed(f'''SELECT source_table,source_id FROM (SELECT i.source_table,i.source_id,
+                ROW_NUMBER() OVER(PARTITION BY raw.capture_id ORDER BY raw.received_at_ns DESC,raw.id DESC) AS rank
+                FROM {self.index} i JOIN {table} raw ON raw.id=i.source_id
+                WHERE i.source_table=? AND i.known<=?) WHERE rank=1''', (table, carry))
+
+    def require(self, table, source_id, *, replay=True):
+        if table not in _SOURCE_TABLES or type(source_id) is not int or source_id <= 0:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if replay and self.db.execute(f'SELECT 1 FROM {self.index} WHERE source_table=? AND source_id=?', (table, source_id)).fetchone() is None:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        self.db.execute(f'INSERT OR IGNORE INTO {self.stage}(source_table,source_id,replay) VALUES(?,?,?)',
+                        (table, source_id, int(replay)))
+
+    def hydrate(self):
+        processed = 0
+        while True:
+            pending = self.db.execute(f'SELECT source_table,source_id,replay FROM {self.stage} WHERE processed=0 LIMIT 1').fetchone()
+            if pending is None:
+                break
+            table, source_id, replay = tuple(pending)
+            occurrence = self.db.execute(f'SELECT * FROM {self.index} WHERE source_table=? AND source_id=?', (table, source_id)).fetchone()
+            if replay:
+                row = self.reader.store._timeline_row(occurrence, self.manifest['cutoff_ns'])
+                if len(visible_rows((row,), cutoff_ns=self.manifest['cutoff_ns'], namespace=tuple(self.manifest['namespace']))) != 1:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            else:
+                row = {**decode_row(self.reader._source(table, source_id)), 'table': table}
+            if table == 'intraday_capture_events' and (row['payload'].get('metadata_kind') == 'DATASET_PUBLICATION'
+                or row['payload'].get('metadata_kind') == 'PUBLICATION' and row['payload'].get('references')
+                and all(ref.get('table') == 'intraday_capture_events' and self.reader._source(ref['table'], ref['id'])['kind'] == 'BOOTSTRAP'
+                        and json.loads(self.reader._source(ref['table'], ref['id'])['payload_json']).get('metadata_kind') == 'DATASET_PUBLICATION'
+                        for ref in row['payload']['references'])):
+                self.db.execute(f'DELETE FROM {self.stage} WHERE source_table=? AND source_id=?', (table, source_id))
+                continue
+            payload = row['payload']
+            for field in ('admission_id', 'publication_id'):
+                if row.get(field) is not None:
+                    self.require('intraday_capture_events', row[field])
+            if table == 'intraday_news_versions':
+                for link in row['links']:
+                    self.require('intraday_news_links', link['id'])
+            if table == 'intraday_event_versions':
+                self.require('intraday_capture_events', payload['document']['id'])
+            if table in {'intraday_event_versions', 'intraday_news_links'} and payload.get('identity'):
+                self.require('intraday_identity_versions', payload['identity']['id'])
+            if table == 'intraday_news_links':
+                self.require('intraday_news_versions', row['news_version_id'])
+            if table == 'intraday_universe_snapshots':
+                for member in self.db.execute('SELECT id FROM intraday_universe_members WHERE snapshot_id=?', (source_id,)):
+                    self.require('intraday_universe_members', member[0])
+            if table == 'intraday_universe_members':
+                self.require('intraday_universe_snapshots', row['snapshot_id'])
+                self.require('intraday_identity_versions', row['identity_version_id'])
+            if table == 'intraday_capture_events' and payload.get('orphan_raw_proof'):
+                orphan = payload['orphan_raw_proof']
+                raw = self.reader._source(orphan['table'], orphan['id'])
+                if (raw['payload_hash'] != orphan['payload_hash'] or raw['received_at_ns'] != orphan['received_at_ns']
+                    or raw['persisted_at_ns'] > row['persisted_at_ns']):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                self.require(orphan['table'], orphan['id'], replay=False)
+            if table == 'intraday_capture_events' and payload.get('metadata_kind')=='COLLECTOR_HANDSHAKE':
+                for ack in payload['ack_refs']:
+                    self.require('intraday_capture_events',ack['id'])
+                    self.require('intraday_capture_events',ack['publication_id'])
+                for listing in payload['listings']:
+                    self.require('intraday_event_versions',listing['checkpoint_id'])
+                    self.require('intraday_capture_events',listing['checkpoint_admission_id'])
+                    for status in listing['status_refs']:
+                        self.require('intraday_observations',status['id'])
+                        self.require('intraday_capture_events',status['admission_id'])
+            encoded = _envelope_bytes(row)
+            if len(encoded) > self.resources['max_chunk_bytes']:
+                raise SnapshotError('RESOURCE_LIMIT')
+            self.db.execute(f'''UPDATE {self.stage} SET row_json=?,reference_json=?,processed=1,
+                kind=?,listing_id=?,event_time_ns=?,available_at_ns=?,capture_id=?,received_at_ns=?
+                WHERE source_table=? AND source_id=?''',
+                (encoded.decode(), canonical_json(self.reader._reference(row)), row.get('kind'),row.get('listing_id'),
+                 row.get('event_time_ns'),row['available_at_ns'],row['capture_id'],row['received_at_ns'],table,source_id))
+            processed += 1
+            if processed % 1000 == 0:
+                self.check_budget()
+        self.check_budget()
+
+    def rows(self, predicate='1', params=()):
+        for row in self.db.execute(f'SELECT row_json FROM {self.stage} WHERE replay=1 AND ({predicate}) ORDER BY source_table,source_id', params):
+            yield json.loads(row[0])
+
+    def planning(self):
+        values,size = [],0
+        rows = self.rows("source_table IN ('intraday_identity_versions','intraday_calendar_versions','intraday_universe_snapshots',"
+            "'intraday_event_versions') OR kind='STATUS' OR source_table='intraday_capture_events' AND kind!='ADMISSION' "
+            "AND COALESCE(json_extract(row_json,'$.payload.metadata_kind'),'') NOT IN ('PUBLICATION','COLLECTOR_PUBLICATION','DATASET_PUBLICATION')")
+        for row in rows:
+            size += len(_envelope_bytes(row))
+            if size>self.resources.get('max_cache_bytes',67_108_864):
+                raise SnapshotError('RESOURCE_LIMIT')
+            values.append(row)
+        return values
+
+    def session(self, calendar):
+        start, end = calendar['open_at_ns'], calendar['close_at_ns']
+        decision_end = end + QualityPolicy().decision_delay_ns
+        # Late revisions of this session are retained at the global cutoff;
+        # reducers still apply their individual decision cutoffs.
+        query = f'''WITH carry AS (SELECT listing_id,MAX(event_time_ns) AS event_time_ns FROM {self.stage}
+                WHERE kind='QUOTE' AND available_at_ns<:start GROUP BY listing_id),
+            liveness AS (SELECT capture_id,MAX(received_at_ns) AS received FROM {self.stage}
+                WHERE kind IN ('BAR','QUOTE','NEWS') AND available_at_ns<:start GROUP BY capture_id,kind='NEWS')
+            SELECT row_json FROM {self.stage} s WHERE replay=1 AND (
+                source_table IN ('intraday_identity_versions','intraday_calendar_versions','intraday_universe_snapshots','intraday_event_versions')
+                OR source_table='intraday_capture_events' AND kind!='ADMISSION'
+                    AND COALESCE(json_extract(row_json,'$.payload.metadata_kind'),'') NOT IN ('PUBLICATION','COLLECTOR_PUBLICATION','DATASET_PUBLICATION')
+                OR kind IN ('STATUS','LULD') OR (kind='BAR' AND event_time_ns>=:start AND event_time_ns<:end)
+                OR kind IN ('BAR','QUOTE','NEWS') AND available_at_ns>=:start AND available_at_ns<=:decision_end
+                OR kind='QUOTE' AND EXISTS(SELECT 1 FROM carry c WHERE c.listing_id=s.listing_id AND c.event_time_ns=s.event_time_ns)
+                OR EXISTS(SELECT 1 FROM liveness l WHERE l.capture_id=s.capture_id AND l.received=s.received_at_ns))
+            ORDER BY source_table,source_id'''
+        return (json.loads(row[0]) for row in self.db.execute(query, {'start': start, 'end': end,'decision_end':decision_end}))
+
+    def bodies(self):
+        for raw in self.db.execute(f'''SELECT source_table,source_id,row_json,reference_json,replay FROM {self.stage}
+            WHERE source_table!='intraday_universe_members' ORDER BY source_table,source_id'''):
+            body = {'reference': json.loads(raw['reference_json']), 'dependencies': [], 'replay': bool(raw['replay'])}
+            if raw['source_table'] == 'intraday_universe_snapshots':
+                universe = json.loads(raw['row_json'])
+                dependencies = list(self.rows("source_table='intraday_universe_members' AND json_extract(row_json,'$.snapshot_id')=?", (raw['source_id'],)))
+                frozen_universe_dependencies(universe, dependencies)
+                body['dependencies'] = [self.reader._reference(item) for item in sorted(dependencies, key=lambda item: item['listing_id'])]
+            yield body
 
 
 class SnapshotService:
@@ -115,18 +629,42 @@ class SnapshotService:
                 'config': json.loads(row['config_json']), 'created_at_ns': row['created_at_ns']}
 
     def _source(self, table, source_id):
+        return self._decode_source(table,source_id)[0]
+
+    def _raw_source(self, table, source_id):
         if table not in _SOURCE_TABLES or type(source_id) is not int or source_id <= 0:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         raw = self.connection.execute(f'SELECT * FROM {table} WHERE id=?', (source_id,)).fetchone()
         if raw is None:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         raw = dict(raw)
-        self.archive.safe_json({key: value for key, value in raw.items() if key != 'payload_json'})
-        try:
-            self.archive.safe_json(json.loads(raw['payload_json']))
-        except ValueError:
-            raise MetadataError('METADATA_INVALID') from None
         return raw
+
+    def _decode_source(self, table, source_id, *, raw=None):
+        raw = self._raw_source(table,source_id) if raw is None else raw
+        header = {key:value for key,value in raw.items() if key!='payload_json'}
+        encoded = _envelope_bytes(header)
+        if len(encoded)>1_048_576:
+            raise MetadataError('METADATA_INVALID')
+        row = _decode_evidence(raw)
+        candidates = tuple(value for name,value in self._secret_fields() if isinstance(value,str) and value)
+        if candidates and (SafeProviderTransport._payload_contains_secret(header,candidates)
+                           or SafeProviderTransport._payload_contains_secret(row['payload'],candidates)):
+            raise MetadataError('METADATA_INVALID')
+        return raw,row,hashlib.sha256(encoded).hexdigest()
+
+    def _secret_fields(self):
+        settings = self.archive.settings
+        if getattr(self,'_secret_settings',None) is not settings:
+            self._secret_names = tuple(name for name in vars(settings)
+                if name.endswith(('_api_key','_token','_chat_id')) or name in {'alpaca_api_key_id','alpaca_api_secret_key'})
+            self._secret_settings = settings
+        return tuple((name,getattr(settings,name)) for name in self._secret_names)
+
+    def _read_signature(self):
+        secret_fields = self._secret_fields()
+        return (self.connection.total_changes-getattr(self,'_scratch_changes',0),self.connection.execute('PRAGMA data_version').fetchone()[0],
+                self.connection.execute('PRAGMA schema_version').fetchone()[0],secret_fields)
 
     def _reference(self, row):
         raw = self._source(row['table'], row['id'])
@@ -139,29 +677,121 @@ class SnapshotService:
         return {'table': row['table'], 'id': row['id'], 'payload_hash': raw['payload_hash'],
                 'source_hash': _source_hash(raw), 'projection': projection}
 
-    def _hydrate(self, reference):
-        raw = self._source(reference['table'], reference['id'])
-        if raw['payload_hash'] != reference['payload_hash'] or _source_hash(raw) != reference['source_hash']:
+    def _hydrate(self, reference, *, _validated=False):
+        allowed = {'available_at_ns','recorded_available_at_ns','admission_id','publication_id','publication_hash',
+                   'capture_ingest_sequence','metadata_dependency','first_received_at_ns','table'}
+        if (type(reference['projection']) is not dict or not set(reference['projection'])<=allowed
+            or reference['projection'].get('table',reference['table'])!=reference['table']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        row = decode_row(raw)
+        if _validated:
+            row = self._raw_source(reference['table'],reference['id'])
+            row['payload'] = json.loads(row['payload_json'])
+        else:
+            raw,row,source_hash = self._decode_source(reference['table'],reference['id'])
+            if raw['payload_hash']!=reference['payload_hash'] or source_hash!=reference['source_hash']:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
         row.update(reference['projection'])
         row['table'] = reference['table']
         return row
+
+    def _hydrate_batch(self, references, *, validated=False):
+        """Bounded working set; tuple cursors avoid repeated sqlite Row key scans."""
+        allowed = {'available_at_ns','recorded_available_at_ns','admission_id','publication_id','publication_hash',
+                   'capture_ingest_sequence','metadata_dependency','first_received_at_ns','table'}
+        by_table = {}
+        for ref in references:
+            if (ref['table'] not in _SOURCE_TABLES or type(ref['id']) is not int or ref['id']<=0
+                or type(ref['projection']) is not dict or not set(ref['projection'])<=allowed
+                or ref['projection'].get('table',ref['table'])!=ref['table']):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            by_table.setdefault(ref['table'],{})[ref['id']] = ref
+        sources,size = {},0
+        for table, refs in by_table.items():
+            ids = tuple(refs)
+            cursor = self.connection.cursor()
+            cursor.row_factory = None
+            cursor.execute(f"SELECT * FROM {table} WHERE id IN ({','.join('?' for _ in ids)})",ids)
+            keys = tuple(column[0] for column in cursor.description)
+            for values in cursor:
+                raw = dict(zip(keys,values,strict=True))
+                ref = refs[raw['id']]
+                size += 3*len(raw['payload_json'].encode())+4_096
+                if size>67_108_864:
+                    raise SnapshotError('RESOURCE_LIMIT')
+                if validated:
+                    row = raw
+                    row['payload'] = json.loads(row['payload_json'])
+                else:
+                    raw,row,source_hash = self._decode_source(table,raw['id'],raw=raw)
+                    if raw['payload_hash']!=ref['payload_hash'] or source_hash!=ref['source_hash']:
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                row.update(ref['projection'])
+                row['table'] = table
+                sources[(table,row['id'])] = row
+            cursor.close()
+        if len(sources)!=sum(len(refs) for refs in by_table.values()):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return [sources[(ref['table'],ref['id'])] for ref in references]
+
+    def _hydrated_batches(self, references, *, validated=False):
+        # Inspect byte lengths before allocating envelopes. Large valid news
+        # split into small working batches rather than rejecting a whole page.
+        sizes = {}
+        by_table = {}
+        for ref in references:
+            if ref['table'] not in _SOURCE_TABLES or type(ref['id']) is not int or ref['id']<=0:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            by_table.setdefault(ref['table'],set()).add(ref['id'])
+        for table,ids in by_table.items():
+            ids = tuple(ids)
+            for raw in self.connection.execute(f"SELECT id,length(CAST(payload_json AS BLOB)) FROM {table} WHERE id IN ({','.join('?' for _ in ids)})",ids):
+                if type(raw[1]) is not int or not 0<raw[1]<=1_048_576:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                sizes[(table,raw[0])] = 3*raw[1]+4_096
+        batch,size = [],0
+        for ref in references:
+            key = (ref['table'],ref['id'])
+            if key not in sizes:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            if batch and size+sizes[key]>8_388_608:
+                yield self._hydrate_batch(batch,validated=validated)
+                batch,size = [],0
+            batch.append(ref)
+            size += sizes[key]
+        if batch:
+            yield self._hydrate_batch(batch,validated=validated)
 
     @staticmethod
     def _cancel(cancelled, stage):
         if cancelled is not None and cancelled(stage):
             raise SnapshotError('CANCELLED')
 
-    def freeze_dataset(self, *, start_at_ns, end_at_ns, cutoff_ns, listing_ids, benchmarks, cancelled=None):
+    def freeze_dataset(self, *, start_at_ns, end_at_ns, cutoff_ns, listing_ids, benchmarks, cancelled=None,
+                       resources=None, _window=False):
         for stamp in (start_at_ns, end_at_ns, cutoff_ns):
             check_ns(stamp)
         if cutoff_ns > self.archive.now():
             raise MetadataError('SNAPSHOT_NOT_PIT')
         if self.connection.in_transaction:
             raise MetadataError('TRANSACTION_ALREADY_OPEN')
+        limits = {'max_disk_bytes': min(self.store.profile.max_archive_bytes, self.archive.settings.alpaca_max_archive_bytes),
+                  'max_listings':30,
+                  'min_free_bytes': 1_048_576, 'max_chunk_occurrences': 10_000, 'max_chunk_bytes': 8_388_608,
+                  'max_cache_bytes': 67_108_864, 'max_rss_bytes': 2_147_483_648, 'window_sessions': 5, 'history_sessions': 30}
+        if resources is not None:
+            if type(resources) is not dict or not set(resources) <= set(limits) or not {'max_disk_bytes','min_free_bytes'} <= set(resources):
+                raise SnapshotError('RESOURCE_LIMIT')
+            for key, value in resources.items():
+                if type(value) is not int or value <= 0 or (key not in {'max_disk_bytes','min_free_bytes'} and value > limits[key]):
+                    raise SnapshotError('RESOURCE_LIMIT')
+            limits.update(resources)
+        if any(type(value) is not int or value <= 0 for value in limits.values()):
+            raise SnapshotError('RESOURCE_LIMIT')
         self._cancel(cancelled, 'BEFORE_READ')
+        self.connection.execute('PRAGMA temp_store=FILE')
+        self.connection.execute('PRAGMA temp.cache_size=-8192')
         self.connection.execute('BEGIN IMMEDIATE')
+        stage = None
         try:
             self._guard()
             manifest = {'version': 'intraday-dataset-v1', 'start_at_ns': start_at_ns, 'end_at_ns': end_at_ns,
@@ -171,54 +801,38 @@ class SnapshotService:
                         'policy': self._policy(), 'profile': self._profile(),
                         'aggregation': 'closed-open-anchored-1-5-15-v1',
                         'selection': 'full-published-prefix-v1'}
+            if _window:
+                manifest.update(version='intraday-dataset-v2', selection='window-dependency-closure-v2',
+                                carry_at_ns=start_at_ns-1, window_session_count=0,
+                                support_start_at_ns=start_at_ns,history_sessions=limits['history_sessions'], resources=limits)
             validate_manifest(manifest)
-            if len(listing_ids) > min(self.store.profile.max_symbols, self.archive.settings.alpaca_max_symbols):
+            if resources is None and self.archive._archive_bytes() + len(canonical_json(manifest).encode()) > limits['max_disk_bytes']:
+                raise MetadataError('ARCHIVE_LIMIT')
+            if len(listing_ids) > min(limits['max_listings'],self.store.profile.max_symbols, self.archive.settings.alpaca_max_symbols):
                 raise SnapshotError('SYMBOL_LIMIT')
-            rows = _without_outputs(self.store.replay_as_of(cutoff_ns=cutoff_ns)['timeline'])
+            self.store._validate_timeline_proofs(cutoff_ns)
+            stage = _StagedTimeline(self, manifest, limits)
+            stage.select()
+            stage.hydrate()
+            planning = stage.planning()
             manifest['requested_listing_ids'] = list(listing_ids)
-            manifest['listing_ids'] = planned_listing_ids(manifest, rows)
-            if len(manifest['listing_ids']) > min(self.store.profile.max_symbols, self.archive.settings.alpaca_max_symbols):
+            manifest['listing_ids'] = planned_listing_ids(manifest, planning)
+            if len(manifest['listing_ids']) > min(limits['max_listings'],self.store.profile.max_symbols, self.archive.settings.alpaca_max_symbols):
                 raise SnapshotError('SYMBOL_LIMIT')
             self._cutoff = cutoff_ns
             self._raw_latest = cutoff_ns
-            by_key = {(row['table'], row['id']): row for row in rows}
-            audit_keys = set()
-            for row in rows:
-                orphan = row['payload'].get('orphan_raw_proof') if row['table'] == 'intraday_capture_events' else None
-                if orphan is not None:
-                    table, source_id = orphan['table'], orphan['id']
-                    if table not in {'intraday_observations', 'intraday_news_versions'}:
-                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
-                    raw = self._source(table, source_id)
-                    if (raw['payload_hash'] != orphan['payload_hash'] or raw['received_at_ns'] != orphan['received_at_ns'] or
-                            raw['persisted_at_ns'] > row['persisted_at_ns']):
-                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
-                    key = table, source_id
-                    if key not in by_key:
-                        by_key[key] = {**decode_row(raw), 'table': table}
-                        audit_keys.add(key)
-            bodies = []
-            for key in sorted(by_key):
-                row = by_key[key]
-                if row['table'] == 'intraday_universe_members':
-                    continue  # No dataset FK for this type: bound as exact dependencies of its universe.
-                body = {'reference': self._reference(row), 'dependencies': [], 'replay': key not in audit_keys}
-                if row['table'] == 'intraday_universe_snapshots':
-                    dependencies = frozen_universe_dependencies(row, rows)
-                    body['dependencies'] = [self._reference(item) for item in dependencies]
-                bodies.append(body)
-            manifest['timeline_count'] = len(rows)
-            manifest['typed_member_count'] = len(bodies)
-            manifest['audit_member_count'] = len(audit_keys)
-            digest = _digest(manifest, bodies)
-            report = quality_report(manifest, rows)
+            manifest['timeline_count'] = self.connection.execute(f'SELECT COUNT(*) FROM {stage.stage} WHERE replay=1').fetchone()[0]
+            manifest['typed_member_count'] = self.connection.execute(f"SELECT COUNT(*) FROM {stage.stage} WHERE source_table!='intraday_universe_members'").fetchone()[0]
+            manifest['audit_member_count'] = self.connection.execute(f'SELECT COUNT(*) FROM {stage.stage} WHERE replay=0').fetchone()[0]
+            digest = _digest(manifest, stage.bodies())
+            report = quality_report(manifest, planning, row_factory=stage.session,resource_guard=stage.check_budget)
             self._cancel(cancelled, 'BEFORE_RAW')
             self._used = self.archive._archive_bytes()
             run = self.archive.begin_run()
             snapshot_id = self._append('intraday_dataset_snapshots', run, manifest, {
                 'start_at_ns': start_at_ns, 'end_at_ns': end_at_ns, 'cutoff_ns': cutoff_ns,
-                'policy_id': QualityPolicy.version, 'digest': digest, 'member_count': len(bodies)}, 'dataset')
-            for body in bodies:
+                'policy_id': QualityPolicy.version, 'digest': digest, 'member_count': manifest['typed_member_count']}, 'dataset')
+            for body in stage.bodies():
                 self._cancel(cancelled, 'DURING_RAW')
                 reference = body['reference']
                 kind, column = _REFERENCES[reference['table']]
@@ -228,6 +842,9 @@ class SnapshotService:
                 'snapshot_id': snapshot_id, 'policy_id': QualityPolicy.version, 'outcome': report['outcome'],
                 'metrics_json': self.archive.safe_json(report['metrics']),
                 'limits_json': self.archive.safe_json(report['limits'])}, f'dataset:{snapshot_id}:quality')
+            stage.check_budget()
+            stage.close()
+            stage = None
             self.connection.commit()
         except sqlite3.DatabaseError:
             self.connection.rollback()
@@ -235,6 +852,9 @@ class SnapshotService:
         except Exception:
             self.connection.rollback()
             raise
+        finally:
+            if stage is not None:
+                stage.close()
         self._cancel(cancelled, 'BEFORE_PUBLICATION')
         durable = self.archive.now()
         if durable < self._raw_latest:
@@ -249,10 +869,15 @@ class SnapshotService:
                 raise MetadataError('SNAPSHOT_NOT_PIT')
             self.archive.bootstrap(run, {'metadata_kind': 'DATASET_PUBLICATION', 'version': 'intraday-dataset-publication-v1',
                 'complete': True, 'snapshot_id': snapshot_id, 'snapshot_hash': header['payload_hash'],
-                'digest': digest, 'typed_member_count': len(bodies), 'timeline_count': len(rows),
+                'digest': digest, 'typed_member_count': manifest['typed_member_count'], 'timeline_count': manifest['timeline_count'],
                 'report_id': report_id, 'report_hash': report_row['payload_hash'], 'durable_at_ns': durable},
                 durable, f'dataset-publication:{snapshot_id}')
         return DatasetSnapshot(snapshot_id, digest, report_id)
+
+    def freeze_window(self, *, resources, **kwargs):
+        if resources is None:
+            raise SnapshotError('RESOURCE_LIMIT')
+        return self.freeze_dataset(resources=resources, _window=True, **kwargs)
 
     def _append(self, table, run, payload, fields, logical_key):
         self._guard()
@@ -366,13 +991,313 @@ class SnapshotService:
                 proof['durable_at_ns'] < manifest['cutoff_ns'] or
                 proof['durable_at_ns'] > pub['available_at_ns']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        replay = replay_frozen(manifest, rows)
+        timeline = causal_order(rows, cutoff_ns=manifest['cutoff_ns'], namespace=tuple(manifest['namespace']))
         return {'snapshot_id': snapshot_id, 'digest': header['digest'], 'known_at_ns': pub['available_at_ns'],
-                'manifest': manifest, 'timeline': replay['timeline'], 'report': report['payload']}
+                'manifest': manifest, 'timeline': timeline, 'report': report['payload']}
 
     def replay(self, snapshot_id, *, cutoff_ns=None, listing_ids=None):
         saved = self.read(snapshot_id)
         return replay_frozen(saved['manifest'], saved['timeline'], cutoff_ns=cutoff_ns, listing_ids=listing_ids)
+
+    def _frozen_links(self, snapshot_id, news_id):
+        links = []
+        rows = self.connection.execute('''SELECT m.payload_json FROM intraday_dataset_members m
+            JOIN intraday_news_links l ON l.id=m.news_link_id
+            WHERE m.snapshot_id=? AND l.news_version_id=? ORDER BY l.id''', (snapshot_id, news_id))
+        for member in rows:
+            row = self._hydrate(json.loads(member[0])['reference'])
+            row.pop('table', None)
+            links.append(row)
+        return links
+
+    def _included(self, snapshot_id, table, source_id, payload_hash=None, *, _provisional=False):
+        if table not in _SOURCE_TABLES or type(source_id) is not int or source_id <= 0:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        params = (snapshot_id, source_id)
+        if table in _REFERENCES:
+            column = _REFERENCES[table][1]
+            row = self.connection.execute(f'''SELECT json_extract(payload_json,'$.reference')
+                FROM intraday_dataset_members WHERE snapshot_id=? AND {column}=?''', params).fetchone()
+        else:
+            row = self.connection.execute('''SELECT dependency.value FROM intraday_dataset_members m,
+                json_each(m.payload_json,'$.dependencies') dependency
+                WHERE m.snapshot_id=? AND json_extract(dependency.value,'$.table')=?
+                AND json_extract(dependency.value,'$.id')=?''', (snapshot_id, table, source_id)).fetchone()
+        if row is None:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        ref = json.loads(row[0])
+        if payload_hash is not None and ref['payload_hash'] != payload_hash:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if not _provisional:
+            return self._hydrate(ref)
+        # Closure is provisional until the full member pass verifies this exact
+        # source independently. No public handle exists at this point.
+        raw = self._raw_source(table,source_id)
+        if raw['payload_hash']!=ref['payload_hash']:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        raw.update(payload=json.loads(raw['payload_json']),**ref['projection'])
+        raw['table'] = table
+        return raw
+
+    def _closure_batch(self, snapshot_id, rows):
+        sources = {(row['table'],row['id']):row for row in rows}
+        needed = set()
+        for row in rows:
+            table,payload = row['table'],row['payload']
+            for key in ('admission_id','publication_id'):
+                if row.get(key) is not None:
+                    needed.add(('intraday_capture_events',row[key]))
+            identity = payload.get('identity') if table in {'intraday_event_versions','intraday_news_links'} else None
+            if identity is not None:
+                needed.add(('intraday_identity_versions',identity['id']))
+            if table=='intraday_event_versions':
+                needed.add(('intraday_capture_events',payload['document']['id']))
+            if table=='intraday_news_links':
+                needed.add(('intraday_news_versions',row['news_version_id']))
+            if table=='intraday_universe_members':
+                needed.update((('intraday_universe_snapshots',row['snapshot_id']),
+                               ('intraday_identity_versions',row['identity_version_id'])))
+            if table=='intraday_capture_events':
+                orphan = payload.get('orphan_raw_proof')
+                if orphan:
+                    needed.add((orphan['table'],orphan['id']))
+                if payload.get('metadata_kind')=='COLLECTOR_HANDSHAKE':
+                    for ref in payload['ack_refs']:
+                        needed.update(((table,ref['id']),(table,ref['publication_id'])))
+                    for ref in payload['listings']:
+                        needed.update((('intraday_event_versions',ref['checkpoint_id']),
+                                       (table,ref['checkpoint_admission_id'])))
+                        for status in ref['status_refs']:
+                            needed.update((('intraday_observations',status['id']),(table,status['admission_id'])))
+        by_table = {}
+        for table,source_id in needed-sources.keys():
+            if table not in _SOURCE_TABLES or type(source_id) is not int or source_id<=0:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            by_table.setdefault(table,[]).append(source_id)
+        references = []
+        for table,ids in by_table.items():
+            for start in range(0,len(ids),500):
+                part = ids[start:start+500]
+                placeholders = ','.join('?' for _ in part)
+                if table in _REFERENCES:
+                    column = _REFERENCES[table][1]
+                    query = f'''SELECT json_extract(payload_json,'$.reference') FROM intraday_dataset_members
+                        WHERE snapshot_id=? AND {column} IN ({placeholders})'''
+                    params = (snapshot_id,*part)
+                else:
+                    names = ','.join(f':source{index}' for index in range(len(part)))
+                    query = _REFS_SQL+f''' SELECT reference_json FROM refs
+                        WHERE json_extract(reference_json,'$.table')=:table
+                        AND json_extract(reference_json,'$.id') IN ({names})'''
+                    params = {'snapshot':snapshot_id,'table':table,
+                              **{f'source{index}':item for index,item in enumerate(part)}}
+                references.extend(json.loads(item[0]) for item in self.connection.execute(query,params))
+        size = sum(_row_byte_bound(row) for row in rows)
+        for batch in self._hydrated_batches(references,validated=True):
+            for row in batch:
+                size += _row_byte_bound(row)
+                if size>67_108_864:
+                    if len(rows)==1:
+                        raise SnapshotError('RESOURCE_LIMIT')
+                    # Fan-out (many small links to large news) can exceed a
+                    # source batch. Revalidate smaller requesting groups.
+                    del sources,references,batch
+                    midpoint = len(rows)//2
+                    self._closure_batch(snapshot_id,rows[:midpoint])
+                    self._closure_batch(snapshot_id,rows[midpoint:])
+                    return
+                sources[(row['table'],row['id'])] = row
+        def require(table,source_id,payload_hash=None):
+            target = sources.get((table,source_id))
+            if target is None or (payload_hash is not None and target['payload_hash']!=payload_hash):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            return target
+        for row in rows:
+            self._row_closure(snapshot_id,row,require=require)
+
+    def _row_closure(self, snapshot_id, row, *, require=None):
+        if require is None:
+            def require(table,source_id,payload_hash=None):
+                return self._included(snapshot_id,table,source_id,payload_hash,_provisional=True)
+
+        table, payload = row['table'], row['payload']
+        if row.get('admission_id') is not None:
+            receipt = require('intraday_capture_events', row['admission_id'])
+            kind, column = _REFERENCES[table]
+            if (kind not in {'OBSERVATION', 'NEWS', 'EVENT'} or receipt['kind'] != 'ADMISSION'
+                or receipt[column] != row['id'] or receipt['payload']['payload_hash'] != row['payload_hash']):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if row.get('publication_id') is not None:
+            receipt = require('intraday_capture_events', row['publication_id'], row.get('publication_hash'))
+            proof = receipt['payload']
+            expected = {'id': row['id'], 'hash': row['payload_hash'], 'kind': row.get('kind')}
+            valid = (proof.get('reference') == expected if proof.get('metadata_kind') == 'COLLECTOR_PUBLICATION'
+                     else {'table': table, 'id': row['id'], 'hash': row['payload_hash']} in proof.get('references', []))
+            if not valid:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        identity = payload.get('identity') if table in {'intraday_event_versions', 'intraday_news_links'} else None
+        if identity is not None:
+            target = require('intraday_identity_versions', identity['id'], identity['payload_hash'])
+            if target.get('publication_id') != identity['publication_id']:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if table == 'intraday_event_versions':
+            require('intraday_capture_events', payload['document']['id'], payload['document']['hash'])
+        if table == 'intraday_news_links':
+            target = require('intraday_news_versions', row['news_version_id'], payload['news_hash'])
+            if any(target[key]!=row[key] for key in ('capture_id','ingest_run_id','provider','feed',
+                                                    'profile_id','data_mode','provenance','replay_grade')):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if table == 'intraday_universe_members':
+            require('intraday_universe_snapshots', row['snapshot_id'])
+            require('intraday_identity_versions', row['identity_version_id'], payload['identity_hash'])
+        orphan = payload.get('orphan_raw_proof') if table == 'intraday_capture_events' else None
+        if orphan:
+            require(orphan['table'], orphan['id'], orphan['payload_hash'])
+        if table=='intraday_capture_events' and payload.get('metadata_kind')=='COLLECTOR_HANDSHAKE':
+            for ref in payload['ack_refs']:
+                ack = require(table,ref['id'],ref['hash'])
+                require(table,ref['publication_id'],ref['publication_hash'])
+                if ack.get('publication_id')!=ref['publication_id'] or ack['capture_id']!=row['capture_id']:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            for ref in payload['listings']:
+                checkpoint = require('intraday_event_versions',ref['checkpoint_id'],ref['checkpoint_hash'])
+                require(table,ref['checkpoint_admission_id'])
+                if (checkpoint.get('admission_id')!=ref['checkpoint_admission_id']
+                    or checkpoint['capture_id']!=row['capture_id'] or checkpoint['listing_id']!=ref['listing_id']):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                for status in ref['status_refs']:
+                    observation = require('intraday_observations',status['id'],status['hash'])
+                    require(table,status['admission_id'])
+                    if observation.get('admission_id')!=status['admission_id'] or observation['capture_id']!=row['capture_id']:
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+
+    def open(self, snapshot_id, *, max_occurrences=10_000, max_bytes=8_388_608):
+        """Validate every exact member before returning a bounded timeline handle."""
+        if (type(max_occurrences) is not int or not 1 <= max_occurrences <= 10_000
+            or type(max_bytes) is not int or not 1 <= max_bytes <= 8_388_608):
+            raise SnapshotError('RESOURCE_LIMIT')
+        try:
+            return self._open(snapshot_id, max_occurrences, max_bytes)
+        except SnapshotError:
+            raise
+        except (MetadataError, ValueError, KeyError, TypeError, OverflowError, RecursionError, sqlite3.DatabaseError):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
+
+    def _open(self, snapshot_id, max_occurrences, max_bytes):
+        from backend.app.intraday.replay import visible_rows
+
+        signature = self._read_signature()
+        if type(snapshot_id) is not int or snapshot_id <= 0:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        header = _decode_evidence(self.connection.execute('SELECT * FROM intraday_dataset_snapshots WHERE id=?', (snapshot_id,)).fetchone())
+        namespace = (self.store.profile.profile_id, self.store.profile.feed, self.store.data_mode,
+                     self.store.provenance, self.store.replay_grade)
+        manifest = header['payload']
+        validate_manifest(manifest)
+        rss_limit = manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648)
+        if _peak_rss_bytes()>rss_limit:
+            raise SnapshotError('RESOURCE_LIMIT')
+        max_occurrences = min(max_occurrences,manifest.get('resources',{}).get('max_chunk_occurrences',10_000))
+        max_bytes = min(max_bytes,manifest.get('resources',{}).get('max_chunk_bytes',8_388_608))
+        if (tuple(header[key] for key in _SCOPE) != namespace or tuple(manifest['namespace']) != namespace
+            or any(header[key] != manifest[key] for key in ('start_at_ns', 'end_at_ns', 'cutoff_ns'))
+            or header['policy_id'] != manifest['policy']['id'] or manifest['policy'] != self._policy()
+            or manifest['profile'] != self._profile()):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        query = published_select('intraday_capture_events') + ''' WHERE raw.profile_id=? AND raw.data_mode=?
+            AND raw.provenance=? AND raw.replay_grade=? AND raw.kind='BOOTSTRAP'
+            AND json_extract(raw.payload_json,'$.metadata_kind')='DATASET_PUBLICATION'
+            AND json_extract(raw.payload_json,'$.snapshot_id')=?
+            AND EXISTS(SELECT 1 FROM json_each(pub.payload_json,'$.references') ref
+                WHERE json_extract(ref.value,'$.table')='intraday_capture_events'
+                AND json_extract(ref.value,'$.id')=raw.id) ORDER BY pub.id,raw.id'''
+        publication = self.connection.execute(query, (*self.store.namespace, snapshot_id)).fetchone()
+        pub = decode_published(publication, 'intraday_capture_events', MAX_NS)
+        proof = pub['payload']
+        report_raw = self.connection.execute('SELECT * FROM intraday_quality_reports WHERE id=? AND snapshot_id=?',
+                                             (proof['report_id'], snapshot_id)).fetchone()
+        report = _decode_evidence(report_raw)
+        if (proof.get('complete') is not True or proof['snapshot_hash'] != header['payload_hash']
+            or proof['digest'] != header['digest'] or proof['typed_member_count'] != header['member_count']
+            or pub['ingest_run_id'] != header['ingest_run_id'] or report['payload_hash'] != proof['report_hash']
+            or report['outcome'] != report['payload']['outcome'] or report['policy_id'] != header['policy_id']
+            or report['ingest_run_id'] != header['ingest_run_id']
+            or json.loads(report['metrics_json']) != report['payload']['metrics']
+            or json.loads(report['limits_json']) != report['payload']['limits']
+            or self.connection.execute('SELECT COUNT(*) FROM intraday_quality_reports WHERE snapshot_id=?', (snapshot_id,)).fetchone()[0] != 1):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        duplicate = self.connection.execute(_REFS_SQL + ''' SELECT 1 FROM refs
+            GROUP BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
+            HAVING COUNT(*)>1 LIMIT 1''', {'snapshot': snapshot_id}).fetchone()
+        if duplicate:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        hasher = hashlib.sha256()
+        text = canonical_json(manifest).encode()
+        hasher.update(len(text).to_bytes(8, 'big'))
+        hasher.update(text)
+        members = replay_count = audit_count = 0
+        latest = max(header['persisted_at_ns'], report['persisted_at_ns'])
+        pending = []
+        def validate_pending():
+            nonlocal replay_count,audit_count
+            roles = {(ref['table'],ref['id']):replay for ref,replay in pending}
+            for rows in self._hydrated_batches([ref for ref,replay in pending]):
+                if _peak_rss_bytes()>rss_limit:
+                    raise SnapshotError('RESOURCE_LIMIT')
+                replay_rows = []
+                for row in rows:
+                    if _row_byte_bound(row)>max_bytes:
+                        raise SnapshotError('RESOURCE_LIMIT')
+                    if roles[(row['table'],row['id'])]:
+                        if len(visible_rows((row,),cutoff_ns=manifest['cutoff_ns'],namespace=namespace,_decoded=True))!=1:
+                            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                        replay_rows.append(row)
+                        replay_count += 1
+                    else:
+                        if tuple(row[key] for key in _SCOPE)!=namespace:
+                            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                        audit_count += 1
+                self._closure_batch(snapshot_id,replay_rows)
+                if _peak_rss_bytes()>rss_limit:
+                    raise SnapshotError('RESOURCE_LIMIT')
+            pending.clear()
+        for raw in self.connection.execute('SELECT * FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence', (snapshot_id,)):
+            member = _decode_evidence(raw)
+            body = member['payload']
+            if (tuple(member[key] for key in _SCOPE) != namespace or member['ingest_run_id'] != header['ingest_run_id']
+                or type(body['replay']) is not bool or type(body['dependencies']) is not list):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            reference = body['reference']
+            kind, column = _REFERENCES[reference['table']]
+            if member['member_kind'] != kind or member[column] != reference['id']:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            text = member['payload_json'].encode()
+            if len(text) > max_bytes:
+                raise SnapshotError('RESOURCE_LIMIT')
+            hasher.update(len(text).to_bytes(8, 'big'))
+            hasher.update(text)
+            members += 1
+            latest = max(latest, member['persisted_at_ns'])
+            for ref in chain((reference,), body['dependencies']):
+                pending.append((ref,body['replay']))
+                if len(pending)==1_000:
+                    validate_pending()
+        if pending:
+            validate_pending()
+        if (hasher.hexdigest() != header['digest'] or members != header['member_count']
+            or members != manifest['typed_member_count'] or replay_count != manifest['timeline_count']
+            or replay_count != proof['timeline_count'] or audit_count != manifest['audit_member_count']
+            or proof['durable_at_ns'] < max(latest, manifest['cutoff_ns']) or proof['durable_at_ns'] > pub['available_at_ns']):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        self.archive.safe_json(manifest)
+        self.archive.safe_json(report['payload'])
+        if _peak_rss_bytes()>rss_limit:
+            raise SnapshotError('RESOURCE_LIMIT')
+        if signature!=self._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return ValidatedDataset(snapshot_id, header['digest'], pub['available_at_ns'], manifest, report['payload'],
+            FrozenTimeline(self, snapshot_id, manifest, replay_count,
+                           max_occurrences=max_occurrences, max_bytes=max_bytes), pub['id'], pub['payload_hash'])
 
 
 def _validate_closure(rows, audits):

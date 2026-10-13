@@ -378,7 +378,7 @@ class IntradayStore:
                 return []
             sql += f" AND raw.listing_id IN ({','.join('?' for _ in listing_ids)})"
             params += listing_ids
-        rows = self.connection.execute(sql + ' ORDER BY proof.available_at_ns,raw.received_at_ns,raw.ingest_sequence,raw.id', params)
+        rows = self.connection.execute(sql, params)
         result = []
         for row in rows:
             raw = dict(row)
@@ -403,13 +403,13 @@ class IntradayStore:
             result.append(item)
         # A total order within each logical observation/receipt, using visible evidence only.
         # Intake ordinals are comparable inside a capture; first visible ID orders separate captures.
-        return select_versions(result, family=kind, cutoff_ns=cutoff_ns, revisions=revisions)
+        return select_versions(result, family=kind, cutoff_ns=cutoff_ns, revisions=revisions, _decoded=True)
 
     def quote_state(self, listing_id, *, cutoff_ns, max_age_ns=2_000_000_000):
         rows = self.read_as_of("QUOTE", cutoff_ns=cutoff_ns, listing_ids=(listing_id,))
         return quote_state_from_rows(rows, listing_id=listing_id, cutoff_ns=cutoff_ns, max_age_ns=max_age_ns)
 
-    def replay_as_of(self, *, cutoff_ns, listing_ids=None):
+    def replay_as_of(self, *, cutoff_ns, listing_ids=None, timeline_only=False):
         """Archive-only adapter; no provider calls or mutable run/collector evidence."""
         from backend.app.intraday.events import EventStore
         from backend.app.intraday.news import NewsStore
@@ -467,7 +467,230 @@ class IntradayStore:
             if key not in unique or row['available_at_ns'] < unique[key]['available_at_ns']:
                 unique[key] = row
         namespace = (self.profile.profile_id, self.profile.feed, self.data_mode, self.provenance, self.replay_grade)
-        return replay_as_of(unique.values(), cutoff_ns=cutoff_ns, listing_ids=listing_ids, namespace=namespace)
+        return replay_as_of(unique.values(), cutoff_ns=cutoff_ns, listing_ids=listing_ids,
+                            namespace=namespace, timeline_only=timeline_only)
+
+    def _timeline_query(self):
+        """Read-only occurrence index. Payload hydration never requires a prefix list."""
+        ordinary = "raw.profile_id=:profile AND raw.data_mode=:mode AND raw.provenance=:provenance AND raw.replay_grade=:grade"
+        metadata = "raw.profile_id=:profile AND raw.data_mode=:mode AND raw.provenance=:meta_provenance AND raw.replay_grade=:meta_grade"
+        parts = []
+        for table, column in (('intraday_observations', 'observation_id'),
+                              ('intraday_news_versions', 'news_version_id'),
+                              ('intraday_event_versions', 'event_version_id')):
+            parts.append(f"""SELECT '{table}' AS source_table,raw.id AS source_id,proof.id AS proof_id,
+                MAX(proof.available_at_ns,json_extract(proof.payload_json,'$.durable_at_ns'),raw.availability_floor_ns) AS known,
+                'ADMISSION' AS method,0 AS metadata_dependency,raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                COALESCE(json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence) AS intake,0 AS priority
+                FROM {table} raw JOIN intraday_capture_events proof ON proof.{column}=raw.id AND proof.kind='ADMISSION'
+                WHERE {ordinary} AND proof.available_at_ns<=:cutoff""")
+        admission_sql = ' UNION ALL '.join(parts)
+        parts = []
+        for table in ('intraday_identity_versions', 'intraday_calendar_versions', 'intraday_universe_snapshots',
+                      'intraday_universe_members', 'intraday_capture_events'):
+            extra = (" AND (:same_namespace=1 OR json_extract(raw.payload_json,'$.metadata_kind') IN ('ASSETS','ASSET_CHUNK','CALENDAR'))"
+                     if table == 'intraday_capture_events' else '')
+            parts.append(f"""SELECT '{table}' AS source_table,raw.id AS source_id,pub.id AS proof_id,
+                MAX(raw.available_at_ns,pub.available_at_ns,json_extract(pub.payload_json,'$.durable_at_ns')) AS known,
+                'METADATA' AS method,1 AS metadata_dependency,raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                COALESCE(json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence) AS intake,6 AS priority
+                FROM {table} raw JOIN intraday_capture_events pub ON pub.ingest_run_id=raw.ingest_run_id
+                  AND pub.profile_id=raw.profile_id AND pub.data_mode=raw.data_mode AND pub.provenance=raw.provenance
+                  AND pub.replay_grade=raw.replay_grade AND pub.kind='BOOTSTRAP'
+                  AND json_extract(pub.payload_json,'$.metadata_kind')='PUBLICATION'
+                WHERE {metadata} AND raw.available_at_ns<=:cutoff AND pub.available_at_ns<=:cutoff
+                AND EXISTS(SELECT 1 FROM json_each(pub.payload_json,'$.references') ref
+                    WHERE json_extract(ref.value,'$.table')='{table}' AND json_extract(ref.value,'$.id')=raw.id){extra}""")
+        metadata_sql = ' UNION ALL '.join(parts)
+        return f"""WITH admissions AS ({admission_sql}), metadata AS ({metadata_sql}), all_occurrences AS (
+            SELECT * FROM admissions UNION ALL SELECT * FROM metadata
+            UNION ALL
+            SELECT 'intraday_news_links',link.id,link.id,a.known,'NEWS_LINK',0,link.received_at_ns,link.capture_id,
+                link.ingest_sequence,COALESCE(json_extract(link.payload_json,'$.intake_sequence'),link.ingest_sequence),1
+            FROM admissions a JOIN intraday_capture_events proof ON proof.id=a.proof_id,
+                json_each(proof.payload_json,'$.links') ref JOIN intraday_news_links link ON link.id=json_extract(ref.value,'$.id')
+            WHERE a.source_table='intraday_news_versions'
+            UNION ALL
+            SELECT 'intraday_capture_events',doc.id,doc.id,a.known,'EVENT_DOCUMENT',0,doc.received_at_ns,
+                doc.capture_id,doc.ingest_sequence,COALESCE(json_extract(doc.payload_json,'$.intake_sequence'),doc.ingest_sequence),2
+            FROM admissions a JOIN intraday_event_versions event ON event.id=a.source_id
+                JOIN intraday_capture_events doc ON doc.id=json_extract(event.payload_json,'$.document.id')
+            WHERE a.source_table='intraday_event_versions'
+            UNION ALL
+            SELECT 'intraday_capture_events',raw.id,pub.id,
+                MAX(pub.available_at_ns,json_extract(pub.payload_json,'$.durable_at_ns')),'CONTROL',0,
+                raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                COALESCE(json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence),3
+            FROM intraday_capture_events raw JOIN intraday_capture_events pub
+              ON json_extract(pub.payload_json,'$.reference.id')=raw.id AND pub.ingest_run_id=raw.ingest_run_id
+              AND pub.capture_id=raw.capture_id AND pub.lease_nonce=raw.lease_nonce
+              AND pub.kind='BOOTSTRAP' AND json_extract(pub.payload_json,'$.metadata_kind')='COLLECTOR_PUBLICATION'
+              AND pub.profile_id=raw.profile_id AND pub.data_mode=raw.data_mode
+              AND pub.provenance=raw.provenance AND pub.replay_grade=raw.replay_grade
+              AND pub.provider=raw.provider AND pub.feed=raw.feed AND pub.listing_id IS raw.listing_id
+            WHERE {ordinary} AND pub.available_at_ns<=:cutoff
+            UNION ALL
+            SELECT 'intraday_capture_events',raw.id,raw.id,raw.available_at_ns,'PROOF',0,
+                raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                COALESCE(json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence),7
+            FROM intraday_capture_events raw WHERE {ordinary} AND raw.available_at_ns<=:cutoff
+                AND (raw.kind='ADMISSION' OR json_extract(raw.payload_json,'$.metadata_kind') IN ('PUBLICATION','COLLECTOR_PUBLICATION'))
+            UNION ALL
+            SELECT 'intraday_capture_events',raw.id,raw.id,raw.available_at_ns,'PROOF',1,
+                raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
+                COALESCE(json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence),7
+            FROM intraday_capture_events raw WHERE {metadata} AND :same_namespace=0 AND raw.available_at_ns<=:cutoff
+                AND raw.id IN (SELECT proof_id FROM metadata)
+        ), ranked AS (
+            SELECT *,ROW_NUMBER() OVER(PARTITION BY source_table,source_id ORDER BY known,priority) AS ordinal
+            FROM all_occurrences WHERE known<=:cutoff
+        ), unique_occurrences AS (SELECT * FROM ranked WHERE ordinal=1), ordered AS (
+            SELECT *,MIN(proof_id) OVER(PARTITION BY received_at_ns,capture_id) AS anchor FROM unique_occurrences
+        ) SELECT * FROM ordered
+        ORDER BY known,received_at_ns,anchor,intake,proof_id,ingest_sequence,source_table,source_id"""
+
+    def _timeline_source(self, table, source_id):
+        row = decode_row(self.connection.execute(f'SELECT * FROM {table} WHERE id=?', (source_id,)).fetchone())
+        self.archive.safe_json({key: value for key, value in row.items() if key != 'payload_json'})
+        return row
+
+    def _timeline_row(self, occurrence, cutoff):
+        table, source_id = occurrence['source_table'], occurrence['source_id']
+        row = self._timeline_source(table, source_id)
+        method = occurrence['method']
+        if method == 'ADMISSION':
+            receipt = self._timeline_source('intraday_capture_events', occurrence['proof_id'])
+            column = {'intraday_observations': 'observation_id', 'intraday_news_versions': 'news_version_id',
+                      'intraday_event_versions': 'event_version_id'}[table]
+            durable = receipt['payload'].get('durable_at_ns')
+            check_ns(durable)
+            if (receipt[column] != source_id or receipt['payload'].get(column) != source_id
+                or receipt['payload'].get('payload_hash') != row['payload_hash'] or durable < row['persisted_at_ns']
+                or any(receipt[key] != row[key] for key in ('provider', 'feed', 'profile_id', 'data_mode', 'provenance', 'replay_grade'))):
+                raise StoreError('OBSERVATION_INVALID')
+            row.update(available_at_ns=occurrence['known'], admission_id=occurrence['proof_id'])
+            if table == 'intraday_observations':
+                row['capture_ingest_sequence'] = row['payload'].get('intake_sequence', row['ingest_sequence'])
+            elif table == 'intraday_news_versions':
+                # Exact typed links and identity validation, bounded by the mapped listings.
+                links = []
+                references = receipt['payload'].get('links')
+                if type(references) is not list or not references:
+                    raise StoreError('OBSERVATION_INVALID')
+                for ref in references:
+                    link = self._timeline_source('intraday_news_links', ref['id'])
+                    if (link['payload_hash'] != ref['hash'] or link['news_version_id'] != source_id
+                        or link['payload']['news_hash'] != row['payload_hash'] or durable < link['persisted_at_ns']
+                        or any(link[key]!=row[key] for key in ('capture_id','ingest_run_id','provider','feed',
+                            'profile_id','data_mode','provenance','replay_grade'))):
+                        raise StoreError('OBSERVATION_INVALID')
+                    identity = link['payload'].get('identity')
+                    if identity:
+                        from backend.app.data_providers.alpaca_metadata import read_evidence
+                        metadata_scope = (self.profile.profile_id, self.data_mode,
+                                          'CAPTURED' if self.data_mode == 'REAL' else 'SYNTHETIC',
+                                          'STRICT_PIT' if self.data_mode == 'REAL' else 'RESEARCH_ONLY')
+                        target = read_evidence(self.connection, 'intraday_identity_versions', identity['id'], cutoff, metadata_scope)
+                        if (target['payload_hash'] != identity['payload_hash'] or target['publication_id'] != identity['publication_id']
+                            or target['listing_id'] != link['listing_id'] or target['instrument_id'] != link['instrument_id']
+                            or target['available_at_ns'] > row['received_at_ns']):
+                            raise StoreError('OBSERVATION_INVALID')
+                    link['available_at_ns'] = occurrence['known']
+                    links.append(link)
+                row.update(links=sorted(links, key=lambda link: link['id']), first_received_at_ns=row['received_at_ns'])
+            else:
+                from backend.app.intraday.events import EventStore
+                document = EventStore(self.provider, data_mode=self.data_mode, provenance=self.provenance,
+                                      replay_grade=self.replay_grade)._document(row)
+                if receipt['payload'].get('document') != row['payload']['document'] or durable < document['persisted_at_ns']:
+                    raise StoreError('OBSERVATION_INVALID')
+        elif method == 'METADATA':
+            query = published_select(table) + ' WHERE raw.id=? AND pub.id=?'
+            row = decode_published(self.connection.execute(query, (source_id, occurrence['proof_id'])).fetchone(), table, cutoff)
+            row['metadata_dependency'] = True
+            if table == 'intraday_universe_snapshots':
+                from backend.app.intraday.universe import UniverseService
+                namespace = {'data_mode': self.data_mode, 'provenance': 'CAPTURED' if self.data_mode == 'REAL' else 'SYNTHETIC',
+                             'replay_grade': 'STRICT_PIT' if self.data_mode == 'REAL' else 'RESEARCH_ONLY'}
+                UniverseService(AlpacaMetadataService(self.provider, **namespace)).read(source_id, cutoff_ns=cutoff)
+        elif method == 'CONTROL':
+            receipt = self._timeline_source('intraday_capture_events', occurrence['proof_id'])
+            proof = receipt['payload']
+            check_ns(proof.get('durable_at_ns'))
+            if (proof.get('version') != 'collector-publication-v1'
+                or proof.get('reference') != {'id': source_id, 'hash': row['payload_hash'], 'kind': row['kind']}
+                or proof['durable_at_ns'] < row['persisted_at_ns']):
+                raise StoreError('OBSERVATION_INVALID')
+            row.update(available_at_ns=occurrence['known'], publication_id=occurrence['proof_id'], publication_hash=receipt['payload_hash'])
+        elif method == 'PROOF':
+            row['metadata_dependency'] = bool(occurrence['metadata_dependency'])
+        elif method == 'EVENT_DOCUMENT':
+            row.update(recorded_available_at_ns=row['available_at_ns'], available_at_ns=occurrence['known'])
+        elif method == 'NEWS_LINK':
+            row['available_at_ns'] = occurrence['known']
+        row['table'] = table
+        return row
+
+    def _iter_timeline(self, *, cutoff_ns):
+        """Internal provisional occurrences; callers must validate the full pass."""
+        from backend.app.intraday.replay import visible_rows
+
+        check_ns(cutoff_ns)
+        meta_provenance = 'CAPTURED' if self.data_mode == 'REAL' else 'SYNTHETIC'
+        meta_grade = 'STRICT_PIT' if self.data_mode == 'REAL' else 'RESEARCH_ONLY'
+        namespace = (self.profile.profile_id, self.profile.feed, self.data_mode, self.provenance, self.replay_grade)
+        params = {'profile': self.profile.profile_id, 'mode': self.data_mode, 'provenance': self.provenance,
+                  'grade': self.replay_grade, 'meta_provenance': meta_provenance, 'meta_grade': meta_grade,
+                  'same_namespace': int((self.provenance, self.replay_grade) == (meta_provenance, meta_grade)), 'cutoff': cutoff_ns}
+        for occurrence in self.connection.execute(self._timeline_query(), params):
+            row = self._timeline_row(occurrence, cutoff_ns)
+            if len(visible_rows((row,), cutoff_ns=cutoff_ns, namespace=namespace)) != 1:
+                raise StoreError('OBSERVATION_INVALID')
+            yield row
+
+    def _validate_timeline_proofs(self, cutoff_ns):
+        from backend.app.data_providers.alpaca_metadata import MAX_NS
+        check_ns(cutoff_ns)
+        relevant_metadata = []
+        for table in ('intraday_identity_versions','intraday_calendar_versions','intraday_universe_snapshots',
+                      'intraday_universe_members','intraday_capture_events'):
+            extra = " AND json_extract(raw.payload_json,'$.metadata_kind') IN ('ASSETS','ASSET_CHUNK','CALENDAR')" if table=='intraday_capture_events' else ''
+            relevant_metadata.append(f'''SELECT 1 FROM {table} raw,json_each(proof.payload_json,'$.references') ref
+                WHERE raw.ingest_run_id=proof.ingest_run_id AND raw.profile_id=proof.profile_id AND raw.data_mode=proof.data_mode
+                AND raw.provenance=proof.provenance AND raw.replay_grade=proof.replay_grade AND raw.available_at_ns<=:cutoff
+                AND json_extract(ref.value,'$.table')='{table}' AND json_extract(ref.value,'$.id')=raw.id{extra}''')
+        query = '''SELECT * FROM intraday_capture_events proof
+            WHERE profile_id=:profile AND data_mode=:mode AND available_at_ns<=:cutoff AND (
+            provenance=:provenance AND replay_grade=:grade AND (kind='ADMISSION'
+                OR json_extract(payload_json,'$.metadata_kind') IN ('PUBLICATION','COLLECTOR_PUBLICATION'))
+            OR provenance=:meta_provenance AND replay_grade=:meta_grade
+                AND json_extract(payload_json,'$.metadata_kind')='PUBLICATION' AND EXISTS(''' + ' UNION ALL '.join(relevant_metadata) + '))'
+        proofs = self.connection.execute(query,{'profile':self.profile.profile_id,'mode':self.data_mode,'cutoff':cutoff_ns,
+            'provenance':self.provenance,'grade':self.replay_grade,
+            'meta_provenance':'CAPTURED' if self.data_mode=='REAL' else 'SYNTHETIC',
+            'meta_grade':'STRICT_PIT' if self.data_mode=='REAL' else 'RESEARCH_ONLY'})
+        for raw in proofs:
+            proof = decode_row(raw)
+            check_ns(proof['payload'].get('durable_at_ns'))
+            if proof['payload']['durable_at_ns'] > cutoff_ns:
+                if proof['kind'] == 'ADMISSION':
+                    for table,column in (('intraday_observations','observation_id'),('intraday_news_versions','news_version_id'),
+                                         ('intraday_event_versions','event_version_id')):
+                        if proof.get(column) is not None:
+                            self._timeline_row({'source_table':table,'source_id':proof[column],'proof_id':proof['id'],
+                                                'known':proof['payload']['durable_at_ns'],'method':'ADMISSION'},MAX_NS)
+                elif proof['payload'].get('metadata_kind') == 'COLLECTOR_PUBLICATION':
+                    self._timeline_row({'source_table':'intraday_capture_events','source_id':proof['payload']['reference']['id'],
+                                        'proof_id':proof['id'],'known':proof['payload']['durable_at_ns'],'method':'CONTROL'},MAX_NS)
+                else:
+                    raise StoreError('OBSERVATION_INVALID')
+
+    def iter_timeline(self, *, cutoff_ns):
+        """Validate the whole visible prefix before emitting its first occurrence."""
+        self._validate_timeline_proofs(cutoff_ns)
+        for _ in self._iter_timeline(cutoff_ns=cutoff_ns):
+            pass
+        yield from self._iter_timeline(cutoff_ns=cutoff_ns)
 
     def _finish(self, run, state, reason=None):
         self.connection.execute("UPDATE intraday_ingest_runs SET state=?,finished_at_ns=?,cursor_json=? WHERE id=?",
