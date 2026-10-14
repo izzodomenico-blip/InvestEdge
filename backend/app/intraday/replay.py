@@ -52,14 +52,18 @@ def visible_rows(rows, *, cutoff_ns, namespace=None, _decoded=False):
         current = tuple(row[key] for key in _SCOPE)
         if expected is None:
             expected = current
-        dependency_scope = (*expected[:3], 'CAPTURED' if expected[2] == 'REAL' else 'SYNTHETIC',
-                            'STRICT_PIT' if expected[2] == 'REAL' else 'RESEARCH_ONLY')
-        dependency = row.get('metadata_dependency') is True and _family(row) in {
-            'IDENTITY', 'CALENDAR', 'UNIVERSE', 'MEMBER', 'CONTROL'}
-        if _family(row) == 'CONTROL':
-            dependency = dependency and row['payload'].get('metadata_kind') in {'PUBLICATION', 'ASSETS', 'ASSET_CHUNK', 'CALENDAR'}
-        if current != expected and not (dependency and current == dependency_scope):
-            raise ValueError('MIXED_NAMESPACE')
+        # Owned archive rows already have validated payload shapes. Public
+        # reducers retain their original metadata validation and isolation.
+        if current != expected or not _decoded:
+            dependency_scope = (*expected[:3], 'CAPTURED' if expected[2] == 'REAL' else 'SYNTHETIC',
+                                'STRICT_PIT' if expected[2] == 'REAL' else 'RESEARCH_ONLY')
+            family = _family(row)
+            dependency = row.get('metadata_dependency') is True and family in {
+                'IDENTITY', 'CALENDAR', 'UNIVERSE', 'MEMBER', 'CONTROL'}
+            if family == 'CONTROL':
+                dependency = dependency and row['payload'].get('metadata_kind') in {'PUBLICATION', 'ASSETS', 'ASSET_CHUNK', 'CALENDAR'}
+            if current != expected and not (dependency and current == dependency_scope):
+                raise ValueError('MIXED_NAMESPACE')
         for key in ('received_at_ns', 'persisted_at_ns', 'ingest_sequence'):
             if key in row:
                 check_ns(row[key])

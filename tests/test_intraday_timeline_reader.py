@@ -37,6 +37,27 @@ def test_duplicate_identity_scan_uses_typed_keys_before_full_member_validation()
     assert 'member_kind' in duplicate
 
 
+def test_open_validates_visibility_in_bounded_batches_without_skipping_rows(monkeypatch):
+    import backend.app.intraday.replay as replay
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist(tuple(event(s,at=OPEN+index*SECOND) for index in range(20)))
+    saved = freeze(s)
+    original,calls = replay.visible_rows,[]
+    def visible(rows,**kwargs):
+        rows = tuple(rows)
+        calls.append([(row['table'],row['id']) for row in rows])
+        return original(rows,**kwargs)
+    monkeypatch.setattr(replay,'visible_rows',visible)
+    result = reader.open(saved.snapshot_id)
+    assert sum(map(len,calls))==len(result.timeline)
+    assert any(len(batch)>1 for batch in calls)
+    assert all(len(batch)<=1000 for batch in calls)
+    assert len({key for batch in calls for key in batch})==len(result.timeline)
+
+
 @pytest.mark.parametrize('member_id',[-2**63,2**63-1])
 def test_ordered_reader_fetches_reference_text_after_causal_sort_with_full_int64_member_ids(member_id):
     s = prepared()
@@ -678,6 +699,49 @@ def test_suspended_validated_iterator_rechecks_fence_before_next_output(change):
         reader.archive.settings = replace(reader.archive.settings,alpaca_api_secret_key=second['logical_key'])
     with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
         list(iterator)
+
+
+def test_chunk_assembly_fences_batches_and_public_outputs_without_per_row_queries(monkeypatch):
+    s = prepared()
+    service(s).register_policy()
+    s.store.persist(tuple(event(s,at=OPEN+index*SECOND) for index in range(40)))
+    saved = freeze(s)
+    reader = service(s)
+    timeline = reader.open(saved.snapshot_id,max_occurrences=10).timeline
+    expected = list(timeline)
+    original,calls = reader._read_signature,[]
+    def signature():
+        calls.append(None)
+        return original()
+    monkeypatch.setattr(reader,'_read_signature',signature)
+    chunks = list(timeline.chunks())
+    assert [row for chunk in chunks for row in chunk]==expected
+    assert all(len(chunk)<=10 for chunk in chunks)
+    assert len(chunks)<=len(calls)<=len(chunks)+4
+
+
+@pytest.mark.parametrize('change',['database','secret','temp_shadow'])
+def test_suspended_chunks_recheck_buffered_rows_before_next_public_output(change):
+    from dataclasses import replace
+
+    s = prepared()
+    service(s).register_policy()
+    s.store.persist(tuple(event(s,at=OPEN+index*SECOND) for index in range(20)))
+    saved = freeze(s)
+    reader = service(s)
+    iterator = reader.open(saved.snapshot_id,max_occurrences=1).timeline.chunks()
+    assert len(next(iterator))==1
+    raw = s.db.execute('SELECT * FROM intraday_observations ORDER BY id DESC LIMIT 1').fetchone()
+    if change=='database':
+        s.db.execute('DROP TRIGGER trg_intraday_observations_no_update')
+        s.db.execute('UPDATE intraday_observations SET payload_json=? WHERE id=?',('{"corrupt":true}',raw['id']))
+        s.db.commit()
+    elif change=='secret':
+        reader.archive.settings = replace(reader.archive.settings,alpaca_api_secret_key=raw['logical_key'])
+    else:
+        s.db.execute('CREATE TEMP TABLE intraday_observations AS SELECT * FROM main.intraday_observations')
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        next(iterator)
 
 
 def test_transient_source_mutation_during_batch_does_not_emit_buffered_corruption(monkeypatch):

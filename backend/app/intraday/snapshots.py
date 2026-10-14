@@ -384,6 +384,9 @@ class FrozenTimeline:
         return self.reader.connection.execute(query, {'snapshot': self.snapshot_id, 'cutoff': cutoff})
 
     def iter_rows(self, *, cutoff_ns=None):
+        return self._iter_rows(cutoff_ns=cutoff_ns, public_rows=True)
+
+    def _iter_rows(self, *, cutoff_ns, public_rows):
         cutoff = self.manifest['cutoff_ns'] if cutoff_ns is None else cutoff_ns
         check_ns(cutoff)
         if cutoff > self.manifest['cutoff_ns'] or (self.manifest.get('version') in {'intraday-dataset-v2','intraday-bundle-quality-v1'}
@@ -398,8 +401,10 @@ class FrozenTimeline:
             for rows in self.reader._hydrated_batches([json.loads(item[0]) for item in items],validated=True):
                 if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
                     raise SnapshotError('RESOURCE_LIMIT')
+                self._fence(buffered=True)
                 for row in rows:
-                    self._fence(buffered=True)
+                    if public_rows:
+                        self._fence(buffered=True)
                     row.pop('capture_order', None)
                     if row['table'] == 'intraday_news_versions':
                         row['links'] = self.links(row['id'])
@@ -410,7 +415,9 @@ class FrozenTimeline:
 
     def chunks(self, *, cutoff_ns=None):
         chunk, size = [], 0
-        for row in self.iter_rows(cutoff_ns=cutoff_ns):
+        # Rows stay private until the chunk's fence below. Public row iteration
+        # keeps its per-row fence; hydration and news links retain batch fences.
+        for row in self._iter_rows(cutoff_ns=cutoff_ns,public_rows=False):
             row_size = _row_byte_bound(row, _decoded=True)
             if row_size>self.max_bytes:
                 row_size = len(_envelope_bytes(row))
@@ -1740,14 +1747,15 @@ class SnapshotService:
                     if _row_byte_bound(row, _decoded=True)>max_bytes:
                         raise SnapshotError('RESOURCE_LIMIT')
                     if roles[(row['table'],row['id'])]:
-                        if len(visible_rows((row,),cutoff_ns=manifest['cutoff_ns'],namespace=namespace,_decoded=True))!=1:
-                            raise MetadataError('SNAPSHOT_INPUT_MISSING')
                         replay_rows.append(row)
                         replay_count += 1
                     else:
                         if tuple(row[key] for key in _SCOPE)!=namespace:
                             raise MetadataError('SNAPSHOT_INPUT_MISSING')
                         audit_count += 1
+                if len(visible_rows(replay_rows,cutoff_ns=manifest['cutoff_ns'],namespace=namespace,
+                                    _decoded=True))!=len(replay_rows):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
                 self._closure_batch(snapshot_id,replay_rows)
                 if _source_scope is not None:
                     references = {(ref['table'],ref['id']):ref for ref in remaining}

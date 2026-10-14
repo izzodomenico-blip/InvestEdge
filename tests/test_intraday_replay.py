@@ -66,6 +66,41 @@ def row(family='BAR', *, at=10, received=20, available=21, row_id=1, capture='ca
 
 
 @pytest.mark.parametrize('family', TABLES)
+@pytest.mark.parametrize('metadata',[False,True])
+def test_matching_namespace_needs_no_dependency_classification_but_keeps_clock_checks(monkeypatch,family,metadata):
+    value = row(family,metadata_dependency=metadata)
+    namespace = tuple(value[key] for key in ('profile_id','feed','data_mode','provenance','replay_grade'))
+    def forbidden(value):
+        raise AssertionError('DEPENDENCY_CLASSIFICATION_FOR_MATCHING_NAMESPACE')
+    monkeypatch.setattr(api(),'_family',forbidden)
+    assert api().visible_rows([value],cutoff_ns=25,namespace=namespace,_decoded=True)==[value]
+    value['received_at_ns'] = True
+    with pytest.raises(ValueError,match='INVALID_TIMESTAMP'):
+        api().visible_rows([value],cutoff_ns=25,namespace=namespace,_decoded=True)
+
+
+@pytest.mark.parametrize('payload',[[],None,'invalid-metadata'])
+def test_public_visibility_still_rejects_malformed_control_metadata_in_matching_namespace(payload):
+    value = row('CONTROL',metadata_dependency=True)
+    value['payload'] = payload
+    value.pop('payload_json')
+    with pytest.raises(AttributeError):
+        api().visible_rows([value],cutoff_ns=25)
+
+
+@pytest.mark.parametrize('family', TABLES)
+def test_different_namespace_still_requires_an_allowed_metadata_dependency(family):
+    value = row(family,metadata_dependency=True)
+    value['payload']['metadata_kind'] = 'PUBLICATION'
+    expected = (value['profile_id'],value['feed'],'REAL','HISTORICAL_CURRENT','RESEARCH_ONLY')
+    if family in {'IDENTITY','CALENDAR','UNIVERSE','CONTROL'}:
+        assert api().visible_rows([value],cutoff_ns=25,namespace=expected,_decoded=True)==[value]
+    else:
+        with pytest.raises(ValueError,match='MIXED_NAMESPACE'):
+            api().visible_rows([value],cutoff_ns=25,namespace=expected,_decoded=True)
+
+
+@pytest.mark.parametrize('family', TABLES)
 @pytest.mark.parametrize('operation', ['append', 'change', 'remove'])
 def test_future_occurrences_never_change_any_prefix(family, operation):
     first = row(family)
