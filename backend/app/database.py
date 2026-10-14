@@ -1335,6 +1335,126 @@ def _intraday_research_schema() -> tuple[str, str]:
 RESEARCH_SCHEMA, RESEARCH_INDEX_SCHEMA = _intraday_research_schema()
 INTRADAY_SCHEMA, INTRADAY_INDEX_SCHEMA = _intraday_schema()
 # Keep the intraday suffix intact for the existing pre-SP2b migration fixtures.
+FROZEN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS intraday_frozen_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('MARKET','SNAPSHOT','BUNDLE')),
+    subject_id INTEGER NOT NULL CHECK(subject_id>=0),
+    snapshot_id INTEGER REFERENCES intraday_dataset_snapshots(id) ON DELETE RESTRICT,
+    bundle_id INTEGER REFERENCES intraday_research_dataset_bundles(id) ON DELETE RESTRICT,
+    profile_id TEXT NOT NULL REFERENCES intraday_feed_profiles(id) ON DELETE RESTRICT,
+    feed TEXT NOT NULL, data_mode TEXT NOT NULL, provenance TEXT NOT NULL, replay_grade TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64),
+    CHECK((subject_kind='SNAPSHOT' AND snapshot_id=subject_id AND bundle_id IS NULL)
+       OR (subject_kind='BUNDLE' AND bundle_id=subject_id AND snapshot_id IS NULL)
+       OR (subject_kind='MARKET' AND subject_id=0 AND snapshot_id IS NULL AND bundle_id IS NULL)),
+    UNIQUE(subject_kind,subject_id,profile_id,feed,data_mode,provenance,replay_grade)
+);
+CREATE TABLE IF NOT EXISTS intraday_frozen_blocks (
+    set_id INTEGER NOT NULL REFERENCES intraday_frozen_sets(id) ON DELETE RESTRICT,
+    domain TEXT NOT NULL CHECK(domain IN ('MARKET','MEMBER','TIMELINE')),
+    ordinal INTEGER NOT NULL CHECK(ordinal>=0), listing_id INTEGER NOT NULL, kind TEXT NOT NULL,
+    row_count INTEGER NOT NULL CHECK(row_count>0 AND row_count<=1000),
+    input_bytes INTEGER NOT NULL CHECK(input_bytes>0 AND input_bytes<=2097152),
+    body BLOB NOT NULL CHECK(length(body)<=2097152), digest TEXT NOT NULL CHECK(length(digest)=64),
+    PRIMARY KEY(set_id,domain,ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_frozen_market ON intraday_frozen_blocks(set_id,domain,kind,listing_id,ordinal);
+CREATE TABLE IF NOT EXISTS intraday_frozen_locators (
+    set_id INTEGER NOT NULL, source_table TEXT NOT NULL, source_id INTEGER NOT NULL,
+    block_ordinal INTEGER NOT NULL, record_ordinal INTEGER NOT NULL, dependency_ordinal INTEGER NOT NULL,
+    payload_hash TEXT NOT NULL, admission_id INTEGER,
+    admitted_table TEXT, admitted_id INTEGER, admitted_hash TEXT, kind TEXT NOT NULL,
+    replay INTEGER NOT NULL CHECK(replay IN (0,1)), output_hash TEXT,
+    available INTEGER, received INTEGER, capture TEXT, proof INTEGER, intake INTEGER, ingest INTEGER,
+    PRIMARY KEY(set_id,source_table,source_id),
+    FOREIGN KEY(set_id) REFERENCES intraday_frozen_sets(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_frozen_locator_order ON intraday_frozen_locators(
+    set_id,block_ordinal,record_ordinal,dependency_ordinal);
+CREATE INDEX IF NOT EXISTS idx_frozen_locator_binding ON intraday_frozen_locators(set_id,source_table,source_id,payload_hash);
+CREATE TABLE IF NOT EXISTS intraday_frozen_seals (
+    set_id INTEGER PRIMARY KEY REFERENCES intraday_frozen_sets(id) ON DELETE RESTRICT,
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64)
+);
+CREATE TABLE IF NOT EXISTS intraday_frozen_child_blocks (
+    set_id INTEGER NOT NULL REFERENCES intraday_frozen_sets(id) ON DELETE RESTRICT,
+    ordinal INTEGER NOT NULL CHECK(ordinal>=0), row_count INTEGER NOT NULL CHECK(row_count BETWEEN 1 AND 1000),
+    input_bytes INTEGER NOT NULL CHECK(input_bytes BETWEEN 1 AND 2097152),
+    body BLOB NOT NULL CHECK(length(body)<=2097152), digest TEXT NOT NULL CHECK(length(digest)=64),
+    PRIMARY KEY(set_id,ordinal)
+);
+CREATE TABLE IF NOT EXISTS intraday_frozen_source_refs (
+    set_id INTEGER NOT NULL, source_table TEXT NOT NULL, source_id INTEGER NOT NULL,
+    source_hash TEXT NOT NULL, reference_json TEXT NOT NULL CHECK(json_valid(reference_json)), raw_available INTEGER,
+    block_ordinal INTEGER NOT NULL, record_ordinal INTEGER NOT NULL, dependency_ordinal INTEGER NOT NULL,
+    persisted INTEGER NOT NULL, metadata_scope INTEGER NOT NULL CHECK(metadata_scope IN (0,1)),
+    needs_closure INTEGER NOT NULL CHECK(needs_closure IN (0,1)),
+    PRIMARY KEY(set_id,source_table,source_id),
+    FOREIGN KEY(set_id,source_table,source_id) REFERENCES intraday_frozen_locators(set_id,source_table,source_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_frozen_source_ref_order ON intraday_frozen_source_refs(set_id,block_ordinal,record_ordinal,dependency_ordinal);
+CREATE INDEX IF NOT EXISTS idx_frozen_source_closure ON intraday_frozen_source_refs(set_id,source_table,source_id) WHERE needs_closure=1;
+CREATE INDEX IF NOT EXISTS idx_frozen_source_metadata ON intraday_frozen_source_refs(set_id,source_table,source_id) WHERE metadata_scope=1;
+CREATE TABLE IF NOT EXISTS intraday_frozen_child_refs (
+    set_id INTEGER NOT NULL REFERENCES intraday_frozen_sets(id) ON DELETE RESTRICT,
+    child_id INTEGER NOT NULL REFERENCES intraday_dataset_snapshots(id) ON DELETE RESTRICT,
+    block_ordinal INTEGER NOT NULL, record_ordinal INTEGER NOT NULL, dependency_ordinal INTEGER NOT NULL,
+    source_table TEXT NOT NULL, source_id INTEGER NOT NULL, payload_hash TEXT NOT NULL, source_hash TEXT NOT NULL,
+    reference_json TEXT NOT NULL CHECK(json_valid(reference_json)), replay INTEGER NOT NULL CHECK(replay IN (0,1)),
+    rank_available INTEGER NOT NULL, available INTEGER, admission_id INTEGER, publication_id INTEGER,
+    PRIMARY KEY(set_id,child_id,source_table,source_id),
+    FOREIGN KEY(set_id,source_table,source_id) REFERENCES intraday_frozen_locators(set_id,source_table,source_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_frozen_child_ref_order ON intraday_frozen_child_refs(set_id,block_ordinal,record_ordinal,dependency_ordinal);
+CREATE INDEX IF NOT EXISTS idx_frozen_child_union ON intraday_frozen_child_refs(set_id,source_table,source_id,replay,rank_available,reference_json);
+CREATE INDEX IF NOT EXISTS idx_frozen_child_union_proof ON intraday_frozen_child_refs(
+    set_id,source_table,source_id,replay,rank_available,reference_json,available);
+CREATE INDEX IF NOT EXISTS idx_frozen_child_publications ON intraday_frozen_child_refs(set_id,child_id,source_table,source_id)
+    WHERE replay=1 AND publication_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_frozen_child_binding ON intraday_frozen_child_refs(
+    set_id,source_table,source_id,source_hash,payload_hash,replay,available);
+CREATE TRIGGER IF NOT EXISTS trg_frozen_snapshot_scope BEFORE INSERT ON intraday_frozen_sets
+    WHEN NEW.subject_kind='SNAPSHOT' AND NOT EXISTS (
+        SELECT 1 FROM intraday_dataset_snapshots src WHERE src.id=NEW.snapshot_id
+        AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
+        AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade)
+    BEGIN SELECT RAISE(ABORT,'FROZEN_EVIDENCE_SCOPE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_frozen_bundle_scope BEFORE INSERT ON intraday_frozen_sets
+    WHEN NEW.subject_kind='BUNDLE' AND NOT EXISTS (
+        SELECT 1 FROM intraday_research_dataset_bundles src WHERE src.id=NEW.bundle_id
+        AND src.profile_id=NEW.profile_id AND src.feed=NEW.feed AND src.data_mode=NEW.data_mode
+        AND src.provenance=NEW.provenance AND src.replay_grade=NEW.replay_grade)
+    BEGIN SELECT RAISE(ABORT,'FROZEN_EVIDENCE_SCOPE'); END;
+"""
+for _frozen_table in ("intraday_frozen_sets", "intraday_frozen_blocks", "intraday_frozen_locators", "intraday_frozen_seals",
+                      "intraday_frozen_child_blocks", "intraday_frozen_source_refs", "intraday_frozen_child_refs"):
+    if _frozen_table not in {"intraday_frozen_sets", "intraday_frozen_seals"}:
+        FROZEN_SCHEMA += f"""CREATE TRIGGER IF NOT EXISTS trg_{_frozen_table}_sealed
+            BEFORE INSERT ON {_frozen_table} WHEN EXISTS(
+                SELECT 1 FROM intraday_frozen_seals WHERE set_id=NEW.set_id)
+            BEGIN SELECT RAISE(ABORT,'FROZEN_EVIDENCE_IMMUTABLE'); END;\n"""
+    for _event in ("UPDATE", "DELETE"):
+        FROZEN_SCHEMA += f"""CREATE TRIGGER IF NOT EXISTS trg_{_frozen_table}_no_{_event.lower()}
+            BEFORE {_event} ON {_frozen_table} BEGIN SELECT RAISE(ABORT,'FROZEN_EVIDENCE_IMMUTABLE'); END;\n"""
+    # REPLACE can delete a conflicting row without firing DELETE triggers.
+    _key = ("old.id=NEW.id OR (old.subject_kind=NEW.subject_kind AND old.subject_id=NEW.subject_id "
+            "AND old.profile_id=NEW.profile_id AND old.feed=NEW.feed AND old.data_mode=NEW.data_mode "
+            "AND old.provenance=NEW.provenance AND old.replay_grade=NEW.replay_grade)"
+            if _frozen_table=="intraday_frozen_sets" else
+            "old.set_id=NEW.set_id" if _frozen_table=="intraday_frozen_seals" else
+            "old.set_id=NEW.set_id AND old.ordinal=NEW.ordinal" if _frozen_table=="intraday_frozen_child_blocks" else
+            "old.set_id=NEW.set_id AND old.child_id=NEW.child_id AND old.source_table=NEW.source_table AND old.source_id=NEW.source_id"
+            if _frozen_table=="intraday_frozen_child_refs" else
+            "old.set_id=NEW.set_id AND old.domain=NEW.domain AND old.ordinal=NEW.ordinal"
+            if _frozen_table=="intraday_frozen_blocks" else
+            "old.set_id=NEW.set_id AND old.source_table=NEW.source_table AND old.source_id=NEW.source_id")
+    FROZEN_SCHEMA += f"""CREATE TRIGGER IF NOT EXISTS trg_{_frozen_table}_no_replace
+        BEFORE INSERT ON {_frozen_table} WHEN EXISTS(SELECT 1 FROM {_frozen_table} old WHERE {_key})
+        BEGIN SELECT RAISE(ABORT,'FROZEN_EVIDENCE_IMMUTABLE'); END;\n"""
+
+# Keep the established pre-SP3/pre-SP2b schema boundaries usable for upgrades.
+RESEARCH_SCHEMA += FROZEN_SCHEMA
 BASE_SCHEMA += RESEARCH_SCHEMA + INTRADAY_SCHEMA
 
 INDEX_SCHEMA = """

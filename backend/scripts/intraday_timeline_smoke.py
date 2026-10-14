@@ -26,7 +26,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from backend.scripts.intraday_data_smoke import FakeSocket, emit, envelope, peak_memory_bytes
+from backend.scripts.intraday_data_smoke import FakeSocket, emit, envelope
 
 SECOND, MINUTE = 1_000_000_000, 60_000_000_000
 
@@ -243,7 +243,7 @@ def run(path,days,budget,min_free,quick,attempts):
     from backend.app.database import SCHEMA, migrate_db
     from backend.app.intraday.calendar import session_as_of
     from backend.app.intraday.news import NewsStore
-    from backend.app.intraday.snapshots import SnapshotService
+    from backend.app.intraday.snapshots import SnapshotService, _peak_rss_bytes
     from backend.app.intraday.universe import UniverseService
     from backend.app.intraday_research.contracts import ResearchNamespace
     from backend.app.intraday_research.datasets import DatasetBundle, DatasetChild, DatasetService
@@ -310,13 +310,15 @@ def run(path,days,budget,min_free,quick,attempts):
     resources = {'max_disk_bytes':budget,'min_free_bytes':min_free}
     windows,children = [],[]
     for index in range(0,days,5):
+        preparation_started = perf_counter()
         child = snapshots.freeze_window(start_at_ns=sessions[index].open_at_ns,
             end_at_ns=sessions[min(index+4,days-1)].close_at_ns,
             cutoff_ns=max(sessions[min(index+4,days-1)].close_at_ns+10*SECOND,
                           clock.now if index+5>=days else 0),
-            listing_ids=listings,benchmarks=benchmarks,resources=resources)
+            listing_ids=listings,benchmarks=benchmarks,resources=resources,evidence_blocks=True)
         windows.append(child)
-        emit('window',ordinal=len(windows),snapshot_id=child.snapshot_id,db_bytes=disk_bytes(path))
+        emit('window',ordinal=len(windows),snapshot_id=child.snapshot_id,db_bytes=disk_bytes(path),
+             preparation_seconds=perf_counter()-preparation_started)
     replay_seconds = 0
     for child in windows:
         start = perf_counter()
@@ -340,7 +342,9 @@ def run(path,days,budget,min_free,quick,attempts):
         research = DatasetService(snapshots)
         request = DatasetBundle(tuple(children),ResearchNamespace(*snapshots.open(children[0].snapshot_id).manifest['namespace']),
                                 max_disk_bytes=budget,min_free_bytes=min_free)
-        bundle = research.freeze_bundle(request)
+        preparation_started = perf_counter()
+        bundle = research.freeze_bundle(request,evidence_blocks=True)
+        emit('bundle_preparation',seconds=perf_counter()-preparation_started,db_bytes=disk_bytes(path))
         bundle_id = bundle.bundle_id
         del bundle
         gc.collect()
@@ -371,6 +375,10 @@ def run(path,days,budget,min_free,quick,attempts):
         after,_ = bundle_fingerprint()
         frozen_unchanged = before==after
         assert frozen_unchanged
+    from backend.app.intraday.frozen_blocks import FrozenBlocks
+    preparation_started = perf_counter()
+    FrozenBlocks(snapshots).seal_market(max_disk_bytes=budget,min_free_bytes=min_free)
+    emit('market_preparation',seconds=perf_counter()-preparation_started,db_bytes=disk_bytes(path))
     queries = []
     # Preserve the original twenty prefix queries for the 30x20 comparison.
     for index in range(20):
@@ -389,7 +397,7 @@ def run(path,days,budget,min_free,quick,attempts):
     p95 = sorted(queries)[18]
     runtime = collector_smoke(SCHEMA,calendar,opening,budget)
     assert attempts['count']==0
-    rss,size = peak_memory_bytes(),disk_bytes(path)
+    rss,size = _peak_rss_bytes(),disk_bytes(path)
     gates = {'query_p95':p95<=250,'window_timeline_replay':replay_seconds<=60,
              'original_30x20_bundle_replay':None if days!=20 or quick else bundle_seconds<=60,'rss':rss<=2*1024**3,
              'zero_loss':accepted==2*total and runtime['silent_losses']==0,'disk':size<=budget}

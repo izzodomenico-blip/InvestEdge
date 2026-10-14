@@ -10,4 +10,4 @@ description = "Optional offline market reader accelerator"
 
 [tool.setuptools]
 py-modules = []
-ext-modules = [{name = "_investedge_reader_native", sources = ["app/intraday/_reader_native.c"]}]
+ext-modules = [{name = "_investedge_reader_native", sources = ["app/intraday/_reader_native.c"], extra-compile-args = ["-O3"]}]

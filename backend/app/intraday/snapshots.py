@@ -15,6 +15,7 @@ import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import chain
 from operator import attrgetter
 from pathlib import Path
@@ -224,21 +225,46 @@ def _row_byte_bound(row, *, _decoded=False):
     return len(_envelope_bytes(row))
 
 
-def _peak_rss_bytes():
-    if os.name != 'nt':
-        import resource
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform=='darwin' else 1024)
+@lru_cache(maxsize=1)
+def _windows_rss_api():
+    # Cache ABI definitions and function pointers, never memory measurements.
     class Counters(ctypes.Structure):
         _fields_ = [('cb',ctypes.c_ulong),('faults',ctypes.c_ulong),
             *[(name,ctypes.c_size_t) for name in ('peak','working','paged_peak','paged','nonpaged_peak','nonpaged','pagefile','pagefile_peak')]]
-    counters = Counters()
-    counters.cb = ctypes.sizeof(counters)
     kernel,psapi = ctypes.WinDLL('kernel32'),ctypes.WinDLL('psapi')
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
     psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p,ctypes.POINTER(Counters),ctypes.c_ulong]
-    if not psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(),ctypes.byref(counters),counters.cb):
+    return Counters,kernel.GetCurrentProcess,psapi.GetProcessMemoryInfo
+
+
+_WORKER_PEAK_BOUND = 0
+
+
+def _local_peak_rss_bytes():
+    if os.name != 'nt':
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform=='darwin' else 1024)
+    counter_type,process,measure = _windows_rss_api()
+    counters = counter_type()
+    counters.cb = ctypes.sizeof(counters)
+    if not measure(process(),ctypes.byref(counters),counters.cb):
         raise SnapshotError('RESOURCE_LIMIT')
     return counters.peak
+
+
+def _peak_rss_bytes():
+    return max(_local_peak_rss_bytes(),_WORKER_PEAK_BOUND)
+
+
+def _record_worker_peaks(peaks):
+    global _WORKER_PEAK_BOUND
+    if any(type(value) is not int or value<=0 for value in peaks):
+        raise SnapshotError('RESOURCE_LIMIT')
+    # Sum of individual peaks is a conservative upper bound on their joint
+    # peak, including startup. It is never used to reduce measured RSS.
+    _WORKER_PEAK_BOUND = max(_WORKER_PEAK_BOUND,_local_peak_rss_bytes()+sum(peaks))
+    if _WORKER_PEAK_BOUND>2_147_483_648:
+        raise SnapshotError('RESOURCE_LIMIT')
 
 
 def _source_hash(row):
@@ -304,10 +330,21 @@ class ValidatedDataset:
     publication_id: int
     publication_hash: str
 
+    @property
+    def evidence_format(self):
+        return getattr(self.timeline,'evidence_format',None)
+
+    @property
+    def evidence_root(self):
+        return getattr(self.timeline,'evidence_root',None)
+
     def as_dict(self):
-        return {'snapshot_id': self.snapshot_id, 'digest': self.digest, 'known_at_ns': self.known_at_ns,
+        result = {'snapshot_id': self.snapshot_id, 'digest': self.digest, 'known_at_ns': self.known_at_ns,
                 'manifest': json.loads(canonical_json(self.manifest)),
                 'report': json.loads(canonical_json(self.report)), 'timeline': self.timeline}
+        if self.evidence_format is not None:
+            result.update(evidence_format=self.evidence_format,evidence_root=self.evidence_root)
+        return result
 
 
 class FrozenTimeline:
@@ -1091,12 +1128,17 @@ class SnapshotService:
     def _read_signature(self):
         # A rolled-back TEMP DDL can reuse its schema cookie. Check the names
         # themselves at every fence; explicit jobs own only timeline_* tables.
-        if self.connection.execute("SELECT 1 FROM temp.sqlite_master WHERE type IN ('table','view') "
-                                   "AND lower(name) GLOB 'intraday_*' LIMIT 1").fetchone():
-            raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        secret_fields = self._secret_state()
-        return (self.connection.total_changes-getattr(self,'_scratch_changes',0),self.connection.execute('PRAGMA data_version').fetchone()[0],
-                self.connection.execute('PRAGMA schema_version').fetchone()[0],secret_fields)
+        cursor = self.connection.cursor()
+        cursor.row_factory = None
+        try:
+            if cursor.execute("SELECT 1 FROM temp.sqlite_master WHERE type IN ('table','view') "
+                              "AND lower(name) GLOB 'intraday_*' LIMIT 1").fetchone():
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            secret_fields = self._secret_state()
+            return (self.connection.total_changes-getattr(self,'_scratch_changes',0),cursor.execute('PRAGMA data_version').fetchone()[0],
+                    cursor.execute('PRAGMA schema_version').fetchone()[0],secret_fields)
+        finally:
+            cursor.close()
 
     def _reference(self, row):
         raw, decoded, source_hash = self._decode_source(row['table'], row['id'])
@@ -1323,10 +1365,17 @@ class SnapshotService:
                 durable, f'dataset-publication:{snapshot_id}')
         return DatasetSnapshot(snapshot_id, digest, report_id)
 
-    def freeze_window(self, *, resources, **kwargs):
+    def freeze_window(self, *, resources, evidence_blocks=False, **kwargs):
         if resources is None:
             raise SnapshotError('RESOURCE_LIMIT')
-        return self.freeze_dataset(resources=resources, _window=True, **kwargs)
+        if type(evidence_blocks) is not bool:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        saved = self.freeze_dataset(resources=resources, _window=True, **kwargs)
+        if evidence_blocks:
+            from backend.app.intraday.frozen_blocks import FrozenBlocks
+            FrozenBlocks(self).seal_snapshot(saved.snapshot_id,max_disk_bytes=resources['max_disk_bytes'],
+                min_free_bytes=resources['min_free_bytes'],cancelled=kwargs.get('cancelled'))
+        return saved
 
     def _append(self, table, run, payload, fields, logical_key):
         self._guard()
@@ -1356,9 +1405,31 @@ class SnapshotService:
         return int(source_id)
 
     def read(self, snapshot_id):
-        """Exact references only. Never use latest source readers, clocks or provider calls."""
+        """Legacy materialized view; open() is the bounded timeline interface."""
         try:
+            if type(snapshot_id) is not int or snapshot_id<=0:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            from backend.app.intraday.frozen_blocks import FrozenBlocks
+            signature = self._read_signature()
+            blocks = FrozenBlocks(self)
+            sealed = blocks.find('SNAPSHOT',snapshot_id)
+            if sealed is not None:
+                opened = blocks.open_snapshot(sealed,10_000,8_388_608)
+                result = opened.as_dict()
+                rows = []
+                for chunk in opened.timeline.chunks():
+                    rows.extend(chunk)
+                    if _peak_rss_bytes()>opened.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
+                        raise SnapshotError('RESOURCE_LIMIT')
+                result['timeline'] = rows
+                if signature!=self._read_signature():
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                return result
             return self._read(snapshot_id)
+        except SnapshotError as error:
+            if str(error)=='RESOURCE_LIMIT':
+                raise
+            raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
         except (MetadataError, ValueError, KeyError, TypeError, sqlite3.DatabaseError):
             raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
 
@@ -1662,12 +1733,23 @@ class SnapshotService:
                     if observation.get('admission_id')!=status['admission_id'] or observation['capture_id']!=row['capture_id']:
                         raise MetadataError('SNAPSHOT_INPUT_MISSING')
 
-    def open(self, snapshot_id, *, max_occurrences=10_000, max_bytes=8_388_608, _source_scope=None):
+    def open(self, snapshot_id, *, max_occurrences=10_000, max_bytes=8_388_608, _source_scope=None,_original=False):
         """Validate every exact member before returning a bounded timeline handle."""
         if (type(max_occurrences) is not int or not 1 <= max_occurrences <= 10_000
             or type(max_bytes) is not int or not 1 <= max_bytes <= 8_388_608):
             raise SnapshotError('RESOURCE_LIMIT')
+        if type(snapshot_id) is not int or snapshot_id<=0:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
         try:
+            from backend.app.intraday.frozen_blocks import FrozenBlocks
+            signature = self._read_signature()
+            blocks = FrozenBlocks(self)
+            sealed = None if _original else blocks.find('SNAPSHOT',snapshot_id)
+            if sealed is not None:
+                result = blocks.open_snapshot(sealed,max_occurrences,max_bytes)
+                if signature!=self._read_signature():
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                return result
             return self._open(snapshot_id, max_occurrences, max_bytes, _source_scope)
         except SnapshotError:
             raise
@@ -1743,6 +1825,7 @@ class SnapshotService:
         pending, pending_bytes = [], 0
         def validate_pending():
             nonlocal replay_count,audit_count,pending_bytes
+            self._cancel(getattr(self,'_read_cancelled',None),'DURING_VALIDATION')
             roles = {(ref['table'],ref['id']):replay for ref,replay in pending}
             remaining,cached = [],[]
             if _source_scope is not None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from dataclasses import asdict, dataclass
 
 from backend.app.data_providers.alpaca_metadata import MetadataError, decode_row
@@ -108,6 +109,14 @@ class ValidatedBundle:
     timeline: FrozenTimeline
     known_at_ns: int
 
+    @property
+    def evidence_format(self):
+        return getattr(self.timeline,'evidence_format',None)
+
+    @property
+    def evidence_root(self):
+        return getattr(self.timeline,'evidence_root',None)
+
 
 class DatasetService:
     """Explicit bundle jobs and immutable reads; no collection or execution."""
@@ -120,7 +129,9 @@ class DatasetService:
         result = []
         with self.snapshots.validated_sources([child.snapshot_id for child in request.children]) as source_scope:
             for child in request.children:
-                dataset = self.snapshots.open(child.snapshot_id, _source_scope=source_scope)
+                # A v1 bundle names original RAW evidence. A v3 wrapper never
+                # silently changes that authority; conversion is explicit.
+                dataset = self.snapshots.open(child.snapshot_id, _source_scope=source_scope,_original=True)
                 expected = (child.digest,child.start_at_ns,child.end_at_ns,child.cutoff_ns,child.known_at_ns,
                             child.publication_id,child.publication_hash)
                 actual = (dataset.digest,dataset.manifest['start_at_ns'],dataset.manifest['end_at_ns'],dataset.manifest['cutoff_ns'],
@@ -147,7 +158,9 @@ class DatasetService:
         self._write_floor = stamp
         return stamp
 
-    def freeze_bundle(self, request, *, cancelled=None):
+    def freeze_bundle(self, request, *, cancelled=None, evidence_blocks=False):
+        if type(evidence_blocks) is not bool:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
         datasets = self._children(request)
         if self.db.in_transaction:
             raise MetadataError('TRANSACTION_ALREADY_OPEN')
@@ -236,6 +249,9 @@ class DatasetService:
         except Exception:
             self.db.rollback()
             raise
+        if evidence_blocks:
+            return self.seal_bundle(bundle_id,max_disk_bytes=request.max_disk_bytes,
+                min_free_bytes=request.min_free_bytes,cancelled=cancelled)
         return self.open_bundle(bundle_id)
 
     def _links(self, bundle_id, news_id):
@@ -246,6 +262,367 @@ class DatasetService:
             row.pop('table',None)
             result.append(row)
         return result
+
+    def seal_bundle(self,bundle_id,*,max_disk_bytes,min_free_bytes,cancelled=None):
+        """Explicit v3 import: one source pool plus every original child member."""
+        from backend.app.intraday.frozen_blocks import FrozenBlocks, _decode, _text, compact_member
+        from backend.app.intraday.snapshots import _REFERENCES
+        archive = FrozenBlocks(self.snapshots)
+        if archive.find('BUNDLE',bundle_id) is not None:
+            raise MetadataError('FROZEN_EVIDENCE_EXISTS')
+        signature = self.snapshots._read_signature()
+        metadata = self._read_bundle_metadata(bundle_id)
+        evidence = metadata['evidence']
+        documents = []
+        for expected in evidence['children']:
+            original = archive.audit_snapshot(expected['snapshot_id'],cancelled=cancelled)
+            documents.append(archive.snapshot_evidence(original))
+        self._child_documents(archive,evidence,documents)
+        if self._bundle_count(bundle_id)!=evidence['timeline_count']:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        legacy = FrozenTimeline(self.snapshots,bundle_id,evidence['quality_manifest'],evidence['timeline_count'],
+            refs_sql=_BUNDLE_REFS,links=lambda news_id:self._links(bundle_id,news_id),_signature=signature,
+            _order_refs_sql=_BUNDLE_ORDER_REFS)
+        original = ValidatedBundle(bundle_id,metadata['header']['bundle_digest'],evidence['quality_manifest'],
+                                   evidence['report'],legacy,metadata['seal']['recorded_at_ns'])
+        stage = 'frozen_union_'+uuid.uuid4().hex
+        self.db.execute('PRAGMA temp_store=FILE')
+        self.db.execute('PRAGMA temp.cache_size=-8192')
+        try:
+            set_id = archive._begin('BUNDLE',bundle_id,{'manifest':original.manifest,'digest':original.digest,
+                'report':original.report,'known_at_ns':original.known_at_ns,'timeline_count':evidence['timeline_count'],
+                'bundle_metadata':{key:value for key,value in metadata.items() if key!='evidence'},
+                'child_documents':documents},max_disk_bytes,min_free_bytes,expected_signature=signature,cancelled=cancelled)
+            self.snapshots._cancel(cancelled,'BEFORE_READ')
+            self.db.execute(f'''CREATE TEMP TABLE {stage}(source_table TEXT,source_id INTEGER,
+                reference_json TEXT,replay INTEGER,PRIMARY KEY(source_table,source_id)) WITHOUT ROWID''')
+            # Audit inputs also belong to the source pool; replay inputs take
+            # precedence using precisely the original min-availability/ref rank.
+            inputs = _CHILD_REFS.replace("AND json_extract(m.payload_json,'$.replay')=1",'')
+            inputs = inputs.replace("AS reference_json\n", "AS reference_json,json_extract(m.payload_json,'$.replay') AS replay\n",1)
+            inputs = inputs.replace('SELECT dependency.value FROM',"SELECT dependency.value,json_extract(m.payload_json,'$.replay') FROM")
+            self.db.execute(inputs+f''',choices AS (
+                SELECT json_extract(reference_json,'$.table') AS source_table,json_extract(reference_json,'$.id') AS source_id,
+                    MAX(replay) AS replay,
+                    MIN(CASE WHEN replay=1 THEN printf('%019d',COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807))||reference_json END) AS active,
+                    MIN(printf('%019d',COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807))||reference_json) AS any_ref
+                FROM child_refs GROUP BY 1,2)
+                INSERT INTO {stage} SELECT source_table,source_id,substr(COALESCE(active,any_ref),20),replay FROM choices''',
+                {'snapshot':bundle_id})
+            archive._budget(max_disk_bytes,min_free_bytes)
+            def records():
+                for table,source_id,text,replay in self.db.execute(f'SELECT * FROM {stage} ORDER BY source_table,source_id'):
+                    ref = json.loads(text)
+                    kind,column = (('UNIVERSE_MEMBER','universe_member_id') if table=='intraday_universe_members' else _REFERENCES[table])
+                    body = {'reference':ref,'dependencies':[],'replay':bool(replay)}
+                    member = dict(zip(('profile_id','feed','data_mode','provenance','replay_grade'),archive.scope,strict=True))
+                    member.update(ingest_run_id=0,member_kind=kind,persisted_at_ns=original.known_at_ns,
+                                  payload_json=_text(body),payload_hash=_hash(body),**{column:source_id})
+                    raw = self.snapshots._raw_source(table,source_id)
+                    payload = raw.pop('payload_json')
+                    yield [member,[[_text(raw),payload]]]
+            archive._blocks(set_id,'MEMBER',records(),maximum=max_disk_bytes,minimum=min_free_bytes,cancelled=cancelled)
+            archive._build_locators(set_id,links=lambda news_id:self._links(bundle_id,news_id),manifest=original.manifest,cancelled=cancelled)
+            def members():
+                for child in evidence['children']:
+                    for raw in self.db.execute('SELECT * FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence',(child['snapshot_id'],)):
+                        yield [child['snapshot_id'],compact_member(raw)]
+            archive._blocks(set_id,'CHILD',members(),maximum=max_disk_bytes,minimum=min_free_bytes,cancelled=cancelled)
+            header = _decode(self.db.execute('SELECT * FROM intraday_frozen_sets WHERE id=?',(set_id,)).fetchone())
+            header['metadata_chunks'] = header['payload'].get('metadata_chunks',0)
+            staged = archive._raw_blocks(set_id,'CHILD',cancelled=cancelled)
+            self._child_members(archive,header,evidence,documents,staged,write=True)
+            archive._blocks(set_id,'TIMELINE',(archive._timeline_text(row) for row in archive._original_rows(original)),
+                            maximum=max_disk_bytes,minimum=min_free_bytes,cancelled=cancelled)
+            self.db.execute(f'DROP TABLE temp.{stage}')
+            archive._finish(set_id,max_disk_bytes,min_free_bytes,cancelled,validate=lambda:self.open_bundle(bundle_id))
+        except Exception:
+            self.db.rollback()
+            raise
+        finally:
+            self.db.execute(f'DROP TABLE IF EXISTS temp.{stage}')
+        return self.open_bundle(bundle_id)
+
+    def _child_documents(self,archive,evidence,documents):
+        if len(documents)!=len(evidence['children']):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        result = {}
+        for expected,document in zip(evidence['children'],documents,strict=True):
+            child = DatasetChild(**expected)
+            header,report,pub = archive._metadata(document)
+            manifest = header['payload']
+            actual = (header['id'],document['digest'],manifest['start_at_ns'],manifest['end_at_ns'],manifest['cutoff_ns'],
+                      document['known_at_ns'],document['publication_id'],document['publication_hash'])
+            if actual!=(child.snapshot_id,child.digest,child.start_at_ns,child.end_at_ns,child.cutoff_ns,
+                         child.known_at_ns,child.publication_id,child.publication_hash):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            result[child.snapshot_id] = (header,report,pub)
+        return result
+
+    def _child_source(self,archive,set_id,child_id,table,source_id,payload_hash=None):
+        integer(source_id,positive=True)
+        ref = self.db.execute('''SELECT reference_json FROM intraday_frozen_child_refs
+            WHERE set_id=? AND child_id=? AND source_table=? AND source_id=?''',(set_id,child_id,table,source_id)).fetchone()
+        if ref is None:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        reference = json.loads(ref[0])
+        row = archive._source(set_id,table,source_id,projected=False)
+        row.update(reference['projection'])
+        row['table'] = table
+        if payload_hash is not None and row['payload_hash']!=payload_hash:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return row
+
+    def _child_members(self,archive,header,evidence,documents,blocks,*,write=False):
+        from backend.app.intraday.frozen_blocks import (
+            _NATIVE,
+            SCOPE,
+            _decode,
+            _frame,
+            _FramedRecords,
+            _text,
+            reference_text,
+        )
+        from backend.app.intraday.replay import check_ns, visible_rows
+        from backend.app.intraday.snapshots import _REFERENCES
+        states = {}
+        for child_id,(child,report,pub) in self._child_documents(archive,evidence,documents).items():
+            hasher = hashlib.sha256()
+            _frame(hasher,_text(child['payload']))
+            states[child_id] = {'header':child,'pub':pub,'hash':hasher,'members':0,'replay':0,'audit':0,
+                                'latest':max(child['persisted_at_ns'],report['persisted_at_ns'])}
+        total = 0
+        metadata_seen = 0
+        candidates = tuple(value for _,value in self.snapshots._secret_fields() if isinstance(value,str) and value)
+        for ordinal,records in blocks:
+            if (not write and not candidates and type(records) is list and not isinstance(records,_FramedRecords)
+                and _NATIVE is not None and hasattr(_NATIVE,'frozen_children')):
+                from backend.app.intraday.snapshots import _decode_evidence
+                facts = [tuple(row) for row in self.db.execute('''SELECT c.child_id,c.block_ordinal,c.record_ordinal,
+                    c.dependency_ordinal,c.source_table,c.source_id,c.payload_hash,c.source_hash,c.reference_json,c.replay,
+                    c.rank_available,c.available,c.admission_id,c.publication_id FROM intraday_frozen_child_refs c
+                    WHERE c.set_id=? AND c.block_ordinal=? ORDER BY c.record_ordinal,c.dependency_ordinal''',(header['id'],ordinal))]
+                count = _NATIVE.frozen_children(records,facts,archive.scope,states,ordinal,_decode_evidence)
+                if count is not NotImplemented:
+                    total += count
+                    continue
+            decoded,needed = [],{}
+            for index,(child_id,raw) in enumerate(records):
+                if child_id=='METADATA' and metadata_seen<header.get('metadata_chunks',0):
+                    metadata_seen += 1
+                    continue
+                integer(child_id,positive=True)
+                state = states[child_id]
+                member = _decode(raw)
+                if candidates and SafeProviderTransport._payload_contains_secret(member,candidates):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                body = member['payload']
+                if (tuple(member[key] for key in SCOPE)!=archive.scope or member['ingest_run_id']!=state['header']['ingest_run_id']
+                    or type(body['replay']) is not bool or type(body['dependencies']) is not list):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                kind,column = _REFERENCES[body['reference']['table']]
+                if member['member_kind']!=kind or type(member[column]) is not int or member[column]!=body['reference']['id']:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                _frame(state['hash'],member['payload_json'])
+                state['members'] += 1
+                state['latest'] = max(state['latest'],member['persisted_at_ns'])
+                refs = [body['reference'],*body['dependencies']]
+                for dep,ref in enumerate(refs,-1):
+                    integer(ref['id'],positive=True)
+                    needed.setdefault(ref['table'],set()).add(ref['id'])
+                    decoded.append((child_id,index,dep,member,ref))
+                state['replay' if body['replay'] else 'audit'] += len(refs)
+            if len(decoded)>1000:
+                raise SnapshotError('RESOURCE_LIMIT')
+            sources = {}
+            for table,ids in needed.items():
+                pending = tuple(ids)
+                for start in range(0,len(pending),500):
+                    part = pending[start:start+500]
+                    query = f'''SELECT s.source_id,s.source_hash,s.raw_available,s.persisted,s.metadata_scope,s.needs_closure,
+                        l.payload_hash,l.received,l.kind FROM intraday_frozen_source_refs s JOIN intraday_frozen_locators l
+                        ON l.set_id=s.set_id AND l.source_table=s.source_table AND l.source_id=s.source_id
+                        WHERE s.set_id=? AND s.source_table=? AND s.source_id IN ({','.join('?' for _ in part)})'''
+                    for row in self.db.execute(query,(header['id'],table,*part)):
+                        sources[(table,row[0])] = tuple(row)
+            expected = []
+            for child_id,index,dep,member,ref in decoded:
+                source = sources.get((ref['table'],ref['id']))
+                if source is None or source[1]!=ref['source_hash'] or source[6]!=ref['payload_hash']:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                projection = ref['projection']
+                allowed = {'available_at_ns','recorded_available_at_ns','admission_id','publication_id','publication_hash',
+                           'capture_ingest_sequence','metadata_dependency','first_received_at_ns','table'}
+                if (type(projection) is not dict or not set(projection)<=allowed or projection.get('table',ref['table'])!=ref['table']):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                replay = member['payload']['replay']
+                available = projection.get('available_at_ns',source[2])
+                rank = projection.get('available_at_ns',9223372036854775807)
+                check_ns(rank)
+                if replay:
+                    check_ns(available)
+                    if available>states[child_id]['header']['payload']['cutoff_ns'] or available<source[3] or source[3]<source[7]:
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                    if source[4]:
+                        # Rare metadata namespaces use the complete original scope rule.
+                        row = self._child_source_from_ref(archive,header['id'],ref)
+                        if len(visible_rows([row],cutoff_ns=states[child_id]['header']['payload']['cutoff_ns'],namespace=archive.scope,_decoded=True))!=1:
+                            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                elif source[4]:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                value = (child_id,ordinal,index,dep,ref['table'],ref['id'],ref['payload_hash'],ref['source_hash'],
+                         reference_text(member,ref),int(replay),rank,available,projection.get('admission_id'),projection.get('publication_id'))
+                expected.append(value)
+                total += 1
+            if write:
+                self.db.executemany('''INSERT INTO intraday_frozen_child_refs(set_id,child_id,block_ordinal,record_ordinal,dependency_ordinal,
+                    source_table,source_id,payload_hash,source_hash,reference_json,replay,rank_available,available,admission_id,publication_id)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',((header['id'],*value) for value in expected))
+            else:
+                actual = [tuple(row) for row in self.db.execute('''SELECT child_id,block_ordinal,record_ordinal,dependency_ordinal,
+                    source_table,source_id,payload_hash,source_hash,reference_json,replay,rank_available,available,admission_id,publication_id
+                    FROM intraday_frozen_child_refs WHERE set_id=? AND block_ordinal=? ORDER BY record_ordinal,dependency_ordinal''',
+                    (header['id'],ordinal))]
+                if actual!=expected:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if self.db.execute('SELECT COUNT(*) FROM intraday_frozen_child_refs WHERE set_id=?',(header['id'],)).fetchone()[0]!=total:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if metadata_seen!=header.get('metadata_chunks',0):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        if not write:
+            # Source bindings were checked against fresh bounded source blocks
+            # in validate_inputs; this pass binds each index row to its child.
+            metadata = self.db.execute('''SELECT c.child_id,c.reference_json FROM intraday_frozen_source_refs s
+                CROSS JOIN intraday_frozen_child_refs c ON c.set_id=s.set_id AND c.source_table=s.source_table AND c.source_id=s.source_id
+                WHERE s.set_id=? AND s.metadata_scope=1 AND c.replay=1''',(header['id'],))
+            for child_id,text in metadata:
+                row = self._child_source_from_ref(archive,header['id'],json.loads(text))
+                if len(visible_rows([row],cutoff_ns=states[child_id]['header']['payload']['cutoff_ns'],namespace=archive.scope,_decoded=True))!=1:
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        for state in states.values():
+            manifest = state['header']['payload']
+            if (state['hash'].hexdigest()!=state['header']['digest'] or state['members']!=state['header']['member_count']
+                or state['members']!=manifest['typed_member_count'] or state['replay']!=manifest['timeline_count']
+                or state['audit']!=manifest['audit_member_count']
+                or state['pub']['payload']['durable_at_ns']<max(state['latest'],manifest['cutoff_ns'])
+                or state['pub']['payload']['durable_at_ns']>state['pub']['available_at_ns']):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+
+    def _child_source_from_ref(self,archive,set_id,ref):
+        row = archive._source(set_id,ref['table'],ref['id'],projected=False)
+        row.update(ref['projection'])
+        row['table'] = ref['table']
+        return row
+
+    def _open_sealed_bundle(self,archive,found):
+        from backend.app.intraday.frozen_blocks import BlockTimeline
+        signature = self.snapshots._read_signature()
+        header,seal = found
+        body = header['payload']
+        metadata = self._read_bundle_metadata(header['subject_id'],frozen=body['bundle_metadata'])
+        evidence = metadata['evidence']
+        if (body['digest']!=metadata['header']['bundle_digest'] or _json(body['manifest'])!=_json(evidence['quality_manifest'])
+            or _json(body['report'])!=_json(evidence['report']) or body['known_at_ns']!=metadata['seal']['recorded_at_ns']
+            or body['timeline_count']!=evidence['timeline_count']):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        counts = self._parallel_bundle(archive,found)
+        if counts is None:
+            counts = archive.validate_inputs(found)
+            self._child_members(archive,header,evidence,body['child_documents'],archive._read_blocks(header,seal,'CHILD'))
+            self._bundle_closure(archive,header)
+        if counts['replay']!=body['timeline_count']:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        timeline = BlockTimeline(archive,header,seal,signature,10_000,8_388_608)
+        timeline.validator = lambda:self.open_bundle(header['subject_id'])
+        result = ValidatedBundle(header['subject_id'],body['digest'],body['manifest'],body['report'],timeline,body['known_at_ns'])
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return result
+
+    def _bundle_closure(self,archive,header):
+        missing = self.db.execute('''SELECT 1 FROM intraday_frozen_child_refs src
+            LEFT JOIN intraday_frozen_child_refs edge ON edge.set_id=src.set_id AND edge.child_id=src.child_id
+                AND edge.source_table='intraday_capture_events' AND edge.source_id=src.admission_id
+            LEFT JOIN intraday_frozen_locators receipt ON receipt.set_id=src.set_id
+                AND receipt.source_table='intraday_capture_events' AND receipt.source_id=src.admission_id
+            WHERE src.set_id=? AND src.replay=1 AND src.admission_id IS NOT NULL AND (edge.source_id IS NULL OR receipt.kind!='ADMISSION'
+                OR receipt.admitted_table IS NOT src.source_table OR receipt.admitted_id IS NOT src.source_id
+                OR receipt.admitted_hash IS NOT src.payload_hash) LIMIT 1''',(header['id'],)).fetchone()
+        if missing:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        rare = self.db.execute('''SELECT c.child_id,c.source_table,c.source_id FROM intraday_frozen_source_refs s
+            CROSS JOIN intraday_frozen_child_refs c ON c.set_id=s.set_id AND c.source_table=s.source_table AND c.source_id=s.source_id
+            WHERE s.set_id=? AND s.needs_closure=1 AND c.replay=1
+            UNION SELECT child_id,source_table,source_id FROM intraday_frozen_child_refs
+            WHERE set_id=? AND replay=1 AND publication_id IS NOT NULL''',(header['id'],header['id']))
+        for child_id,table,source_id in rare:
+            row = self._child_source(archive,header['id'],child_id,table,source_id)
+            self.snapshots._row_closure(child_id,row,require=lambda target,target_id,payload_hash=None,child_id=child_id:
+                self._child_source(archive,header['id'],child_id,target,target_id,payload_hash))
+
+    def _worker_request(self,header,seal,path):
+        return {'path':str(path),'profile':asdict(self.snapshots.store.profile),
+            'public_profile':self.snapshots.archive.public_profile,'namespace':list(self.snapshots.store.namespace),
+            'limits':{name:getattr(self.snapshots.archive.settings,name) for name in ('alpaca_max_symbols','alpaca_max_archive_bytes')},
+            'bundle_id':header['subject_id'],'set_id':header['id'],'header_hash':header['payload_hash'],
+            'root':seal['root'],'digest':header['payload']['digest']}
+
+    def _parallel_bundle(self,archive,found):
+        """Two provisional read passes; accept only their joint, fenced result."""
+        from pathlib import Path
+
+        from backend.app.intraday.frozen_blocks import _NATIVE
+        from backend.app.intraday.snapshots import _local_peak_rss_bytes
+        header,seal = found
+        if (self.db.in_transaction or seal['counts'].get('MEMBER',0)<100_000 or _NATIVE is None
+            or any(value not in (None,'') for _,value in self.snapshots._secret_fields())
+            or _local_peak_rss_bytes()>536_870_912):
+            return None
+        path = next((row[2] for row in self.db.execute('PRAGMA database_list') if row[1]=='main'),None)
+        if not path:
+            return None
+        request = self._worker_request(header,seal,Path(path).resolve())
+        return self._run_bundle_workers(request)
+
+    def _run_bundle_workers(self,request):
+        import os
+        import subprocess
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+
+        from backend.app.intraday.snapshots import _record_worker_peaks
+        message = _json(request)
+        if len(message.encode())>1_048_576:
+            raise SnapshotError('RESOURCE_LIMIT')
+        # No application environment or sensitive inventory is copied to a
+        # worker. Its store has no provider/client and its SQLite is mode=ro.
+        environment = {name:value for name in ('SYSTEMROOT','WINDIR','TEMP','TMP') if (value:=os.environ.get(name))}
+        environment.update(PYTHON_DOTENV_DISABLED='1',PYTHONDONTWRITEBYTECODE='1',PYTHONUTF8='1',INVESTEDGE_DB_PATH=':memory:')
+        def run(role):
+            try:
+                completed = subprocess.run([sys.executable,'-B','-m',__name__,'--validate-worker',role],
+                    input=message,text=True,encoding='utf-8',stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                    cwd=Path(__file__).resolve().parents[3],env=environment,timeout=120,check=False,
+                    creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                value = json.loads(completed.stdout)
+                if completed.returncode or value.get('validated') is not True:
+                    if value.get('error')=='RESOURCE_LIMIT':
+                        raise SnapshotError('RESOURCE_LIMIT')
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                if (value.get('network_attempts')!=0 or value.get('changes')!=0
+                    or type(value.get('peak_rss_bytes')) is not int or not 0<value['peak_rss_bytes']<=536_870_912):
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                return value
+            except SnapshotError:
+                raise
+            except (OSError,ValueError,subprocess.TimeoutExpired):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(run,role) for role in ('SOURCES','CHILDREN')]
+            results = [future.result() for future in futures]
+        _record_worker_peaks([result['peak_rss_bytes'] for result in results])
+        return results[0]['counts']
 
     def _bundle_count(self, bundle_id):
         # All child references have already passed full validation. Counting
@@ -264,6 +641,16 @@ class DatasetService:
 
     def open_bundle(self, bundle_id):
         try:
+            from backend.app.intraday.frozen_blocks import FrozenBlocks
+            integer(bundle_id,positive=True)
+            signature = self.snapshots._read_signature()
+            archive = FrozenBlocks(self.snapshots)
+            found = archive.find('BUNDLE',bundle_id)
+            if found is not None:
+                result = self._open_sealed_bundle(archive,found)
+                if signature!=self.snapshots._read_signature():
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                return result
             return self._open_bundle(bundle_id)
         except SnapshotError:
             raise
@@ -272,11 +659,35 @@ class DatasetService:
 
     def _open_bundle(self, bundle_id):
         signature = self.snapshots._read_signature()
+        metadata = self._read_bundle_metadata(bundle_id)
+        evidence = metadata['evidence']
+        request = DatasetBundle(tuple(DatasetChild(**child) for child in evidence['children']),
+            ResearchNamespace(*evidence['namespace']),evidence['resources']['max_disk_bytes'],evidence['resources']['min_free_bytes'])
+        self._children(request)
+        count = self._bundle_count(bundle_id)
+        if count!=evidence['timeline_count']:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        manifest = evidence['quality_manifest']
+        timeline = FrozenTimeline(self.snapshots,bundle_id,manifest,count,refs_sql=_BUNDLE_REFS,
+                                  links=lambda news_id:self._links(bundle_id,news_id),_signature=signature,
+                                  _order_refs_sql=_BUNDLE_ORDER_REFS)
+        timeline.validator = lambda:self.open_bundle(bundle_id)
+        result = ValidatedBundle(bundle_id,metadata['header']['bundle_digest'],manifest,evidence['report'],timeline,
+                                 metadata['seal']['recorded_at_ns'])
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return result
+
+    def _read_bundle_metadata(self, bundle_id, *, frozen=None):
+        """Validate original metadata, without constructing a data handle."""
+        signature = self.snapshots._read_signature()
         integer(bundle_id,positive=True)
         scope = (self.snapshots.store.profile.profile_id,self.snapshots.store.profile.feed,*self.snapshots.store.namespace[1:])
-        header = decode_row(self.db.execute('SELECT * FROM intraday_research_dataset_bundles WHERE id=?',(bundle_id,)).fetchone())
+        header = decode_row(frozen['header'] if frozen is not None else
+            self.db.execute('SELECT * FROM intraday_research_dataset_bundles WHERE id=?',(bundle_id,)).fetchone())
         fields = ('profile_id','feed','data_mode','provenance','replay_grade')
-        if tuple(header[key] for key in fields) != scope:
+        integer(header['id'],positive=True)
+        if header['id']!=bundle_id or tuple(header[key] for key in fields) != scope:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         proof = header['payload']
         integer(header['recorded_at_ns'])
@@ -288,25 +699,27 @@ class DatasetService:
             or type(proof['chunk_count']) is not int or not 1<=proof['chunk_count']<=1_343
             or type(proof['created_at_ns']) is not int or proof['created_at_ns']!=header['recorded_at_ns']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        seal = decode_row(self.db.execute('SELECT * FROM intraday_research_bundle_seals WHERE bundle_id=?',(bundle_id,)).fetchone())
+        seal = decode_row(frozen['seal'] if frozen is not None else
+            self.db.execute('SELECT * FROM intraday_research_bundle_seals WHERE bundle_id=?',(bundle_id,)).fetchone())
         integer(seal['recorded_at_ns'])
         publication = seal['payload']
-        if (tuple(seal[key] for key in fields)!=scope or seal['recorded_at_ns']<header['recorded_at_ns']
+        if (seal['bundle_id']!=bundle_id or tuple(seal[key] for key in fields)!=scope or seal['recorded_at_ns']<header['recorded_at_ns']
             or seal['schema_version']!=header['schema_version']
             or publication.get('version')!='intraday-bundle-publication-v1' or publication.get('complete') is not True
             or type(publication['bundle_id']) is not int or publication['bundle_id']!=bundle_id
             or publication['header_hash']!=header['payload_hash'] or publication['digest']!=header['bundle_digest']
             or type(publication['known_at_ns']) is not int or publication['known_at_ns']!=seal['recorded_at_ns']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        if self.db.execute('SELECT COUNT(*) FROM intraday_research_bundle_chunks WHERE bundle_id=?',(bundle_id,)).fetchone()[0]!=proof['chunk_count']:
+        if frozen is None and self.db.execute('SELECT COUNT(*) FROM intraday_research_bundle_chunks WHERE bundle_id=?',(bundle_id,)).fetchone()[0]!=proof['chunk_count']:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        chunks = list(self.db.execute('SELECT * FROM intraday_research_bundle_chunks WHERE bundle_id=? ORDER BY ordinal',(bundle_id,)))
+        chunks = frozen['chunks'] if frozen is not None else list(self.db.execute('SELECT * FROM intraday_research_bundle_chunks WHERE bundle_id=? ORDER BY ordinal',(bundle_id,)))
         if len(chunks) != header['payload']['chunk_count'] or seal['bundle_digest'] != header['bundle_digest']:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         texts, size = [], 0
         for ordinal, raw in enumerate(chunks,1):
             chunk = decode_row(raw)
-            if (chunk['ordinal'] != ordinal or tuple(chunk[key] for key in fields) != scope
+            integer(chunk['ordinal'],positive=True)
+            if (chunk['bundle_id']!=bundle_id or chunk['ordinal'] != ordinal or tuple(chunk[key] for key in fields) != scope
                 or chunk['recorded_at_ns'] != header['recorded_at_ns'] or chunk['schema_version']!=header['schema_version']
                 or chunk['payload'].get('version')!='intraday-bundle-chunk-v1' or type(chunk['payload']['text']) is not str):
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
@@ -320,14 +733,15 @@ class DatasetService:
         if (evidence.get('version')!='intraday-dataset-bundle-v1' or _json(evidence)!=encoded
             or _hash(evidence) != header['bundle_digest'] or evidence['namespace'] != list(scope)):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        if self.db.execute('SELECT COUNT(*) FROM intraday_research_bundle_children WHERE bundle_id=?',(bundle_id,)).fetchone()[0]!=proof['child_count']:
+        if frozen is None and self.db.execute('SELECT COUNT(*) FROM intraday_research_bundle_children WHERE bundle_id=?',(bundle_id,)).fetchone()[0]!=proof['child_count']:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        children = list(self.db.execute('SELECT * FROM intraday_research_bundle_children WHERE bundle_id=? ORDER BY ordinal',(bundle_id,)))
+        children = frozen['children'] if frozen is not None else list(self.db.execute('SELECT * FROM intraday_research_bundle_children WHERE bundle_id=? ORDER BY ordinal',(bundle_id,)))
         if len(children) != header['child_count'] or len(children) != len(evidence['children']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         for ordinal, (raw,expected) in enumerate(zip(children,evidence['children'],strict=True),1):
             child = decode_row(raw)
-            if (child['payload'] != expected or child['ordinal'] != ordinal or child['snapshot_id'] != expected['snapshot_id']
+            integer(child['ordinal'],positive=True)
+            if (child['bundle_id']!=bundle_id or child['payload'] != expected or child['ordinal'] != ordinal or child['snapshot_id'] != expected['snapshot_id']
                 or child['dataset_digest'] != expected['digest'] or tuple(child[key] for key in fields) != scope
                 or child['recorded_at_ns']!=header['recorded_at_ns'] or child['schema_version']!=header['schema_version']
                 or expected['known_at_ns']>header['recorded_at_ns']):
@@ -339,7 +753,6 @@ class DatasetService:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         request = DatasetBundle(tuple(DatasetChild(**child) for child in evidence['children']),ResearchNamespace(*scope),
             evidence['resources']['max_disk_bytes'],evidence['resources']['min_free_bytes'])
-        self._children(request)
         manifest = evidence['quality_manifest']
         validate_manifest(manifest)
         if (manifest['version']!='intraday-bundle-quality-v1' or manifest['selection']!='bundle-exact-union-v1'
@@ -350,21 +763,16 @@ class DatasetService:
             or manifest['end_at_ns']!=max(child.end_at_ns for child in request.children)
             or manifest['cutoff_ns']!=max(child.cutoff_ns for child in request.children)):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        count = self._bundle_count(bundle_id)
-        if count != evidence['timeline_count']:
-            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        integer(evidence['timeline_count'])
         candidates = tuple(value for name,value in self.snapshots._secret_fields() if isinstance(value,str) and value)
         if candidates and SafeProviderTransport._payload_contains_secret(
             {'evidence':evidence,'digest':header['bundle_digest']},candidates):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        timeline = FrozenTimeline(self.snapshots,bundle_id,manifest,count,refs_sql=_BUNDLE_REFS,
-                                  links=lambda news_id:self._links(bundle_id,news_id),_signature=signature,
-                                  _order_refs_sql=_BUNDLE_ORDER_REFS)
-        timeline.validator = lambda:self.open_bundle(bundle_id)
-        result = ValidatedBundle(bundle_id,header['bundle_digest'],manifest,evidence['report'],timeline,seal['recorded_at_ns'])
         if signature!=self.snapshots._read_signature():
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        return result
+        return {'header':{key:value for key,value in header.items() if key!='payload'},
+                'seal':{key:value for key,value in seal.items() if key!='payload'},
+                'chunks':[dict(row) for row in chunks],'children':[dict(row) for row in children],'evidence':evidence}
 
 
 @dataclass(frozen=True)
@@ -383,3 +791,85 @@ class DatasetBundle:
             or len({child.snapshot_id for child in self.children}) != len(self.children)
             or tuple(sorted(self.children, key=lambda child: (child.start_at_ns, child.end_at_ns, child.snapshot_id))) != self.children):
             raise ValueError("BUNDLE_INVALID")
+
+
+def _read_bundle_worker(request,role):
+    """Private provisional validation. Never returns a timeline or source row."""
+    from contextlib import ExitStack
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from backend.app.intraday.contracts import FeedProfile, canonical_json
+    from backend.app.intraday.frozen_blocks import FrozenBlocks
+    from backend.app.intraday.snapshots import SnapshotService, _peak_rss_bytes
+    attempts = 0
+    def deny(*args,**kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise MetadataError('WORKER_NETWORK_FORBIDDEN')
+    with ExitStack() as stack:
+        for target in ('socket.socket','socket.create_connection','socket.getaddrinfo','_socket.socket'):
+            stack.enter_context(patch(target,deny))
+        path = Path(request['path'])
+        if not path.is_absolute() or role not in {'SOURCES','CHILDREN'}:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        db = sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+        stack.callback(db.close)
+        db.row_factory = sqlite3.Row
+        allowed = {sqlite3.SQLITE_SELECT,sqlite3.SQLITE_READ,sqlite3.SQLITE_FUNCTION,sqlite3.SQLITE_RECURSIVE}
+        def authorize(action,first,second,*args):
+            if action==sqlite3.SQLITE_PRAGMA:
+                return sqlite3.SQLITE_OK if first in {'data_version','schema_version','database_list'} and second is None else sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK if action in allowed else sqlite3.SQLITE_DENY
+        db.set_authorizer(authorize)
+        profile = dict(request['profile'])
+        for key in ('required_capabilities','attested_capabilities','quote_conditions'):
+            profile[key] = tuple(profile[key])
+        profile = FeedProfile(**profile)
+        archive = SimpleNamespace(settings=SimpleNamespace(**request['limits']),public_profile=request['public_profile'],safe_json=canonical_json)
+        store = SimpleNamespace(profile=profile,namespace=tuple(request['namespace']),archive=archive,connection=db,write_guard=None)
+        reader = SnapshotService(store)
+        reader._validation_rss_limit = 536_870_912
+        signature = reader._read_signature()
+        blocks = FrozenBlocks(reader)
+        found = blocks.find('BUNDLE',request['bundle_id'])
+        if found is None:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        header,seal = found
+        if (header['id']!=request['set_id'] or header['payload_hash']!=request['header_hash']
+            or seal['root']!=request['root'] or header['payload']['digest']!=request['digest']):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        result = {'validated':True}
+        if role=='SOURCES':
+            result['counts'] = blocks.validate_inputs(found)
+        else:
+            research = DatasetService(reader)
+            metadata = research._read_bundle_metadata(header['subject_id'],frozen=header['payload']['bundle_metadata'])
+            research._child_members(blocks,header,metadata['evidence'],header['payload']['child_documents'],blocks._read_blocks(header,seal,'CHILD'))
+            research._bundle_closure(blocks,header)
+        if signature!=reader._read_signature() or attempts or db.total_changes:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        result.update(peak_rss_bytes=_peak_rss_bytes(),network_attempts=attempts,changes=db.total_changes)
+        if result['peak_rss_bytes']>reader._validation_rss_limit:
+            raise SnapshotError('RESOURCE_LIMIT')
+        return result
+
+
+def _bundle_worker_entry():
+    import sys
+    try:
+        message = sys.stdin.buffer.read(1_048_577)
+        if len(message)>1_048_576 or len(sys.argv)!=3 or sys.argv[1]!='--validate-worker':
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        result = _read_bundle_worker(json.loads(message),sys.argv[2])
+    except Exception as error:
+        code = 'RESOURCE_LIMIT' if isinstance(error,SnapshotError) and str(error)=='RESOURCE_LIMIT' else 'SNAPSHOT_INPUT_MISSING'
+        print(_json({'validated':False,'error':code}),flush=True)
+        return 1
+    print(_json(result),flush=True)
+    return 0
+
+
+if __name__=='__main__':
+    raise SystemExit(_bundle_worker_entry())

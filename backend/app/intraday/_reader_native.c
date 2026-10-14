@@ -5,6 +5,7 @@
  */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 #ifdef _WIN32
@@ -49,7 +50,7 @@ static const char *names[FIELD_COUNT] = {
     "observation_id", "availability_floor_ns", "admission_id", "version"
 };
 typedef struct {
-    PyObject *keys[FIELD_COUNT]; PyObject *decoder, *decode_options, *sha256;
+    PyObject *keys[FIELD_COUNT]; PyObject *decoder, *encoder, *decode_options, *sha256;
     PyObject *admission_version;
     PyObject *sqlite_module,*connection_type,*sqlite_error;
     SqliteApi sqlite;
@@ -521,9 +522,15 @@ static PyObject *receipt_values(PyObject *module, PyObject *args) {
 }
 static PyObject *read_market(PyObject *module, PyObject *args) {
     PyObject *input,*source,*positions,*cutoff,*start,*end,*listings,*fallback,*check_ns,*store_error;
+    PyObject *packed=Py_None;
     int revisions;
-    if (!PyArg_ParseTuple(args,"OOOOOOOpOOO:read_market",&input,&source,&positions,&cutoff,&start,&end,
-        &listings,&revisions,&fallback,&check_ns,&store_error)) return NULL;
+    if (!PyArg_ParseTuple(args,"OOOOOOOpOOO|O:read_market",&input,&source,&positions,&cutoff,&start,&end,
+        &listings,&revisions,&fallback,&check_ns,&store_error,&packed)) return NULL;
+    if (packed!=Py_None && (!PyTuple_CheckExact(packed) || PyTuple_GET_SIZE(packed)!=3
+        || !PyUnicode_CheckExact(PyTuple_GET_ITEM(packed,0)) || !PyLong_CheckExact(PyTuple_GET_ITEM(packed,1))
+        || !PyTuple_CheckExact(PyTuple_GET_ITEM(packed,2)) || PyTuple_GET_SIZE(PyTuple_GET_ITEM(packed,2))!=5)) {
+        PyErr_SetString(PyExc_TypeError,"NATIVE_CURSOR_SHAPE"); return NULL;
+    }
     if (!PyTuple_CheckExact(source) || !PyTuple_CheckExact(positions) || PyTuple_GET_SIZE(positions)!=4) {
         PyErr_SetString(PyExc_TypeError,"NATIVE_CURSOR_SHAPE"); return NULL;
     }
@@ -545,14 +552,43 @@ static PyObject *read_market(PyObject *module, PyObject *args) {
     PyObject *raw=NULL,*proof_row=NULL,*item=NULL,*result=NULL;
     if (!iterator || !rows) goto done;
     while ((values=PyIter_Next(iterator))) {
-        if (!PyTuple_CheckExact(values) || PyTuple_GET_SIZE(values)!=n+4) {
+        if ((!PyTuple_CheckExact(values) && !PyList_CheckExact(values)) || PySequence_Fast_GET_SIZE(values)!=n+4) {
             PyErr_SetString(PyExc_TypeError,"NATIVE_CURSOR_SHAPE"); goto done;
+        }
+        if (packed!=Py_None) {
+            PyObject *proof_at=PySequence_Fast_GET_ITEM(values,proof_index[2]);
+            if (timestamp(proof_at)<0) goto done;
+            if (PyList_CheckExact(values)) {
+                PyObject *id=PySequence_Fast_GET_ITEM(values,proof_index[3]);
+                if (timestamp(id)<0) goto done;
+                int outside=PyObject_RichCompareBool(id,PyTuple_GET_ITEM(packed,1),Py_GT);
+                if (outside<0) goto done;
+                if (outside) { invalid("SNAPSHOT_INPUT_MISSING"); goto done; }
+            }
+            int visible=PyObject_RichCompareBool(proof_at,cutoff,Py_LE);
+            if (visible<0) goto done;
+            if (!visible) { Py_CLEAR(values); continue; }
         }
         raw=PyDict_New();
         if (!raw) goto done;
         for (Py_ssize_t i=0; i<n; i++)
-            if (PyDict_SetItem(raw,PyTuple_GET_ITEM(source,i),PyTuple_GET_ITEM(values,i))<0) goto done;
-        proof_row=receipt_fields(module,NULL,PyTuple_GET_ITEM(values,proof_index[0]),PyTuple_GET_ITEM(values,proof_index[1]),fallback);
+            if (PyDict_SetItem(raw,PyTuple_GET_ITEM(source,i),PySequence_Fast_GET_ITEM(values,i))<0) goto done;
+        if (packed!=Py_None) {
+            PyObject *kind=field(s,raw,KIND);
+            if (!kind) goto done;
+            int same=PyObject_RichCompareBool(kind,PyTuple_GET_ITEM(packed,0),Py_EQ);
+            if (same<0) goto done;
+            if (!same) { invalid("SNAPSHOT_INPUT_MISSING"); goto done; }
+            PyObject *expected_scope=PyTuple_GET_ITEM(packed,2);
+            for (int i=0; i<5; i++) {
+                PyObject *value=field(s,raw,i);
+                if (!value) goto done;
+                same=PyObject_RichCompareBool(value,PyTuple_GET_ITEM(expected_scope,i),Py_EQ);
+                if (same<0) goto done;
+                if (!same) { invalid("SNAPSHOT_INPUT_MISSING"); goto done; }
+            }
+        }
+        proof_row=receipt_fields(module,NULL,PySequence_Fast_GET_ITEM(values,proof_index[0]),PySequence_Fast_GET_ITEM(values,proof_index[1]),fallback);
         if (!proof_row) goto done;
         item=decode_owned(module,raw,fallback);
         if (!item) goto done;
@@ -569,7 +605,7 @@ static PyObject *read_market(PyObject *module, PyObject *args) {
         int early=PyObject_RichCompareBool(durable,persisted,Py_LT);
         if (same_id<0 || same_hash<0 || early<0) goto done;
         if (!same_id || !same_hash || early) { PyErr_SetString(store_error,"OBSERVATION_INVALID"); goto done; }
-        PyObject *at=PyTuple_GET_ITEM(values,proof_index[2]), *floor=field(s,item,FLOOR);
+        PyObject *at=PySequence_Fast_GET_ITEM(values,proof_index[2]), *floor=field(s,item,FLOOR);
         if (!floor) goto done;
         int later=PyObject_RichCompareBool(durable,at,Py_GT);
         if (later<0) goto done;
@@ -606,7 +642,7 @@ static PyObject *read_market(PyObject *module, PyObject *args) {
             PyObject *intake=PyDict_GetItemWithError(payload,s->keys[PAYLOAD_INTAKE]);
             if (PyErr_Occurred()) goto done;
             if (!intake) intake=ingest;
-            if (PyDict_SetItem(item,s->keys[ADMISSION],PyTuple_GET_ITEM(values,proof_index[3]))<0
+            if (PyDict_SetItem(item,s->keys[ADMISSION],PySequence_Fast_GET_ITEM(values,proof_index[3]))<0
                 || PyDict_SetItem(item,s->keys[INTAKE],intake)<0 || PyList_Append(rows,item)<0) goto done;
         }
         Py_CLEAR(values); Py_CLEAR(raw); Py_CLEAR(proof_row); Py_CLEAR(item);
@@ -850,10 +886,542 @@ unsupported:
     PyErr_SetString(PyExc_NotImplementedError,"NATIVE_ABI_UNSUPPORTED");
     return NULL;
 }
+/* Common single-source frozen members. Complex dependencies use the exact
+ * Python oracle. This path consumes only public DB-API decoded block values;
+ * it never calls the experimental SQLite/CPython cursor above.
+ */
+static PyObject *frozen_member(PyObject *module, PyObject *args) {
+    PyObject *record,*scope,*cutoff,*decode,*oracle,*manifest;
+    int with_raw=0;
+    if (!PyArg_ParseTuple(args,"OOOOOO|p:frozen_member",&record,&scope,&cutoff,&decode,&oracle,&manifest,&with_raw)) return NULL;
+    State *s=PyModule_GetState(module);
+    PyObject *member=NULL,*wrapper=NULL,*row=NULL,*item=NULL,*rows=NULL,*result=NULL,*current=NULL;
+    PyObject *raw_available=NULL,*raw_values=NULL;
+    PyObject *raw,*sources,*body,*reference,*dependencies,*replay,*table,*projection;
+    if (!PyList_CheckExact(record) || PyList_GET_SIZE(record)!=2 || !PyTuple_CheckExact(scope)
+        || PyTuple_GET_SIZE(scope)!=5) goto fallback;
+    raw=PyList_GET_ITEM(record,0); sources=PyList_GET_ITEM(record,1);
+    if (!PyDict_CheckExact(raw) || !PyList_CheckExact(sources) || PyList_GET_SIZE(sources)!=1) goto fallback;
+    member=decode_evidence_impl(module,raw,decode,0);
+    if (!member) goto done;
+    PyObject *member_stamp=field(s,member,PERSISTED),*member_run=PyDict_GetItemString(member,"ingest_run_id");
+    if (!member_run) goto fallback;
+    if (!member_stamp || timestamp(member_stamp)<0 || timestamp(member_run)<0) goto done;
+    body=field(s,member,PAYLOAD);
+    if (!body || !PyDict_CheckExact(body)) goto fallback;
+    reference=PyDict_GetItemString(body,"reference");
+    dependencies=PyDict_GetItemString(body,"dependencies");
+    replay=PyDict_GetItemString(body,"replay");
+    if (!reference || !PyDict_CheckExact(reference) || !dependencies || !PyList_CheckExact(dependencies)
+        || PyList_GET_SIZE(dependencies)!=0 || (replay!=Py_True && replay!=Py_False)) goto fallback;
+    table=PyDict_GetItemString(reference,"table");
+    projection=PyDict_GetItemString(reference,"projection");
+    if (!table || !PyUnicode_CheckExact(table) || !projection || !PyDict_CheckExact(projection)) goto fallback;
+    const char *name=PyUnicode_AsUTF8(table);
+    if (!name) goto done;
+    const char *member_kind,*column;
+    int capture=strcmp(name,"intraday_capture_events")==0;
+    if (strcmp(name,"intraday_observations")==0) { member_kind="OBSERVATION"; column="observation_id"; }
+    else if (capture) { member_kind="CAPTURE_EVENT"; column="capture_event_id"; }
+    else goto fallback;
+    PyObject *kind=PyDict_GetItemString(member,"member_kind");
+    PyObject *id=PyDict_GetItemString(reference,"id"), *typed=PyDict_GetItemString(member,column);
+    if (!kind || !PyUnicode_CheckExact(kind) || !id || !PyLong_CheckExact(id) || !typed || !PyLong_CheckExact(typed)
+        || PyUnicode_CompareWithASCIIString(kind,member_kind)!=0) goto fallback;
+    long long source_id=PyLong_AsLongLong(id);
+    if (PyErr_Occurred()) goto done;
+    if (source_id<=0 || PyObject_RichCompareBool(id,typed,Py_EQ)!=1) goto fallback;
+    current=namespace_of(s,member);
+    if (!current) goto done;
+    int same=PyObject_RichCompareBool(current,scope,Py_EQ);
+    Py_CLEAR(current);
+    if (same<0) goto done;
+    if (!same) goto fallback;
+    PyObject *source=PyList_GET_ITEM(sources,0);
+    if (!PyList_CheckExact(source) || PyList_GET_SIZE(source)!=2) goto fallback;
+    PyObject *header_text=PyList_GET_ITEM(source,0), *payload_text=PyList_GET_ITEM(source,1);
+    PyObject *source_hash=PyDict_GetItemString(reference,"source_hash"), *payload_hash=PyDict_GetItemString(reference,"payload_hash");
+    if (!PyUnicode_CheckExact(header_text) || !PyUnicode_CheckExact(payload_text) || !source_hash || !payload_hash) goto fallback;
+    /* The block reader has a stricter overall decoded budget. Keep the
+     * standalone native entry conservative too; large cases use the oracle.
+     */
+    if (PyUnicode_GET_LENGTH(header_text)+PyUnicode_GET_LENGTH(payload_text)>126976) goto fallback;
+    wrapper=PyDict_New();
+    if (!wrapper || PyDict_SetItem(wrapper,s->keys[PAYLOAD_JSON],header_text)<0
+        || PyDict_SetItem(wrapper,s->keys[PAYLOAD_HASH],source_hash)<0) goto done;
+    item=decode_owned(module,wrapper,decode);
+    if (!item) goto done;
+    PyObject *header=field(s,item,PAYLOAD);
+    if (!header || !PyDict_CheckExact(header)) goto fallback;
+    Py_ssize_t header_position=0; PyObject *header_key,*header_value;
+    unsigned required_stamps=0;
+    while (PyDict_Next(header,&header_position,&header_key,&header_value)) {
+        const char *name=PyUnicode_AsUTF8(header_key); if (!name) goto done;
+        size_t length=strlen(name);
+        unsigned required=strcmp(name,"received_at_ns")==0 ? 1 : strcmp(name,"persisted_at_ns")==0 ? 2
+            : strcmp(name,"ingest_sequence")==0 ? 4 : strcmp(name,"ingest_run_id")==0 ? 8 : 0;
+        required_stamps |= required;
+        int stamp=(length>=6 && strcmp(name+length-6,"_at_ns")==0)
+            || (length>=8 && strcmp(name+length-8,"_time_ns")==0)
+            || (length>=8 && strcmp(name+length-8,"_from_ns")==0)
+            || (length>=6 && strcmp(name+length-6,"_to_ns")==0)
+            || strcmp(name,"ingest_sequence")==0 || strcmp(name,"ingest_run_id")==0
+            || strcmp(name,"availability_floor_ns")==0;
+        if (stamp && (header_value!=Py_None || required) && timestamp(header_value)<0) goto done;
+    }
+    if (required_stamps!=15) goto fallback;
+    row=PyDict_Copy(header);
+    Py_CLEAR(item); Py_CLEAR(wrapper);
+    if (!row || PyDict_SetItem(row,s->keys[PAYLOAD_JSON],payload_text)<0) goto done;
+    item=decode_owned(module,row,decode);
+    if (!item) goto done;
+    if (with_raw) {
+        PyObject *available=field(s,item,AVAILABLE);
+        if (!available) goto done;
+        raw_available=Py_NewRef(available);
+    }
+    PyObject *raw_id=field(s,item,ID), *raw_hash=field(s,item,PAYLOAD_HASH), *raw_kind=field(s,item,KIND);
+    if (!raw_id || !raw_hash || !raw_kind || !PyLong_CheckExact(raw_id)) goto fallback;
+    if (PyObject_RichCompareBool(raw_id,id,Py_EQ)!=1 || PyObject_RichCompareBool(raw_hash,payload_hash,Py_EQ)!=1) goto fallback;
+    if (capture && (!PyUnicode_CheckExact(raw_kind) || PyUnicode_CompareWithASCIIString(raw_kind,"ADMISSION")!=0)) goto fallback;
+    const char *allowed[]={"available_at_ns","recorded_available_at_ns","admission_id","publication_id","publication_hash",
+        "capture_ingest_sequence","metadata_dependency","first_received_at_ns","table",NULL};
+    Py_ssize_t position=0; PyObject *key,*value;
+    while (PyDict_Next(projection,&position,&key,&value)) {
+        if (!PyUnicode_CheckExact(key)) goto fallback;
+        const char *key_text=PyUnicode_AsUTF8(key);
+        if (!key_text) goto done;
+        int permitted=0;
+        for (int i=0; allowed[i]; i++) if (strcmp(allowed[i],key_text)==0) { permitted=1; break; }
+        if (!permitted || (strcmp(key_text,"table")==0 && PyObject_RichCompareBool(value,table,Py_EQ)!=1)) goto fallback;
+    }
+    if (PyDict_Update(item,projection)<0 || PyDict_SetItemString(item,"table",table)<0) goto done;
+    current=namespace_of(s,item);
+    if (!current) goto done;
+    same=PyObject_RichCompareBool(current,scope,Py_EQ);
+    Py_CLEAR(current);
+    if (same<0) goto done;
+    if (!same) goto fallback;
+    if (replay==Py_True) {
+        PyObject *available=field(s,item,AVAILABLE), *received=field(s,item,RECEIVED);
+        PyObject *persisted=field(s,item,PERSISTED), *ingest=field(s,item,INGEST);
+        if (!available || !received || !persisted || !ingest || timestamp(available)<0 || timestamp(received)<0
+            || timestamp(persisted)<0 || timestamp(ingest)<0) goto done;
+        if (PyObject_RichCompareBool(available,cutoff,Py_GT)!=0 || PyObject_RichCompareBool(available,persisted,Py_LT)!=0
+            || PyObject_RichCompareBool(persisted,received,Py_LT)!=0) goto fallback;
+    }
+    rows=PyList_New(1);
+    if (!rows) goto done;
+    PyList_SET_ITEM(rows,0,Py_NewRef(item));
+    if (with_raw) {
+        raw_values=PyList_New(1);
+        if (!raw_values) goto done;
+        PyList_SET_ITEM(raw_values,0,Py_NewRef(raw_available));
+        result=PyTuple_Pack(3,member,rows,raw_values);
+    } else result=PyTuple_Pack(2,member,rows);
+    goto done;
+fallback:
+    if (!PyErr_Occurred()) result=(with_raw ? PyObject_CallFunctionObjArgs(oracle,record,manifest,Py_True,NULL)
+        : PyObject_CallFunctionObjArgs(oracle,record,manifest,NULL));
+done:
+    Py_XDECREF(member); Py_XDECREF(wrapper); Py_XDECREF(row); Py_XDECREF(item); Py_XDECREF(rows); Py_XDECREF(current);
+    Py_XDECREF(raw_available); Py_XDECREF(raw_values);
+    return result;
+}
+
+static PyObject *market_block(PyObject *module, PyObject *args) {
+    (void)module;
+    PyObject *rows,*kind,*listing;
+    Py_ssize_t kind_index,listing_index;
+    if (!PyArg_ParseTuple(args,"OnnOO:market_block",&rows,&kind_index,&listing_index,&kind,&listing)) return NULL;
+    if (!PyList_CheckExact(rows) || kind_index<0 || listing_index<0) {
+        invalid("SNAPSHOT_INPUT_MISSING"); return NULL;
+    }
+    for (Py_ssize_t i=0; i<PyList_GET_SIZE(rows); i++) {
+        PyObject *row=PyList_GET_ITEM(rows,i);
+        if (!PyList_CheckExact(row) || kind_index>=PyList_GET_SIZE(row) || listing_index>=PyList_GET_SIZE(row)) {
+            invalid("SNAPSHOT_INPUT_MISSING"); return NULL;
+        }
+        PyObject *actual_kind=PyList_GET_ITEM(row,kind_index), *actual_listing=PyList_GET_ITEM(row,listing_index);
+        if (Py_TYPE(actual_kind)!=Py_TYPE(kind) || Py_TYPE(actual_listing)!=Py_TYPE(listing)) {
+            invalid("SNAPSHOT_INPUT_MISSING"); return NULL;
+        }
+        int same_kind=PyObject_RichCompareBool(actual_kind,kind,Py_EQ);
+        int same_listing=PyObject_RichCompareBool(actual_listing,listing,Py_EQ);
+        if (same_kind<0 || same_listing<0) return NULL;
+        if (!same_kind || !same_listing) { invalid("SNAPSHOT_INPUT_MISSING"); return NULL; }
+    }
+    Py_RETURN_NONE;
+}
+
+/* A conservative faster output digest for the common ASCII market envelopes.
+ * Source payload bytes must also match the native encoder exactly; otherwise
+ * the Python canonical encoder remains the oracle (Unicode, exponents, etc.).
+ */
+static int printable_ascii(PyObject *value) {
+    if (!PyUnicode_CheckExact(value) || !PyUnicode_IS_ASCII(value)) return 0;
+    Py_ssize_t size=PyUnicode_GET_LENGTH(value);
+    const unsigned char *text=PyUnicode_1BYTE_DATA(value);
+    for (Py_ssize_t i=0; i<size; i++) if (text[i]<32 || text[i]>126) return 0;
+    return 1;
+}
+static PyObject *frozen_binding(PyObject *module, PyObject *args) {
+    PyObject *row,*replay;
+    if (!PyArg_ParseTuple(args,"OO:frozen_binding",&row,&replay)) return NULL;
+    if (!PyDict_CheckExact(row) || (replay!=Py_True && replay!=Py_False)) Py_RETURN_NOTIMPLEMENTED;
+    State *s=PyModule_GetState(module);
+    PyObject *table=PyDict_GetItemString(row,"table"), *kind=PyDict_GetItemWithError(row,s->keys[KIND]);
+    if (!table || !PyUnicode_CheckExact(table) || !kind || !PyUnicode_CheckExact(kind)) Py_RETURN_NOTIMPLEMENTED;
+    int capture=PyUnicode_CompareWithASCIIString(table,"intraday_capture_events")==0;
+    if (PyUnicode_CompareWithASCIIString(table,"intraday_observations")!=0
+        && !(capture && PyUnicode_CompareWithASCIIString(kind,"ADMISSION")==0)) Py_RETURN_NOTIMPLEMENTED;
+    PyObject *payload=PyDict_GetItemWithError(row,s->keys[PAYLOAD]);
+    PyObject *payload_text=PyDict_GetItemWithError(row,s->keys[PAYLOAD_JSON]);
+    if (!payload || !PyDict_CheckExact(payload) || !payload_text || !printable_ascii(payload_text)) Py_RETURN_NOTIMPLEMENTED;
+    PyObject *target_table=Py_NewRef(Py_None), *target_id=Py_None,*admitted_hash=Py_None;
+    PyObject *encoded=NULL,*output=NULL,*ordered=NULL,*keys=NULL,*digest=NULL,*hex=NULL,*result=NULL;
+    if (capture) {
+        const char *columns[]={"observation_id","news_version_id","event_version_id"};
+        const char *tables[]={"intraday_observations","intraday_news_versions","intraday_event_versions"};
+        int count=0;
+        for (int i=0; i<3; i++) {
+            PyObject *value=PyDict_GetItemString(row,columns[i]);
+            if (value && value!=Py_None) {
+                ++count; target_id=value;
+                Py_SETREF(target_table,PyUnicode_FromString(tables[i]));
+                if (!target_table) goto done;
+            }
+        }
+        if (count!=1) goto unsupported;
+        admitted_hash=PyDict_GetItemWithError(payload,s->keys[PAYLOAD_HASH]);
+        if (!admitted_hash) goto unsupported;
+    }
+    Py_ssize_t position=0; PyObject *key,*value;
+    while (PyDict_Next(row,&position,&key,&value)) {
+        if (!printable_ascii(key)) goto unsupported;
+        if (value==payload) continue;
+        if (!(value==Py_None || PyBool_Check(value) || PyLong_CheckExact(value) || printable_ascii(value))) goto unsupported;
+    }
+    encoded=PyObject_CallOneArg(s->encoder,payload);
+    if (!encoded) goto done;
+    Py_ssize_t size; const char *text=PyUnicode_AsUTF8AndSize(payload_text,&size);
+    if (!text) goto done;
+    if (!PyBytes_CheckExact(encoded) || PyBytes_GET_SIZE(encoded)!=size
+        || memcmp(PyBytes_AS_STRING(encoded),text,(size_t)size)!=0) goto unsupported;
+    output=PyDict_Copy(row);
+    if (!output) goto done;
+    if (PyDict_GetItemWithError(output,s->keys[CAPTURE_ORDER]) && PyDict_DelItem(output,s->keys[CAPTURE_ORDER])<0) goto done;
+    keys=PyDict_Keys(output);
+    if (!keys || PyList_Sort(keys)<0) goto done;
+    ordered=PyDict_New();
+    if (!ordered) goto done;
+    for (Py_ssize_t i=0; i<PyList_GET_SIZE(keys); i++) {
+        key=PyList_GET_ITEM(keys,i); value=PyDict_GetItemWithError(output,key);
+        if (!value || PyDict_SetItem(ordered,key,value)<0) goto done;
+    }
+    Py_CLEAR(encoded);
+    encoded=PyObject_CallOneArg(s->encoder,ordered);
+    if (!encoded) goto done;
+    digest=PyObject_CallOneArg(s->sha256,encoded);
+    if (!digest) goto done;
+    hex=PyObject_CallMethod(digest,"hexdigest",NULL);
+    if (!hex) goto done;
+    result=PyTuple_New(16);
+    if (!result) goto done;
+    PyObject *admission=PyDict_GetItemWithError(row,s->keys[ADMISSION]);
+    PyObject *publication=PyDict_GetItemString(row,"publication_id");
+    PyObject *id=field(s,row,ID), *hash=field(s,row,PAYLOAD_HASH), *available=field(s,row,AVAILABLE);
+    PyObject *received=field(s,row,RECEIVED), *capture_id=field(s,row,CAPTURE), *ingest=field(s,row,INGEST);
+    if (!id || !hash || !available || !received || !capture_id || !ingest) { Py_CLEAR(result); goto done; }
+    PyObject *proof=admission ? admission : publication ? publication : id;
+    PyObject *intake=PyDict_GetItemWithError(row,s->keys[INTAKE]);
+    if (!intake) intake=PyDict_GetItemWithError(payload,s->keys[PAYLOAD_INTAKE]);
+    if (!intake) intake=ingest;
+    PyObject *fields[]={table,id,hash,admission ? admission : Py_None,target_table,target_id,admitted_hash,kind,
+        NULL,replay==Py_True ? hex : Py_None,available,received,capture_id,proof,intake,ingest};
+    for (int i=0; i<16; i++) {
+        PyObject *item=i==8 ? PyLong_FromLong(replay==Py_True) : Py_NewRef(fields[i]);
+        if (!item) { Py_CLEAR(result); goto done; }
+        PyTuple_SET_ITEM(result,i,item);
+    }
+    goto done;
+unsupported:
+    result=Py_NewRef(Py_NotImplemented);
+done:
+    Py_XDECREF(target_table); Py_XDECREF(encoded); Py_XDECREF(output); Py_XDECREF(ordered);
+    Py_XDECREF(keys); Py_XDECREF(digest); Py_XDECREF(hex);
+    return result;
+}
+
+static PyObject *frozen_inputs(PyObject *module, PyObject *args) {
+    PyObject *records,*scope,*manifest,*ordinal,*run,*hasher,*decode,*oracle,*bind;
+    int facts;
+    if (!PyArg_ParseTuple(args,"OOOOpOOOOO:frozen_inputs",&records,&scope,&manifest,&ordinal,&facts,&run,&hasher,&decode,&oracle,&bind)) return NULL;
+    if (!PyList_CheckExact(records) || PyList_GET_SIZE(records)>1000 || timestamp(ordinal)<0) {
+        invalid("SNAPSHOT_INPUT_MISSING"); return NULL;
+    }
+    State *s=PyModule_GetState(module);
+    PyObject *expected=PyList_New(0),*expected_facts=PyList_New(0),*complex=PyList_New(0),*texts=PyList_New(0);
+    PyObject *decoded=NULL,*binding=NULL,*member_args=NULL,*binding_args=NULL,*reference_text=NULL,*item=NULL,*result=NULL;
+    PyObject *cutoff=PyDict_GetItemString(manifest,"cutoff_ns");
+    if (!expected || !expected_facts || !complex || !texts || !cutoff) goto done;
+    long long latest=0, replay_count=0,audit_count=0;
+    for (Py_ssize_t i=0; i<PyList_GET_SIZE(records); i++) {
+        PyObject *record=PyList_GET_ITEM(records,i);
+        if (!PyList_CheckExact(record) || PyList_GET_SIZE(record)!=2
+            || !PyList_CheckExact(PyList_GET_ITEM(record,1)) || PyList_GET_SIZE(PyList_GET_ITEM(record,1))!=1) goto unsupported;
+        member_args=PyTuple_Pack(7,record,scope,cutoff,decode,oracle,manifest,facts ? Py_True : Py_False);
+        if (!member_args) goto done;
+        decoded=frozen_member(module,member_args); Py_CLEAR(member_args);
+        if (!decoded) goto done;
+        if (!PyTuple_CheckExact(decoded) || PyTuple_GET_SIZE(decoded)!=(facts ? 3 : 2)) goto bad_input;
+        PyObject *member=PyTuple_GET_ITEM(decoded,0),*rows=PyTuple_GET_ITEM(decoded,1);
+        if (!PyDict_CheckExact(member)) goto bad_input;
+        if (!PyList_CheckExact(rows) || PyList_GET_SIZE(rows)!=1) goto unsupported;
+        PyObject *body=field(s,member,PAYLOAD),*persisted=field(s,member,PERSISTED),*member_run=PyDict_GetItemString(member,"ingest_run_id");
+        if (!body || !PyDict_CheckExact(body) || !persisted || !member_run || timestamp(persisted)<0) goto bad_input;
+        PyObject *dependencies=PyDict_GetItemString(body,"dependencies"),*ref=PyDict_GetItemString(body,"reference"),*replay=PyDict_GetItemString(body,"replay");
+        if (PyDict_Size(body)!=3 || !dependencies || !PyList_CheckExact(dependencies) || PyList_GET_SIZE(dependencies)!=0) goto unsupported;
+        if (run!=Py_None && PyObject_RichCompareBool(run,member_run,Py_EQ)!=1) goto bad_input;
+        long long stamp=PyLong_AsLongLong(persisted); if (PyErr_Occurred()) goto done;
+        if (stamp>latest) latest=stamp;
+        PyObject *text=field(s,member,PAYLOAD_JSON),*row=PyList_GET_ITEM(rows,0);
+        if (!text || !ref || !replay || PyList_Append(texts,text)<0) goto done;
+        binding_args=PyTuple_Pack(2,row,replay); if (!binding_args) goto done;
+        binding=frozen_binding(module,binding_args); Py_CLEAR(binding_args);
+        if (!binding) goto done;
+        if (binding==Py_NotImplemented) {
+            Py_CLEAR(binding); binding=PyObject_CallFunctionObjArgs(bind,row,replay,NULL); if (!binding) goto done;
+        }
+        if (!PyTuple_CheckExact(binding) || PyTuple_GET_SIZE(binding)!=16) goto bad_input;
+        PyObject *index=PyLong_FromSsize_t(i),*dep=PyLong_FromLong(-1);
+        if (!index || !dep) { Py_XDECREF(index); Py_XDECREF(dep); goto done; }
+        item=PyTuple_New(19);
+        if (!item) { Py_DECREF(index); Py_DECREF(dep); goto done; }
+        PyTuple_SET_ITEM(item,0,Py_NewRef(PyTuple_GET_ITEM(binding,0)));
+        PyTuple_SET_ITEM(item,1,Py_NewRef(PyTuple_GET_ITEM(binding,1)));
+        PyTuple_SET_ITEM(item,2,Py_NewRef(ordinal)); PyTuple_SET_ITEM(item,3,index); PyTuple_SET_ITEM(item,4,dep);
+        for (int n=2; n<16; n++) PyTuple_SET_ITEM(item,n+3,Py_NewRef(PyTuple_GET_ITEM(binding,n)));
+        if (PyList_Append(expected,item)<0) goto done;
+        Py_CLEAR(item);
+        PyObject *table=PyTuple_GET_ITEM(binding,0),*kind=PyTuple_GET_ITEM(binding,7),*payload=field(s,row,PAYLOAD);
+        int common=PyUnicode_CompareWithASCIIString(table,"intraday_observations")==0
+            || (PyUnicode_CompareWithASCIIString(table,"intraday_capture_events")==0 && PyUnicode_CompareWithASCIIString(kind,"ADMISSION")==0);
+        PyObject *publication=PyDict_GetItemString(row,"publication_id"),*orphan=payload ? PyDict_GetItemString(payload,"orphan_raw_proof") : NULL;
+        int orphan_present=orphan ? PyObject_IsTrue(orphan) : 0; if (orphan_present<0) goto done;
+        PyObject *metadata_kind=payload ? PyDict_GetItemString(payload,"metadata_kind") : NULL;
+        int handshake=metadata_kind && PyUnicode_CheckExact(metadata_kind)
+            && PyUnicode_CompareWithASCIIString(metadata_kind,"COLLECTOR_HANDSHAKE")==0;
+        int needs_closure=!common || (publication && publication!=Py_None)
+            || (PyUnicode_CompareWithASCIIString(table,"intraday_capture_events")==0 && (orphan_present || handshake));
+        if (common && needs_closure && replay==Py_True && PyList_Append(complex,row)<0) goto done;
+        if (facts) {
+            PyObject *source_hash=PyDict_GetItemString(ref,"source_hash"),*available=PyList_GET_ITEM(PyTuple_GET_ITEM(decoded,2),0);
+            if (!source_hash || (available!=Py_None && timestamp(available)<0)) goto bad_input;
+            const char *prefix="{\"dependencies\":[],\"reference\":";
+            const char *suffix=replay==Py_True ? ",\"replay\":true}" : ",\"replay\":false}";
+            Py_ssize_t size; const char *encoded=PyUnicode_AsUTF8AndSize(text,&size); if (!encoded) goto done;
+            if (size<(Py_ssize_t)(strlen(prefix)+strlen(suffix)) || memcmp(encoded,prefix,strlen(prefix))!=0
+                || memcmp(encoded+size-strlen(suffix),suffix,strlen(suffix))!=0) goto unsupported;
+            reference_text=PyUnicode_Substring(text,(Py_ssize_t)strlen(prefix),PyUnicode_GET_LENGTH(text)-(Py_ssize_t)strlen(suffix));
+            PyObject *current=namespace_of(s,row); if (!current || !reference_text) { Py_XDECREF(current); goto done; }
+            int same=PyObject_RichCompareBool(current,scope,Py_EQ); Py_DECREF(current); if (same<0) goto done;
+            item=PyTuple_New(11); if (!item) goto done;
+            PyObject *fields[]={table,PyTuple_GET_ITEM(binding,1),source_hash,reference_text,available,ordinal,
+                PyTuple_GET_ITEM(PyList_GET_ITEM(expected,i),3),PyTuple_GET_ITEM(PyList_GET_ITEM(expected,i),4),
+                field(s,row,PERSISTED),NULL,NULL};
+            if (!fields[8]) goto done;
+            for (int n=0; n<11; n++) {
+                PyObject *value=n==9 ? PyLong_FromLong(!same) : n==10 ? PyLong_FromLong(needs_closure) : Py_NewRef(fields[n]);
+                if (!value) goto done;
+                PyTuple_SET_ITEM(item,n,value);
+            }
+            if (PyList_Append(expected_facts,item)<0) goto done;
+            Py_CLEAR(item); Py_CLEAR(reference_text);
+        }
+        if (replay==Py_True) replay_count++; else audit_count++;
+        Py_CLEAR(binding); Py_CLEAR(decoded);
+    }
+    if (hasher!=Py_None) for (Py_ssize_t i=0; i<PyList_GET_SIZE(texts); i++) {
+        Py_ssize_t size; const char *encoded=PyUnicode_AsUTF8AndSize(PyList_GET_ITEM(texts,i),&size); if (!encoded) goto done;
+        PyObject *framed=PyBytes_FromStringAndSize(NULL,size+8); if (!framed) goto done;
+        char *bytes=PyBytes_AS_STRING(framed);
+        for (int n=0; n<8; n++) bytes[n]=(char)(((unsigned long long)size)>>(56-8*n));
+        memcpy(bytes+8,encoded,(size_t)size);
+        PyObject *updated=PyObject_CallMethod(hasher,"update","O",framed); Py_DECREF(framed);
+        if (!updated) goto done;
+        Py_DECREF(updated);
+    }
+    result=Py_BuildValue("OOnLLLO",expected,expected_facts,PyList_GET_SIZE(records),replay_count,audit_count,latest,complex);
+    goto done;
+unsupported:
+    if (!PyErr_Occurred()) result=Py_NewRef(Py_NotImplemented);
+    goto done;
+bad_input:
+    if (!PyErr_Occurred()) invalid("SNAPSHOT_INPUT_MISSING");
+done:
+    Py_XDECREF(expected); Py_XDECREF(expected_facts); Py_XDECREF(complex); Py_XDECREF(texts);
+    Py_XDECREF(decoded); Py_XDECREF(binding); Py_XDECREF(member_args); Py_XDECREF(binding_args);
+    Py_XDECREF(reference_text); Py_XDECREF(item);
+    return result;
+}
+
+/* Read-local child validation against freshly verified source facts. The SQL
+ * rows are untrusted hints: every typed identity, position, projection and
+ * source binding is derived again from the canonical member. Complex blocks
+ * return NotImplemented before touching the caller's digest/count state.
+ */
+static PyObject *frozen_children(PyObject *module, PyObject *args) {
+    PyObject *records,*actual,*scope,*states,*ordinal,*decode;
+    if (!PyArg_ParseTuple(args,"OOOOOO:frozen_children",&records,&actual,&scope,&states,&ordinal,&decode)) return NULL;
+    if (!PyList_CheckExact(records) || !PyList_CheckExact(actual) || !PyTuple_CheckExact(scope)
+        || PyTuple_GET_SIZE(scope)!=5 || !PyDict_CheckExact(states) || timestamp(ordinal)<0
+        || PyList_GET_SIZE(records)>1000) { invalid("SNAPSHOT_INPUT_MISSING"); return NULL; }
+    State *s=PyModule_GetState(module);
+    PyObject *members=PyList_New(0),*result=NULL,*expected=NULL,*reference_text=NULL;
+    if (!members) return NULL;
+    Py_ssize_t count=PyList_GET_SIZE(records);
+    /* Unsupported blocks are retried wholesale through the Python oracle. */
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *record=PyList_GET_ITEM(records,i);
+        if (!PyList_CheckExact(record) || PyList_GET_SIZE(record)!=2) goto unsupported;
+        PyObject *child=PyList_GET_ITEM(record,0), *raw=PyList_GET_ITEM(record,1);
+        if (!PyLong_CheckExact(child) || !PyDict_CheckExact(raw)) goto unsupported;
+        PyObject *member=decode_evidence_impl(module,raw,decode,0);
+        if (!member) goto done;
+        if (PyList_Append(members,member)<0) { Py_DECREF(member); goto done; }
+        Py_DECREF(member);
+        PyObject *body=field(s,member,PAYLOAD);
+        if (!body || !PyDict_CheckExact(body) || PyDict_Size(body)!=3) goto unsupported;
+        PyObject *dependencies=PyDict_GetItemString(body,"dependencies"), *ref=PyDict_GetItemString(body,"reference");
+        PyObject *replay=PyDict_GetItemString(body,"replay");
+        if (!dependencies || !PyList_CheckExact(dependencies) || PyList_GET_SIZE(dependencies)!=0
+            || !ref || !PyDict_CheckExact(ref) || (replay!=Py_True && replay!=Py_False)) goto unsupported;
+        PyObject *table=PyDict_GetItemString(ref,"table"), *projection=PyDict_GetItemString(ref,"projection");
+        if (!table || !PyUnicode_CheckExact(table) || !projection || !PyDict_CheckExact(projection)) goto unsupported;
+        if (PyUnicode_CompareWithASCIIString(table,"intraday_observations")!=0
+            && PyUnicode_CompareWithASCIIString(table,"intraday_capture_events")!=0) goto unsupported;
+    }
+    if (PyList_GET_SIZE(actual)!=count) { invalid("SNAPSHOT_INPUT_MISSING"); goto done; }
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *fact=PyList_GET_ITEM(actual,i);
+        if (!PyTuple_CheckExact(fact) || (PyTuple_GET_SIZE(fact)!=14 && PyTuple_GET_SIZE(fact)!=20)) {
+            invalid("SNAPSHOT_INPUT_MISSING"); goto done;
+        }
+        if (PyTuple_GET_SIZE(fact)==20 && PyObject_IsTrue(PyTuple_GET_ITEM(fact,16))!=0) goto unsupported;
+    }
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *record=PyList_GET_ITEM(records,i),*member=PyList_GET_ITEM(members,i),*fact=PyList_GET_ITEM(actual,i);
+        PyObject *child=PyList_GET_ITEM(record,0),*state=PyDict_GetItemWithError(states,child);
+        PyObject *body=field(s,member,PAYLOAD), *persisted=field(s,member,PERSISTED);
+        if (!state || !PyDict_CheckExact(state) || !body || !persisted || timestamp(persisted)<0) goto invalid_child;
+        PyObject *header=PyDict_GetItemString(state,"header");
+        PyObject *manifest=header ? PyDict_GetItemString(header,"payload") : NULL;
+        PyObject *cutoff=manifest ? PyDict_GetItemString(manifest,"cutoff_ns") : NULL;
+        PyObject *run=header ? PyDict_GetItemString(header,"ingest_run_id") : NULL;
+        PyObject *member_run=PyDict_GetItemString(member,"ingest_run_id");
+        if (!cutoff || !run || !member_run || PyObject_RichCompareBool(run,member_run,Py_EQ)!=1) goto invalid_child;
+        PyObject *current=namespace_of(s,member);
+        if (!current) goto done;
+        int same=PyObject_RichCompareBool(current,scope,Py_EQ); Py_DECREF(current);
+        if (same!=1) goto invalid_child;
+        PyObject *ref=PyDict_GetItemString(body,"reference"), *replay=PyDict_GetItemString(body,"replay");
+        PyObject *table=PyDict_GetItemString(ref,"table"), *id=PyDict_GetItemString(ref,"id");
+        PyObject *source_hash=PyDict_GetItemString(ref,"source_hash"), *payload_hash=PyDict_GetItemString(ref,"payload_hash");
+        PyObject *projection=PyDict_GetItemString(ref,"projection");
+        PyObject *kind=PyDict_GetItemString(member,"member_kind");
+        int capture=PyUnicode_CompareWithASCIIString(table,"intraday_capture_events")==0;
+        PyObject *typed=PyDict_GetItemString(member,capture ? "capture_event_id" : "observation_id");
+        if (!id || timestamp(id)<0 || PyLong_AsLongLong(id)<=0 || !typed || !PyLong_CheckExact(typed) || !kind || !PyUnicode_CheckExact(kind)
+            || PyUnicode_CompareWithASCIIString(kind,capture ? "CAPTURE_EVENT" : "OBSERVATION")!=0
+            || PyObject_RichCompareBool(id,typed,Py_EQ)!=1 || !source_hash || !payload_hash) goto invalid_child;
+        if (PyTuple_GET_SIZE(fact)==20 && (PyObject_RichCompareBool(source_hash,PyTuple_GET_ITEM(fact,18),Py_EQ)!=1
+            || PyObject_RichCompareBool(payload_hash,PyTuple_GET_ITEM(fact,19),Py_EQ)!=1)) goto invalid_child;
+        const char *allowed[]={"available_at_ns","recorded_available_at_ns","admission_id","publication_id","publication_hash",
+            "capture_ingest_sequence","metadata_dependency","first_received_at_ns","table",NULL};
+        Py_ssize_t position=0; PyObject *key,*value;
+        while (PyDict_Next(projection,&position,&key,&value)) {
+            if (!PyUnicode_CheckExact(key)) goto invalid_child;
+            const char *name=PyUnicode_AsUTF8(key); if (!name) goto done;
+            int permitted=0;
+            for (int n=0; allowed[n]; n++) if (strcmp(name,allowed[n])==0) { permitted=1; break; }
+            if (!permitted || (strcmp(name,"table")==0 && PyObject_RichCompareBool(value,table,Py_EQ)!=1)) goto invalid_child;
+        }
+        PyObject *available=PyDict_GetItemString(projection,"available_at_ns");
+        PyObject *rank=available ? Py_NewRef(available) : PyLong_FromLongLong(LLONG_MAX);
+        if (!rank) goto done;
+        if (!available) available=PyTuple_GET_ITEM(fact,PyTuple_GET_SIZE(fact)==20 ? 14 : 11);
+        if (timestamp(rank)<0 || (replay==Py_True && (timestamp(available)<0
+            || PyObject_RichCompareBool(available,cutoff,Py_GT)!=0
+            || (PyTuple_GET_SIZE(fact)==20 && (PyObject_RichCompareBool(available,PyTuple_GET_ITEM(fact,15),Py_LT)!=0
+            || PyObject_RichCompareBool(PyTuple_GET_ITEM(fact,15),PyTuple_GET_ITEM(fact,17),Py_LT)!=0))))) {
+            Py_DECREF(rank); goto invalid_child;
+        }
+        PyObject *text=field(s,member,PAYLOAD_JSON);
+        if (!text || !PyUnicode_CheckExact(text)) { Py_DECREF(rank); goto invalid_child; }
+        const char *prefix="{\"dependencies\":[],\"reference\":";
+        const char *suffix=replay==Py_True ? ",\"replay\":true}" : ",\"replay\":false}";
+        Py_ssize_t text_size; const char *encoded=PyUnicode_AsUTF8AndSize(text,&text_size);
+        if (!encoded) { Py_DECREF(rank); goto done; }
+        if (text_size<(Py_ssize_t)(strlen(prefix)+strlen(suffix))
+            || memcmp(encoded,prefix,strlen(prefix))!=0
+            || memcmp(encoded+text_size-strlen(suffix),suffix,strlen(suffix))!=0) {
+            Py_DECREF(rank); goto invalid_child;
+        }
+        reference_text=PyUnicode_Substring(text,(Py_ssize_t)strlen(prefix),PyUnicode_GET_LENGTH(text)-(Py_ssize_t)strlen(suffix));
+        PyObject *admission=PyDict_GetItemString(projection,"admission_id"),*publication=PyDict_GetItemString(projection,"publication_id");
+        PyObject *index=PyLong_FromSsize_t(i),*dependency=PyLong_FromLong(-1),*role=PyLong_FromLong(replay==Py_True);
+        if (!reference_text || !index || !dependency || !role) {
+            Py_XDECREF(index); Py_XDECREF(dependency); Py_XDECREF(role); Py_DECREF(rank); goto done;
+        }
+        expected=PyTuple_Pack(14,child,ordinal,index,dependency,table,id,payload_hash,source_hash,reference_text,role,rank,available,
+                              admission ? admission : Py_None,publication ? publication : Py_None);
+        Py_DECREF(index); Py_DECREF(dependency); Py_DECREF(role); Py_DECREF(rank); Py_CLEAR(reference_text);
+        if (!expected) goto done;
+        for (Py_ssize_t n=0; n<14; n++) if (PyObject_RichCompareBool(PyTuple_GET_ITEM(expected,n),PyTuple_GET_ITEM(fact,n),Py_EQ)!=1) goto invalid_child;
+        Py_CLEAR(expected);
+    }
+    /* Every check passed. Only now advance original child digests/counts. */
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *record=PyList_GET_ITEM(records,i),*member=PyList_GET_ITEM(members,i);
+        PyObject *state=PyDict_GetItemWithError(states,PyList_GET_ITEM(record,0));
+        PyObject *text=field(s,member,PAYLOAD_JSON),*body=field(s,member,PAYLOAD);
+        PyObject *hash=PyDict_GetItemString(state,"hash"),*persisted=field(s,member,PERSISTED);
+        if (!text || !body || !hash || !persisted) goto done;
+        Py_ssize_t size; const char *encoded=PyUnicode_AsUTF8AndSize(text,&size); if (!encoded) goto done;
+        PyObject *framed=PyBytes_FromStringAndSize(NULL,size+8); if (!framed) goto done;
+        char *bytes=PyBytes_AS_STRING(framed);
+        for (int n=0; n<8; n++) bytes[n]=(char)(((unsigned long long)size)>>(56-8*n));
+        memcpy(bytes+8,encoded,(size_t)size);
+        PyObject *updated=PyObject_CallMethod(hash,"update","O",framed); Py_DECREF(framed);
+        if (!updated) goto done;
+        Py_DECREF(updated);
+        const char *counters[]={"members",PyDict_GetItemString(body,"replay")==Py_True ? "replay" : "audit"};
+        for (int n=0; n<2; n++) {
+            PyObject *old=PyDict_GetItemString(state,counters[n]); if (!old) goto invalid_child;
+            long long value=PyLong_AsLongLong(old); if (PyErr_Occurred()) goto done;
+            PyObject *next=PyLong_FromLongLong(value+1); if (!next) goto done;
+            int written=PyDict_SetItemString(state,counters[n],next); Py_DECREF(next); if (written<0) goto done;
+        }
+        PyObject *latest=PyDict_GetItemString(state,"latest"); if (!latest) goto invalid_child;
+        int newer=PyObject_RichCompareBool(persisted,latest,Py_GT); if (newer<0) goto done;
+        if (newer && PyDict_SetItemString(state,"latest",persisted)<0) goto done;
+    }
+    result=PyLong_FromSsize_t(count); goto done;
+unsupported:
+    if (!PyErr_Occurred()) result=Py_NewRef(Py_NotImplemented);
+    goto done;
+invalid_child:
+    if (!PyErr_Occurred()) invalid("SNAPSHOT_INPUT_MISSING");
+done:
+    Py_DECREF(members); Py_XDECREF(expected); Py_XDECREF(reference_text);
+    return result;
+}
+
 static int traverse(PyObject *module, visitproc visit, void *arg) {
     State *s=PyModule_GetState(module);
     for (int i=0; i<FIELD_COUNT; i++) Py_VISIT(s->keys[i]);
-    Py_VISIT(s->decoder); Py_VISIT(s->decode_options); Py_VISIT(s->sha256);
+    Py_VISIT(s->decoder); Py_VISIT(s->encoder); Py_VISIT(s->decode_options); Py_VISIT(s->sha256);
     Py_VISIT(s->admission_version);
     Py_VISIT(s->sqlite_module); Py_VISIT(s->connection_type); Py_VISIT(s->sqlite_error);
     return 0;
@@ -861,12 +1429,17 @@ static int traverse(PyObject *module, visitproc visit, void *arg) {
 static int clear(PyObject *module) {
     State *s=PyModule_GetState(module);
     for (int i=0; i<FIELD_COUNT; i++) Py_CLEAR(s->keys[i]);
-    Py_CLEAR(s->decoder); Py_CLEAR(s->decode_options); Py_CLEAR(s->sha256);
+    Py_CLEAR(s->decoder); Py_CLEAR(s->encoder); Py_CLEAR(s->decode_options); Py_CLEAR(s->sha256);
     Py_CLEAR(s->admission_version);
     Py_CLEAR(s->sqlite_module); Py_CLEAR(s->connection_type); Py_CLEAR(s->sqlite_error);
     return 0;
 }
 static PyMethodDef methods[] = {
+    {"frozen_inputs",frozen_inputs,METH_VARARGS,"Validate bounded frozen input blocks with complete Python fallbacks."},
+    {"frozen_children",frozen_children,METH_VARARGS,"Bounded child-member validation against fresh source facts; complex blocks use Python."},
+    {"frozen_binding",frozen_binding,METH_VARARGS,"Conservative canonical output binding; unsupported values return NotImplemented."},
+    {"market_block",market_block,METH_VARARGS,"Bind each copied market row to its block selector."},
+    {"frozen_member",frozen_member,METH_VARARGS,"Validate common frozen evidence members, with the Python oracle for complex cases."},
     {"select_market",select_market,METH_VARARGS,"Select fresh decoded market rows; no evidence checks are skipped."},
     {"decode_evidence",decode_evidence,METH_VARARGS,"Canonical subset certificate and SHA; all other inputs use the Python oracle."},
     {"receipt_values",receipt_values,METH_VARARGS,"Validate full receipt evidence and return its typed binding fields."},
@@ -880,16 +1453,18 @@ static struct PyModuleDef definition = {
 PyMODINIT_FUNC PyInit__investedge_reader_native(void) {
     PyObject *module=PyModule_Create(&definition);
     if (!module) return NULL;
+    if (PyModule_AddIntConstant(module,"FROZEN_API_VERSION",4)<0) { Py_DECREF(module); return NULL; }
+    if (PyModule_AddIntConstant(module,"FROZEN_MEMBER_RAW",1)<0) { Py_DECREF(module); return NULL; }
     State *s=PyModule_GetState(module);
     for (int i=0; i<FIELD_COUNT; i++) {
         s->keys[i]=PyUnicode_InternFromString(names[i]);
         if (!s->keys[i]) { Py_DECREF(module); return NULL; }
     }
     PyObject *core=PyImport_ImportModule("pydantic_core"), *hashlib=PyImport_ImportModule("hashlib");
-    if (core) { s->decoder=PyObject_GetAttrString(core,"from_json"); Py_DECREF(core); }
+    if (core) { s->decoder=PyObject_GetAttrString(core,"from_json"); s->encoder=PyObject_GetAttrString(core,"to_json"); Py_DECREF(core); }
     if (hashlib) { s->sha256=PyObject_GetAttrString(hashlib,"sha256"); Py_DECREF(hashlib); }
     s->decode_options=Py_BuildValue("{s:O,s:O}","allow_inf_nan",Py_False,"cache_strings",Py_False);
     s->admission_version=PyUnicode_InternFromString("intraday-admission-v1");
-    if (!s->decoder || !s->sha256 || !s->decode_options || !s->admission_version) { Py_DECREF(module); return NULL; }
+    if (!s->decoder || !s->encoder || !s->sha256 || !s->decode_options || !s->admission_version) { Py_DECREF(module); return NULL; }
     return module;
 }

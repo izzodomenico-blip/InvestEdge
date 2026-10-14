@@ -1476,7 +1476,9 @@ def test_research_additive_upgrade_backup_and_rerun_preserve_entire_sp2b_graph(t
 
     research_tables = (*RESEARCH_TABLES, 'intraday_research_dataset_bundles',
                        'intraday_research_bundle_children', 'intraday_research_bundle_chunks',
-                       'intraday_research_bundle_seals')
+                       'intraday_research_bundle_seals', 'intraday_frozen_sets', 'intraday_frozen_blocks',
+                       'intraday_frozen_locators', 'intraday_frozen_seals', 'intraday_frozen_child_blocks',
+                       'intraday_frozen_source_refs', 'intraday_frozen_child_refs')
 
     path = tmp_path / "sp2b-upgrade.db"
     monkeypatch.setenv("INVESTEDGE_DB_PATH", str(path))

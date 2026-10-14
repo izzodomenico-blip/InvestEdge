@@ -220,6 +220,47 @@ def test_native_codec_matches_v1_for_random_float_bits_and_unicode_keys():
             assert native.decode_evidence(raw,_decode_evidence)==expected
 
 
+def test_native_codec_preserves_short_decimal_spelling_and_noncanonical_rejection():
+    from decimal import Decimal
+
+    rng = random.Random(1410202630)
+    tokens = ['0.0','-0.0','0.00','-0.00','0.0001','0.00010','1000000000000000.0',
+              '9999999999999990.0','10000000000000000.0','1.230','1.0','1.00']
+    for _ in range(5000):
+        digits = rng.randrange(1,18)
+        coefficient = rng.randrange(10**(digits-1),10**digits)
+        token = format(Decimal(coefficient).scaleb(-rng.randrange(20)),'f')
+        if '.' not in token:
+            token += '.0'
+        tokens.extend((token,'-'+token))
+    for token in tokens:
+        text = '{"value":'+token+'}'
+        raw = {'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()}
+        try:
+            expected = _decode_evidence(raw)
+        except ValueError:
+            with pytest.raises(ValueError,match='METADATA_INVALID'):
+                native.decode_evidence(raw,_decode_evidence)
+        else:
+            actual = native.decode_evidence(raw,_decode_evidence)
+            assert json.dumps(actual,sort_keys=True)==json.dumps(expected,sort_keys=True)
+
+
+def test_native_codec_keeps_ieee_neighbors_at_decimal_and_exponent_boundaries():
+    values = [0.0,-0.0,0.0001,1e16,1e15,9999999999999990.0,2.0**53,1.23456789012345]
+    for boundary in tuple(values):
+        for direction in (-math.inf,math.inf):
+            value = boundary
+            for _ in range(80):
+                value = math.nextafter(value,direction)
+                values.append(value)
+    for value in values:
+        text = json.dumps({'value':value},sort_keys=True,separators=(',',':'),allow_nan=False)
+        raw = {'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()}
+        actual = native.decode_evidence(raw,_decode_evidence)
+        assert json.dumps(actual,sort_keys=True)==json.dumps(_decode_evidence(raw),sort_keys=True)
+
+
 @pytest.mark.parametrize('revisions',[False,True])
 def test_native_market_selection_matches_public_reducer_with_interleaved_captures(revisions):
     s = prepared()

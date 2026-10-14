@@ -366,6 +366,15 @@ class IntradayStore:
         check_ns(cutoff_ns)
         if kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
+        from backend.app.intraday.frozen_blocks import FrozenBlocks
+        from backend.app.intraday.snapshots import SnapshotService
+        if listing_ids is not None:
+            listing_ids = tuple(listing_ids)
+            if not listing_ids:
+                return []
+        sealed = FrozenBlocks(SnapshotService(self)).market(kind,cutoff_ns,listing_ids,start_ns,end_ns,revisions)
+        if sealed is not None:
+            return sealed
         keys = """SELECT id FROM intraday_observations
             WHERE profile_id=? AND data_mode=? AND provenance=? AND replay_grade=? AND kind=?"""
         params = (*self.namespace, kind)
