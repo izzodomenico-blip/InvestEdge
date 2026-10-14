@@ -1153,6 +1153,40 @@ done:
     return result;
 }
 
+static PyObject *source_bindings(PyObject *locators,PyObject *facts) {
+    Py_ssize_t count=PyList_GET_SIZE(facts);
+    if (!count) Py_RETURN_NONE;
+    if (PyList_GET_SIZE(locators)!=count) { invalid("SNAPSHOT_INPUT_MISSING"); return NULL; }
+    PyObject *first=PyList_GET_ITEM(facts,0);
+    if (!PyTuple_CheckExact(first) || PyTuple_GET_SIZE(first)!=11) { invalid("SNAPSHOT_INPUT_MISSING"); return NULL; }
+    PyObject *table=PyTuple_GET_ITEM(first,0);
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *fact=PyList_GET_ITEM(facts,i),*locator=PyList_GET_ITEM(locators,i);
+        if (!PyTuple_CheckExact(fact) || PyTuple_GET_SIZE(fact)!=11
+            || !PyTuple_CheckExact(locator) || PyTuple_GET_SIZE(locator)!=19) {
+            invalid("SNAPSHOT_INPUT_MISSING"); return NULL;
+        }
+        int same=PyObject_RichCompareBool(table,PyTuple_GET_ITEM(fact,0),Py_EQ);
+        if (same<0) return NULL;
+        if (!same) Py_RETURN_NONE;
+    }
+    PyObject *parameters=PyList_New(count*6),*expected=PyDict_New(),*result=NULL;
+    if (!parameters || !expected) goto done;
+    for (Py_ssize_t i=0; i<count; i++) {
+        PyObject *fact=PyList_GET_ITEM(facts,i),*locator=PyList_GET_ITEM(locators,i);
+        PyObject *fields[]={PyTuple_GET_ITEM(fact,1),PyTuple_GET_ITEM(fact,2),PyTuple_GET_ITEM(locator,5),
+            PyTuple_GET_ITEM(fact,8),PyTuple_GET_ITEM(fact,9),PyTuple_GET_ITEM(fact,4)};
+        for (int n=0; n<6; n++) PyList_SET_ITEM(parameters,i*6+n,Py_NewRef(fields[n]));
+        PyObject *value=PyTuple_Pack(2,PyTuple_GET_ITEM(locator,11),PyTuple_GET_ITEM(fact,3));
+        if (!value) goto done;
+        int stored=PyDict_SetItem(expected,fields[0],value); Py_DECREF(value);
+        if (stored<0) goto done;
+    }
+    result=PyTuple_Pack(3,table,parameters,expected);
+done:
+    Py_XDECREF(parameters); Py_XDECREF(expected);
+    return result;
+}
 static PyObject *frozen_inputs(PyObject *module, PyObject *args) {
     PyObject *records,*scope,*manifest,*ordinal,*run,*hasher,*decode,*oracle,*bind;
     int facts;
@@ -1162,7 +1196,7 @@ static PyObject *frozen_inputs(PyObject *module, PyObject *args) {
     }
     State *s=PyModule_GetState(module);
     PyObject *expected=PyList_New(0),*expected_facts=PyList_New(0),*complex=PyList_New(0),*texts=PyList_New(0);
-    PyObject *decoded=NULL,*binding=NULL,*member_args=NULL,*binding_args=NULL,*reference_text=NULL,*item=NULL,*result=NULL;
+    PyObject *decoded=NULL,*binding=NULL,*member_args=NULL,*binding_args=NULL,*reference_text=NULL,*item=NULL,*result=NULL,*prepared=NULL;
     PyObject *cutoff=PyDict_GetItemString(manifest,"cutoff_ns");
     if (!expected || !expected_facts || !complex || !texts || !cutoff) goto done;
     long long latest=0, replay_count=0,audit_count=0;
@@ -1252,7 +1286,9 @@ static PyObject *frozen_inputs(PyObject *module, PyObject *args) {
         if (!updated) goto done;
         Py_DECREF(updated);
     }
-    result=Py_BuildValue("OOnLLLO",expected,expected_facts,PyList_GET_SIZE(records),replay_count,audit_count,latest,complex);
+    prepared=facts ? source_bindings(expected,expected_facts) : Py_NewRef(Py_None);
+    if (!prepared) goto done;
+    result=Py_BuildValue("OOnLLLOO",expected,expected_facts,PyList_GET_SIZE(records),replay_count,audit_count,latest,complex,prepared);
     goto done;
 unsupported:
     if (!PyErr_Occurred()) result=Py_NewRef(Py_NotImplemented);
@@ -1262,7 +1298,7 @@ bad_input:
 done:
     Py_XDECREF(expected); Py_XDECREF(expected_facts); Py_XDECREF(complex); Py_XDECREF(texts);
     Py_XDECREF(decoded); Py_XDECREF(binding); Py_XDECREF(member_args); Py_XDECREF(binding_args);
-    Py_XDECREF(reference_text); Py_XDECREF(item);
+    Py_XDECREF(reference_text); Py_XDECREF(item); Py_XDECREF(prepared);
     return result;
 }
 
@@ -1453,7 +1489,7 @@ static struct PyModuleDef definition = {
 PyMODINIT_FUNC PyInit__investedge_reader_native(void) {
     PyObject *module=PyModule_Create(&definition);
     if (!module) return NULL;
-    if (PyModule_AddIntConstant(module,"FROZEN_API_VERSION",4)<0) { Py_DECREF(module); return NULL; }
+    if (PyModule_AddIntConstant(module,"FROZEN_API_VERSION",5)<0) { Py_DECREF(module); return NULL; }
     if (PyModule_AddIntConstant(module,"FROZEN_MEMBER_RAW",1)<0) { Py_DECREF(module); return NULL; }
     State *s=PyModule_GetState(module);
     for (int i=0; i<FIELD_COUNT; i++) {

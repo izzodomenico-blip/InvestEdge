@@ -568,7 +568,7 @@ class DatasetService:
             'root':seal['root'],'digest':header['payload']['digest']}
 
     def _parallel_bundle(self,archive,found):
-        """Two provisional read passes; accept only their joint, fenced result."""
+        """Three provisional read passes; accept only their joint, fenced result."""
         from pathlib import Path
 
         from backend.app.intraday.frozen_blocks import _NATIVE
@@ -618,10 +618,13 @@ class DatasetService:
                 raise
             except (OSError,ValueError,subprocess.TimeoutExpired):
                 raise MetadataError('SNAPSHOT_INPUT_MISSING') from None
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(run,role) for role in ('SOURCES','CHILDREN')]
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(run,role) for role in ('SOURCES','CHILDREN','TIMELINE')]
             results = [future.result() for future in futures]
         _record_worker_peaks([result['peak_rss_bytes'] for result in results])
+        count = results[2].get('timeline_count')
+        if type(count) is not int or count!=results[0]['counts']['replay']:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
         return results[0]['counts']
 
     def _bundle_count(self, bundle_id):
@@ -645,12 +648,13 @@ class DatasetService:
             integer(bundle_id,positive=True)
             signature = self.snapshots._read_signature()
             archive = FrozenBlocks(self.snapshots)
-            found = archive.find('BUNDLE',bundle_id)
-            if found is not None:
-                result = self._open_sealed_bundle(archive,found)
-                if signature!=self.snapshots._read_signature():
-                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
-                return result
+            with archive.validation_scope():
+                found = archive.find('BUNDLE',bundle_id)
+                if found is not None:
+                    result = self._open_sealed_bundle(archive,found)
+                    if signature!=self.snapshots._read_signature():
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                    return result
             return self._open_bundle(bundle_id)
         except SnapshotError:
             raise
@@ -812,7 +816,7 @@ def _read_bundle_worker(request,role):
         for target in ('socket.socket','socket.create_connection','socket.getaddrinfo','_socket.socket'):
             stack.enter_context(patch(target,deny))
         path = Path(request['path'])
-        if not path.is_absolute() or role not in {'SOURCES','CHILDREN'}:
+        if not path.is_absolute() or role not in {'SOURCES','CHILDREN','TIMELINE'}:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         db = sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
         stack.callback(db.close)
@@ -833,21 +837,24 @@ def _read_bundle_worker(request,role):
         reader._validation_rss_limit = 536_870_912
         signature = reader._read_signature()
         blocks = FrozenBlocks(reader)
-        found = blocks.find('BUNDLE',request['bundle_id'])
-        if found is None:
-            raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        header,seal = found
-        if (header['id']!=request['set_id'] or header['payload_hash']!=request['header_hash']
-            or seal['root']!=request['root'] or header['payload']['digest']!=request['digest']):
-            raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        result = {'validated':True}
-        if role=='SOURCES':
-            result['counts'] = blocks.validate_inputs(found)
-        else:
-            research = DatasetService(reader)
-            metadata = research._read_bundle_metadata(header['subject_id'],frozen=header['payload']['bundle_metadata'])
-            research._child_members(blocks,header,metadata['evidence'],header['payload']['child_documents'],blocks._read_blocks(header,seal,'CHILD'))
-            research._bundle_closure(blocks,header)
+        with blocks.validation_scope():
+            found = blocks.find('BUNDLE',request['bundle_id'])
+            if found is None:
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            header,seal = found
+            if (header['id']!=request['set_id'] or header['payload_hash']!=request['header_hash']
+                or seal['root']!=request['root'] or header['payload']['digest']!=request['digest']):
+                raise MetadataError('SNAPSHOT_INPUT_MISSING')
+            result = {'validated':True}
+            if role=='SOURCES':
+                result['counts'] = blocks.validate_inputs(found,timeline=False)
+            elif role=='TIMELINE':
+                result['timeline_count'] = blocks.validate_timeline(found,expected_count=header['payload']['timeline_count'])
+            else:
+                research = DatasetService(reader)
+                metadata = research._read_bundle_metadata(header['subject_id'],frozen=header['payload']['bundle_metadata'])
+                research._child_members(blocks,header,metadata['evidence'],header['payload']['child_documents'],blocks._read_blocks(header,seal,'CHILD'))
+                research._bundle_closure(blocks,header)
         if signature!=reader._read_signature() or attempts or db.total_changes:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         result.update(peak_rss_bytes=_peak_rss_bytes(),network_attempts=attempts,changes=db.total_changes)

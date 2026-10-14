@@ -1412,9 +1412,10 @@ class SnapshotService:
             from backend.app.intraday.frozen_blocks import FrozenBlocks
             signature = self._read_signature()
             blocks = FrozenBlocks(self)
-            sealed = blocks.find('SNAPSHOT',snapshot_id)
+            with blocks.validation_scope():
+                sealed = blocks.find('SNAPSHOT',snapshot_id)
+                opened = blocks.open_snapshot(sealed,10_000,8_388_608) if sealed is not None else None
             if sealed is not None:
-                opened = blocks.open_snapshot(sealed,10_000,8_388_608)
                 result = opened.as_dict()
                 rows = []
                 for chunk in opened.timeline.chunks():
@@ -1744,12 +1745,13 @@ class SnapshotService:
             from backend.app.intraday.frozen_blocks import FrozenBlocks
             signature = self._read_signature()
             blocks = FrozenBlocks(self)
-            sealed = None if _original else blocks.find('SNAPSHOT',snapshot_id)
-            if sealed is not None:
-                result = blocks.open_snapshot(sealed,max_occurrences,max_bytes)
-                if signature!=self._read_signature():
-                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
-                return result
+            with blocks.validation_scope():
+                sealed = None if _original else blocks.find('SNAPSHOT',snapshot_id)
+                if sealed is not None:
+                    result = blocks.open_snapshot(sealed,max_occurrences,max_bytes)
+                    if signature!=self._read_signature():
+                        raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                    return result
             return self._open(snapshot_id, max_occurrences, max_bytes, _source_scope)
         except SnapshotError:
             raise

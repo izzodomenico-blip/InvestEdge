@@ -23,7 +23,7 @@ try:
     import _investedge_reader_native as _NATIVE
 except ImportError:
     _NATIVE = None
-if _NATIVE is not None and getattr(_NATIVE,'FROZEN_API_VERSION',0)!=4:
+if _NATIVE is not None and getattr(_NATIVE,'FROZEN_API_VERSION',0)!=5:
     _NATIVE = None
 
 FORMAT = 'sealed-evidence-blocks-v3'
@@ -173,6 +173,16 @@ class FrozenBlocks:
     def __init__(self, reader):
         self.reader, self.db = reader,_BlockDatabase(reader.connection)
         self.scope = (reader.store.profile.profile_id,reader.store.profile.feed,*reader.store.namespace[1:])
+        self._inventory_proof = None
+
+    @contextmanager
+    def validation_scope(self):
+        previous = self._inventory_proof
+        self._inventory_proof = {}
+        try:
+            yield self
+        finally:
+            self._inventory_proof = previous
 
     @contextmanager
     def _cancel_scope(self,cancelled):
@@ -267,7 +277,7 @@ class FrozenBlocks:
             if _sha(text)!=descriptor['metadata_hash']:
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
             from backend.app.intraday.snapshots import SnapshotError, _peak_rss_bytes
-            if _peak_rss_bytes()+64*size+65_536>2_147_483_648:
+            if _peak_rss_bytes()+64*size+65_536>min(getattr(self.reader,'_validation_rss_limit',2_147_483_648),2_147_483_648):
                 raise SnapshotError('RESOURCE_LIMIT')
             try:
                 value = from_json(text,cache_strings=False,allow_inf_nan=False)
@@ -406,7 +416,7 @@ class FrozenBlocks:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         self.db.commit()
 
-    def _read_blocks(self, header, seal, domain, *, kind=None, listings=None):
+    def _check_inventory(self, header, seal, domain, *, kind=None, listings=None):
         # The small metadata pass checks the complete inventory, including
         # filtered blocks, before any public result can escape.
         root = hashlib.sha256()
@@ -426,10 +436,11 @@ class FrozenBlocks:
                 if filtered else self._inventory(header['id']))
         for item in inventory:
             value = list(item)
-            _frame(root,_text(value))
+            encoded = _text(value)
+            _frame(root,encoded)
             counts[value[0]] = counts.get(value[0],0)+value[4]
             key = _text(value[:1]+value[2:4])
-            _frame(groups.setdefault(key,hashlib.sha256()),_text(value))
+            _frame(groups.setdefault(key,hashlib.sha256()),encoded)
         if filtered:
             expected = {key:value for key,value in seal['groups'].items()
                         if (group:=json.loads(key))[0]==domain and group[2]==kind and (listings is None or group[1] in listings)}
@@ -438,6 +449,17 @@ class FrozenBlocks:
         elif (root.hexdigest()!=seal['root'] or counts!=seal['counts']
               or {key:value.hexdigest() for key,value in groups.items()}!=seal['groups']):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
+
+    def _read_blocks(self, header, seal, domain, *, kind=None, listings=None):
+        if domain=='MARKET' or self._inventory_proof is None:
+            self._check_inventory(header,seal,domain,kind=kind,listings=listings)
+        else:
+            key = (self.reader._read_signature(),header['id'],canonical_json(seal))
+            if self._inventory_proof.get('key')!=key:
+                self._check_inventory(header,seal,domain,kind=kind,listings=listings)
+                if key[0]!=self.reader._read_signature():
+                    raise MetadataError('SNAPSHOT_INPUT_MISSING')
+                self._inventory_proof['key'] = key
         for row,values in self._raw_block_rows(header['id'],domain,kind=kind,listings=listings):
             if domain=='MARKET':
                 columns = header['payload']['columns']
@@ -591,7 +613,11 @@ class FrozenBlocks:
         if found is None:
             return None
         header,seal = found
-        columns = tuple(header['payload']['columns'])
+        columns = header['payload']['columns']
+        if (type(columns) is not list or any(type(column) is not str for column in columns)
+            or len(set(columns))!=len(columns)):
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        columns = tuple(columns)
         water = header['payload']['water']
         if type(water) is not int or water<0:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
@@ -897,7 +923,7 @@ class FrozenBlocks:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         return result
 
-    def validate_inputs(self,found,*,max_bytes=8_388_608,digest=None,ingest_run_id=None):
+    def validate_inputs(self,found,*,max_bytes=8_388_608,digest=None,ingest_run_id=None,timeline=True):
         """Private full evidence pass; returns counts, never a public handle."""
         header,seal = found
         evidence = header['payload']
@@ -915,6 +941,7 @@ class FrozenBlocks:
             return self._binding(row,replay,set_id=header['id'])
         for ordinal,records in self._read_blocks(header,seal,'MEMBER'):
             expected,expected_facts = [],[]
+            prepared = None
             native = NotImplemented
             if (not candidates and type(records) is list and max_bytes>=4*INPUT_LIMIT
                 and _NATIVE is not None and hasattr(_NATIVE,'frozen_inputs')):
@@ -922,7 +949,7 @@ class FrozenBlocks:
                 native = _NATIVE.frozen_inputs(records,self.scope,manifest,ordinal,facts,ingest_run_id,hasher,
                                                _decode_evidence,self._members,binding_oracle)
             if native is not NotImplemented:
-                expected,expected_facts,member_count,replay_count,audit_count,last,complex_rows = native
+                expected,expected_facts,member_count,replay_count,audit_count,last,complex_rows,prepared = native
                 members += member_count
                 replay += replay_count
                 audit += audit_count
@@ -987,7 +1014,7 @@ class FrozenBlocks:
                     if previous_source is not None and identity<=previous_source:
                         raise MetadataError('SNAPSHOT_INPUT_MISSING')
                     previous_source = identity
-                child_bindings += self._child_sources_block(header['id'],expected,expected_facts)
+                child_bindings += self._child_sources_block(header['id'],expected,expected_facts,prepared=prepared)
         if self.db.execute('SELECT COUNT(*) FROM intraday_frozen_locators WHERE set_id=?',(header['id'],)).fetchone()[0]!=locator_count:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         if hasher is not None and hasher.hexdigest()!=digest:
@@ -1011,8 +1038,15 @@ class FrozenBlocks:
         for table,source_id in rare:
             row = require(table,source_id)
             self.reader._row_closure(header['subject_id'],row,require=require)
-        # All timeline bytes are checked before the handle. Iteration parses
-        # fresh objects and retains the same signature fence as the old reader.
+        if timeline:
+            self.validate_timeline(found,expected_count=replay,max_bytes=max_bytes)
+        self._document_text(evidence)
+        self.reader.archive.safe_json({'evidence_root':seal['root']})
+        return {'members':members,'replay':replay,'audit':audit,'latest':latest}
+
+    def validate_timeline(self,found,*,expected_count,max_bytes=8_388_608):
+        """Provisional byte/order pass, composed with fresh locator validation."""
+        header,seal = found
         order = self.db.execute('''WITH visible AS (
             SELECT *,MIN(proof) OVER(PARTITION BY received,capture) AS anchor
             FROM intraday_frozen_locators WHERE set_id=? AND replay=1)
@@ -1031,23 +1065,30 @@ class FrozenBlocks:
                 if _sha(encoded)!=expected[0]:
                     raise MetadataError('SNAPSHOT_INPUT_MISSING')
                 seen += 1
-        if seen!=replay or order.fetchone() is not None:
+        if seen!=expected_count or order.fetchone() is not None:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        self._document_text(evidence)
         self.reader.archive.safe_json({'evidence_root':seal['root']})
-        return {'members':members,'replay':replay,'audit':audit,'latest':latest}
+        return seen
 
-    def _child_sources_block(self,set_id,locators,facts):
+    def _child_sources_block(self,set_id,locators,facts,*,prepared=None):
         """Exact union/bindings against only this block's freshly derived facts."""
-        grouped = {}
-        for locator,fact in zip(locators,facts,strict=True):
-            grouped.setdefault(fact[0],[]).append((locator,fact))
+        def groups():
+            if prepared is not None:
+                table,parameters,expected = prepared
+                yield table,parameters,expected,len(expected)
+                return
+            grouped = {}
+            for locator,fact in zip(locators,facts,strict=True):
+                grouped.setdefault(fact[0],[]).append((locator,fact))
+            for table,items in grouped.items():
+                parameters = [value for locator,fact in items
+                              for value in (fact[1],fact[2],locator[5],fact[8],fact[9],fact[4])]
+                expected = {fact[1]:(locator[11],fact[3]) for locator,fact in items}
+                yield table,parameters,expected,len(items)
         count = 0
-        for table,items in grouped.items():
-            values = ','.join('(?,?,?,?,?,?)' for _ in items)
-            parameters = [value for locator,fact in items
-                          for value in (fact[1],fact[2],locator[5],fact[8],fact[9],fact[4])]
-            parameters.extend((set_id,table))
+        for table,parameters,expected,size in groups():
+            values = ','.join('(?,?,?,?,?,?)' for _ in range(size))
+            parameters = [*parameters,set_id,table]
             rows = self.db.execute('''WITH fresh(source_id,source_hash,payload_hash,persisted,metadata_scope,raw_available) AS (
                 VALUES '''+values+''') SELECT f.source_id,MAX(c.replay),
                 substr(COALESCE(MIN(CASE WHEN c.replay=1 THEN printf('%019d',c.rank_available)||c.reference_json END),
@@ -1061,14 +1102,13 @@ class FrozenBlocks:
                     OR c.replay=0 AND f.metadata_scope=1 END)
                 FROM fresh f LEFT JOIN intraday_frozen_child_refs c
                     ON c.set_id=? AND c.source_table=? AND c.source_id=f.source_id GROUP BY f.source_id''',parameters)
-            expected = {fact[1]:(locator[11],fact[3]) for locator,fact in items}
             seen = 0
             for source_id,replay,reference,occurrences,invalid in rows:
                 if invalid or not occurrences or (replay,reference)!=expected.get(source_id):
                     raise MetadataError('SNAPSHOT_INPUT_MISSING')
                 count += occurrences
                 seen += 1
-            if seen!=len(items):
+            if seen!=size:
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
         return count
 

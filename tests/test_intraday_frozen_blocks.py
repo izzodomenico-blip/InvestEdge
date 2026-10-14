@@ -112,6 +112,25 @@ def test_large_metadata_is_chunked_without_relaxing_the_input_block_cap():
     assert max(row[0] for row in s.db.execute('SELECT input_bytes FROM intraday_frozen_child_blocks'))<=126_976
 
 
+def test_chunked_metadata_respects_the_worker_budget_before_aggregate_parse(monkeypatch):
+    import backend.app.intraday.frozen_blocks as frozen
+    import backend.app.intraday.snapshots as snapshots
+    s = prepared()
+    reader = service(s)
+    archive = FrozenBlocks(reader)
+    set_id = archive._begin('MARKET',0,{'padding':'x'*2_100_000},10_485_760,1)
+    archive._finish(set_id,10_485_760,1,None)
+    reader._validation_rss_limit = 536_870_912
+    monkeypatch.setattr(snapshots,'_peak_rss_bytes',lambda:419_430_400)
+    original = frozen.from_json
+    def guarded(value,**kwargs):
+        assert len(value)<=1_048_576, 'aggregate parsed before worker budget check'
+        return original(value,**kwargs)
+    monkeypatch.setattr(frozen,'from_json',guarded)
+    with pytest.raises(snapshots.SnapshotError,match='RESOURCE_LIMIT'):
+        archive.find('MARKET',0)
+
+
 def test_v3_keeps_large_valid_news_without_reducing_the_legacy_envelope_cap():
     from test_intraday_news import article
 
@@ -455,7 +474,7 @@ def test_copied_publication_keeps_original_typed_header_constraints(field):
         archive._metadata(evidence)
 
 
-@pytest.mark.parametrize('role',['SOURCES','CHILDREN'])
+@pytest.mark.parametrize('role',['SOURCES','CHILDREN','TIMELINE'])
 def test_isolated_worker_repeats_full_read_only_validation(tmp_path,role,monkeypatch):
     import sqlite3
 
@@ -478,9 +497,11 @@ def test_isolated_worker_repeats_full_read_only_validation(tmp_path,role,monkeyp
     assert result['validated'] is True and result['peak_rss_bytes']>0
     if role=='SOURCES':
         assert result['counts']['replay']==len(bundle.timeline)
+    if role=='TIMELINE':
+        assert result['timeline_count']==len(bundle.timeline)
 
 
-def test_two_process_coordinator_keeps_full_counts_and_aggregates_memory(tmp_path,monkeypatch):
+def test_three_process_coordinator_keeps_full_counts_and_aggregates_memory(tmp_path,monkeypatch):
     import sqlite3
 
     from test_intraday_research_datasets import _small_bundle
@@ -506,9 +527,35 @@ def test_two_process_coordinator_keeps_full_counts_and_aggregates_memory(tmp_pat
     result = research._run_bundle_workers(research._worker_request(header,seal,path))
     assert result['replay']==len(bundle.timeline)
     assert snapshots._peak_rss_bytes()>=before and db.total_changes==0
-    assert len(peaks)==2 and all(peak>0 for peak in peaks)
+    assert len(peaks)==3 and all(peak>0 for peak in peaks)
     assert sum(peaks) <= snapshots._WORKER_PEAK_BOUND
     db.close()
+
+
+@pytest.mark.parametrize('failure',['SOURCES','CHILDREN','TIMELINE','count','bool_count'])
+def test_bundle_coordinator_requires_every_pass_and_the_same_timeline_count(failure,monkeypatch):
+    import json
+    import subprocess
+    from types import SimpleNamespace
+
+    from test_intraday_research_datasets import _small_bundle
+    _,research,_ = _small_bundle()
+    roles = []
+    def run(command,**kwargs):
+        role = command[-1]
+        roles.append(role)
+        value = {'validated':True,'network_attempts':0,'changes':0,'peak_rss_bytes':1}
+        if role=='SOURCES':
+            value['counts'] = {'replay':1}
+        if role=='TIMELINE':
+            value['timeline_count'] = 2 if failure=='count' else True if failure=='bool_count' else 1
+        if role==failure:
+            value = {'validated':False,'error':'SNAPSHOT_INPUT_MISSING'}
+        return SimpleNamespace(returncode=0,stdout=json.dumps(value))
+    monkeypatch.setattr(subprocess,'run',run)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        research._run_bundle_workers({})
+    assert set(roles)=={'SOURCES','CHILDREN','TIMELINE'}
 
 
 def test_db_fence_includes_reading_the_wrapper_header(monkeypatch):
@@ -637,3 +684,120 @@ def test_legacy_bundle_retains_raw_authority_when_a_child_has_a_v3_wrapper():
     assert list(reader.open(snapshot_id).timeline)
     with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
         research.open_bundle(bundle.bundle_id)
+
+
+@pytest.mark.parametrize('selection',['intraday_observations','intraday_capture_events','mixed'])
+def test_native_batch_prepares_the_exact_fresh_source_bindings(selection):
+    import copy
+    import json
+
+    from backend.app.intraday.snapshots import _decode_evidence
+    native = pytest.importorskip('_investedge_reader_native')
+    _,reader,saved = sealed_fixture()
+    archive = FrozenBlocks(reader)
+    header,_ = archive.find('SNAPSHOT',saved.snapshot_id)
+    records = [copy.deepcopy(record) for _,block in archive._raw_blocks(header['id'],'MEMBER')
+               for record in block if json.loads(record[1][0][0]).get('kind') in {'BAR','QUOTE','ADMISSION'}]
+    if selection!='mixed':
+        records = [record for record in records if json.loads(record[0]['payload_json'])['reference']['table']==selection]
+    assert records
+    before = copy.deepcopy(records)
+    result = native.frozen_inputs(records,archive.scope,header['payload']['manifest'],0,True,None,None,
+                                  _decode_evidence,archive._members,archive._binding_python)
+    assert len(result)==8
+    locators,facts = result[:2]
+    if selection=='mixed':
+        assert result[7] is None
+    else:
+        expected_parameters = [value for locator,fact in zip(locators,facts,strict=True)
+                               for value in (fact[1],fact[2],locator[5],fact[8],fact[9],fact[4])]
+        expected_union = {fact[1]:(locator[11],fact[3]) for locator,fact in zip(locators,facts,strict=True)}
+        assert result[7]==(selection,expected_parameters,expected_union)
+    assert records==before
+
+
+@pytest.mark.parametrize('change',['body','metadata','seal'])
+def test_inventory_proof_cannot_hide_changes_between_domains(change):
+    s,reader,saved = sealed_fixture()
+    archive = FrozenBlocks(reader)
+    header,seal = archive.find('SNAPSHOT',saved.snapshot_id)
+    if change!='seal':
+        s.db.execute('DROP TRIGGER trg_intraday_frozen_blocks_no_update')
+    with archive.validation_scope():
+        list(archive._read_blocks(header,seal,'MEMBER'))
+        if change=='seal':
+            seal['root'] = '0'*64
+        else:
+            if change=='body':
+                s.db.execute("UPDATE intraday_frozen_blocks SET body=? WHERE set_id=? AND domain='TIMELINE'",
+                             (b'invalid-compressed-block',header['id']))
+            else:
+                s.db.execute("UPDATE intraday_frozen_blocks SET row_count=row_count+1 WHERE set_id=? AND domain='TIMELINE'",
+                             (header['id'],))
+            s.db.commit()
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+            list(archive._read_blocks(header,seal,'TIMELINE'))
+
+
+def test_inventory_validation_is_repeated_after_the_public_handle_returns(monkeypatch):
+    _,reader,saved = sealed_fixture()
+    original = FrozenBlocks._inventory
+    calls = []
+    def observed(self,set_id):
+        calls.append(set_id)
+        return original(self,set_id)
+    monkeypatch.setattr(FrozenBlocks,'_inventory',observed)
+    result = reader.open(saved.snapshot_id)
+    before_replay = len(calls)
+    assert before_replay>0
+    list(result.timeline.chunks())
+    assert len(calls)>before_replay
+    before_open = len(calls)
+    reader.open(saved.snapshot_id)
+    assert len(calls)>before_open
+
+
+def test_inventory_scope_preserves_the_original_seal_document_size_limit():
+    import hashlib
+    import json
+
+    s,reader,saved = sealed_fixture()
+    raw = s.db.execute('SELECT * FROM intraday_frozen_seals').fetchone()
+    seal = json.loads(raw['payload_json'])
+    seal['padding'] = ''
+    empty = json.dumps(seal,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+    seal['padding'] = 'x'*(1_048_576-len(empty.encode()))
+    text = json.dumps(seal,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+    assert len(text.encode())==1_048_576
+    s.db.execute('DROP TRIGGER trg_intraday_frozen_seals_no_update')
+    s.db.execute('UPDATE intraday_frozen_seals SET payload_json=?,payload_hash=? WHERE set_id=?',
+                 (text,hashlib.sha256(text.encode()).hexdigest(),raw['set_id']))
+    s.db.commit()
+    result = reader.open(saved.snapshot_id)
+    assert sum(map(len,result.timeline.chunks()))==result.manifest['timeline_count']
+
+
+def test_market_header_cannot_alias_a_source_column_after_outer_hash_repair():
+    import hashlib
+    import json
+
+    from backend.app.intraday.contracts import canonical_json
+
+    s,reader,_ = sealed_fixture()
+    FrozenBlocks(reader).seal_market(max_disk_bytes=10_485_760,min_free_bytes=1)
+    raw = s.db.execute("SELECT * FROM intraday_frozen_sets WHERE subject_kind='MARKET'").fetchone()
+    header = json.loads(raw['payload_json'])
+    header['columns'][header['columns'].index('logical_key')] = 'provider'
+    text = canonical_json(header)
+    header_hash = hashlib.sha256(text.encode()).hexdigest()
+    seal = json.loads(s.db.execute('SELECT payload_json FROM intraday_frozen_seals WHERE set_id=?',(raw['id'],)).fetchone()[0])
+    seal['header_hash'] = header_hash
+    seal_text = canonical_json(seal)
+    for table in ('intraday_frozen_sets','intraday_frozen_seals'):
+        s.db.execute(f'DROP TRIGGER trg_{table}_no_update')
+    s.db.execute('UPDATE intraday_frozen_sets SET payload_json=?,payload_hash=? WHERE id=?',(text,header_hash,raw['id']))
+    s.db.execute('UPDATE intraday_frozen_seals SET payload_json=?,payload_hash=? WHERE set_id=?',
+                 (seal_text,hashlib.sha256(seal_text.encode()).hexdigest(),raw['id']))
+    s.db.commit()
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        s.store.read_as_of('QUOTE',cutoff_ns=s.clock.now,listing_ids=(s.listing,))

@@ -280,6 +280,19 @@ def test_native_market_selection_matches_public_reducer_with_interleaved_capture
         assert native.select_market(rows,s.clock.now+10,revisions)==expected
 
 
+@pytest.mark.parametrize('revisions',[False,True])
+def test_native_unique_event_times_keep_distinct_market_anchors(revisions):
+    s = prepared()
+    s.store.persist((event(s),))
+    row = s.store.read_as_of('BAR',cutoff_ns=s.clock.now)[0]
+    rows = [copy.deepcopy(row),copy.deepcopy(row)]
+    rows[0].update(id=20,event_time_ns=row['event_time_ns'])
+    rows[1].update(id=10,event_time_ns=row['event_time_ns']+1)
+    expected = select_versions(copy.deepcopy(rows),family='BAR',cutoff_ns=s.clock.now,revisions=revisions,_decoded=True)
+    assert native.select_market(rows,s.clock.now,revisions)==expected
+    assert [item['capture_order'] for item in expected]==[20,10]
+
+
 @pytest.mark.parametrize('column,value,error',[
     ('received_at_ns',True,'INVALID_TIMESTAMP'),('ingest_sequence',-1,'INVALID_TIMESTAMP'),
     ('persisted_at_ns',2**63,'INVALID_TIMESTAMP'),('feed','other','MIXED_NAMESPACE')])
