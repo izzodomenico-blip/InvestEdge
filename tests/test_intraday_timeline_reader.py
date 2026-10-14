@@ -20,6 +20,100 @@ def test_member_digest_scan_uses_index_order_without_temporary_sort():
     assert any('idx_intraday_dataset_member_sequence' in row[3] for row in plan)
 
 
+def test_duplicate_identity_scan_uses_typed_keys_before_full_member_validation():
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    try:
+        assert list(reader.open(saved.snapshot_id).timeline)
+    finally:
+        s.db.set_trace_callback(None)
+    duplicate = next(sql for sql in queries if 'HAVING COUNT(*)>1' in sql)
+    assert "'$.reference'" not in duplicate
+    assert 'member_kind' in duplicate
+
+
+@pytest.mark.parametrize('member_id',[-2**63,2**63-1])
+def test_ordered_reader_fetches_reference_text_after_causal_sort_with_full_int64_member_ids(member_id):
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),event(s,at=OPEN+SECOND)))
+    saved = freeze(s)
+    expected = [(row['table'],row['id']) for row in reader.open(saved.snapshot_id).timeline]
+    s.db.execute('DROP TRIGGER trg_intraday_dataset_members_no_update')
+    s.db.execute('UPDATE intraday_dataset_members SET id=? WHERE snapshot_id=? AND observation_id=1',
+                 (member_id,saved.snapshot_id))
+    s.db.commit()
+    timeline = reader.open(saved.snapshot_id).timeline
+    queries = []
+    s.db.set_trace_callback(queries.append)
+    try:
+        refs = list(timeline._ordered(timeline.manifest['cutoff_ns']))
+    finally:
+        s.db.set_trace_callback(None)
+    assert [(json.loads(row[0])['table'],json.loads(row[0])['id']) for row in refs]==expected
+    plan = s.db.execute('EXPLAIN QUERY PLAN '+queries[-1]).fetchall()
+    assert any('CO-ROUTINE ordered' in row[3] for row in plan)
+    assert any('CORRELATED SCALAR SUBQUERY' in row[3] for row in plan)
+
+
+@pytest.mark.parametrize('reference',[None,1,b'{}'])
+def test_reference_batch_rejects_missing_late_reference_with_fixed_error(reference):
+    from backend.app.intraday.snapshots import _reference_batches
+
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        list(_reference_batches([(reference,)]))
+
+
+@pytest.mark.parametrize('shadow',['intraday_observations','intraday_dataset_members','INTRADAY_OBSERVATIONS'])
+def test_validated_reader_rejects_temp_shadow_without_confusing_legitimate_job_tables(shadow):
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    handle = reader.open(saved.snapshot_id)
+    before = s.db.total_changes
+    s.db.execute('CREATE TEMP TABLE legitimate_job_fixture(id INTEGER)')
+    assert list(handle.timeline)
+    columns = [row[1] for row in s.db.execute(f'PRAGMA main.table_info({shadow})')]
+    projection = ','.join("'{\"corrupt\":true}' AS payload_json" if key=='payload_json' else key for key in columns)
+    s.db.execute(f'CREATE TEMP TABLE {shadow} AS SELECT {projection} FROM main.{shadow}')
+    assert s.db.total_changes==before
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        list(handle.timeline)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        reader.open(saved.snapshot_id)
+
+
+@pytest.mark.parametrize('shadow',['intraday_observations','INTRADAY_OBSERVATIONS'])
+def test_temp_view_is_rejected_when_rollback_reuses_a_checked_schema_cookie(shadow):
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    handle = reader.open(saved.snapshot_id)
+    before = s.db.total_changes
+    s.db.execute('BEGIN')
+    s.db.execute('CREATE TEMP TABLE timeline_legitimate_rollback(id INTEGER)')
+    checked = s.db.execute('PRAGMA temp.schema_version').fetchone()[0]
+    assert list(handle.timeline)
+    s.db.rollback()
+    s.db.execute(f'CREATE TEMP VIEW {shadow} AS SELECT * FROM main.intraday_observations')
+    assert s.db.execute('PRAGMA temp.schema_version').fetchone()[0]==checked
+    assert s.db.total_changes==before
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        list(handle.timeline)
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        reader.open(saved.snapshot_id)
+
+
 def test_canonical_integer_evidence_avoids_python_reencoding(monkeypatch):
     import backend.app.intraday.snapshots as snapshots
 
@@ -40,6 +134,35 @@ def test_native_price_float_encoding_requires_exact_v1_scalar_byte_parity(monkey
     def forbidden(value):
         raise AssertionError('REENCODING_NATIVE_V1_EQUIVALENT_PRICES')
     monkeypatch.setattr(snapshots,'_envelope_bytes',forbidden)
+    assert snapshots._decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload']==payload
+
+
+def test_normal_evidence_uses_stdlib_canonical_encoder_without_python_tree_walk(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'a':[None,True,2**63-1,1e-6,1e20,-0.0], 'b':{'é':'😀\\\n"'}}
+    text = canonical_json(payload)
+    def forbidden(value):
+        raise AssertionError('PYTHON_TREE_WALK_FOR_BOUNDED_JSON_NUMBERS')
+    monkeypatch.setattr(snapshots,'_native_canonical',forbidden)
+    assert snapshots._decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload']==payload
+
+
+@pytest.mark.parametrize('payload', [{'n':int('9'*308)}, {'n':int('1'+'0'*308)},
+                                   {'n':-int('9'*308)}, {'text':'9'*309}, {'text':'x'+'8'*308+'y'}])
+def test_evidence_integer_digit_guard_keeps_v1_finite_boundary_and_string_fallback(payload):
+    from backend.app.intraday.snapshots import _decode_evidence
+
+    text = canonical_json(payload)
+    assert _decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload']==payload
+
+
+def test_evidence_keeps_full_canonical_fallback_without_stdlib_c_encoder(monkeypatch):
+    import backend.app.intraday.snapshots as snapshots
+
+    payload = {'n':[1e-6,-0.0,2**63-1], 'text':'é😀'}
+    text = canonical_json(payload)
+    monkeypatch.setattr(snapshots,'_OWNED_HEADER_ENCODER',None)
     assert snapshots._decode_evidence({'payload_json':text,'payload_hash':hashlib.sha256(text.encode()).hexdigest()})['payload']==payload
 
 

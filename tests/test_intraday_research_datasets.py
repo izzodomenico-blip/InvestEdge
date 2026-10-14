@@ -16,7 +16,9 @@ def _bundle_query_fixture():
 
     db = sqlite3.connect(':memory:')
     db.executescript('''CREATE TABLE intraday_research_bundle_children(bundle_id,snapshot_id);
-        CREATE TABLE intraday_dataset_members(id INTEGER PRIMARY KEY,snapshot_id,news_link_id,payload_json,
+        CREATE TABLE intraday_dataset_members(id INTEGER PRIMARY KEY,snapshot_id,member_kind,
+            observation_id,news_version_id,news_link_id,event_version_id,identity_version_id,
+            calendar_version_id,universe_snapshot_id,capture_event_id,payload_json,
             UNIQUE(snapshot_id,news_link_id));
         CREATE TABLE intraday_news_links(id INTEGER PRIMARY KEY,news_version_id);
         CREATE INDEX idx_intraday_news_links_news ON intraday_news_links(news_version_id,id);
@@ -33,10 +35,10 @@ def _bundle_query_fixture():
             changed = reference | {'projection':{'available_at_ns':10 if snapshot_id==2 else 20}}
             body = {'reference':changed,'replay':True,'dependencies':[ref('intraday_capture_events',1,20)]}
             link_id = reference['id'] if reference['table']=='intraday_news_links' else None
-            db.execute('INSERT INTO intraday_dataset_members(snapshot_id,news_link_id,payload_json) VALUES(?,?,?)',
-                       (snapshot_id,link_id,json.dumps(body)))
-    db.execute('INSERT INTO intraday_dataset_members(snapshot_id,news_link_id,payload_json) VALUES(?,?,?)',
-        (3,3,json.dumps({'reference':ref('intraday_news_links',3,1),'replay':True,'dependencies':[]})))
+            db.execute('INSERT INTO intraday_dataset_members(snapshot_id,member_kind,observation_id,news_link_id,payload_json) VALUES(?,?,?,?,?)',
+                       (snapshot_id,'NEWS_LINK' if link_id else 'OBSERVATION',None if link_id else reference['id'],link_id,json.dumps(body)))
+    db.execute('INSERT INTO intraday_dataset_members(snapshot_id,member_kind,news_link_id,payload_json) VALUES(?,?,?,?)',
+        (3,'NEWS_LINK',3,json.dumps({'reference':ref('intraday_news_links',3,1),'replay':True,'dependencies':[]})))
     calls = []
     def extract(text, path):
         value = json.loads(text)
@@ -52,6 +54,24 @@ def _bundle_query_fixture():
     return db,DatasetService(reader),calls
 
 
+def test_source_scope_reads_current_secret_values_without_allocating_named_pairs(monkeypatch):
+    from backend.app.intraday.snapshots import _ValidatedSources
+    s = prepared()
+    reader = service(s)
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    def forbidden():
+        raise AssertionError('NAMED_SECRET_PAIRS_IN_HOT_FENCE')
+    monkeypatch.setattr(reader,'_secret_fields',forbidden)
+    scope.check(reader)
+    assert reader._read_signature()==scope.signature
+    # The same settings object can be mutated through its mapping despite
+    # the frozen dataclass; every fence must still read the current value.
+    vars(reader.archive.settings)['alpaca_api_secret_key']='offline-sensitive-fixture'
+    with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING'):
+        scope.check(reader)
+    assert reader._read_signature()!=scope.signature
+
+
 def test_bundle_count_deduplicates_typed_identity_without_ranking_projections():
     db,research,calls = _bundle_query_fixture()
     try:
@@ -59,6 +79,81 @@ def test_bundle_count_deduplicates_typed_identity_without_ranking_projections():
         assert research._bundle_count(1)==1003
         assert not calls
         assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_bundle_count_never_decodes_primary_member_reference_text():
+    db,research,_ = _bundle_query_fixture()
+    def extract(text,path):
+        assert path!='$.reference', 'PRIMARY_REFERENCE_DECODE_FOR_TYPED_COUNT'
+        value = json.loads(text)
+        for key in path[2:].split('.'):
+            if not isinstance(value,dict) or key not in value:
+                return None
+            value = value[key]
+        return json.dumps(value,separators=(',',':')) if isinstance(value,(dict,list)) else value
+    db.create_function('json_extract',2,extract,deterministic=True)
+    try:
+        before = db.total_changes
+        assert research._bundle_count(1)==1003
+        assert research._bundle_count(2)==1
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
+def test_replay_member_keys_are_read_from_partial_index_without_payload_table_fetch():
+    s = prepared()
+    cases = (('OBSERVATION','observation_id'),('NEWS','news_version_id'),('NEWS_LINK','news_link_id'),
+             ('EVENT','event_version_id'),('IDENTITY','identity_version_id'),('CALENDAR','calendar_version_id'),
+             ('UNIVERSE','universe_snapshot_id'),('CAPTURE_EVENT','capture_event_id'))
+    source_id = 'CASE member_kind '+' '.join(f"WHEN '{kind}' THEN {column}" for kind,column in cases)+' END'
+    query = f'''SELECT member_kind,{source_id} FROM intraday_dataset_members
+        WHERE snapshot_id=? AND json_extract(payload_json,'$.replay')=1'''
+    plan = s.db.execute('EXPLAIN QUERY PLAN '+query,(1,)).fetchall()
+    assert any('idx_intraday_dataset_member_replay_keys' in row[3] for row in plan)
+    rootpage = s.db.execute("SELECT rootpage FROM sqlite_master WHERE name='intraday_dataset_members'").fetchone()[0]
+    operations = s.db.execute('EXPLAIN '+query,(1,)).fetchall()
+    table_cursors = {row[2] for row in operations if row[1]=='OpenRead' and row[3]==rootpage}
+    assert not any(row[1]=='Column' and row[2] in table_cursors for row in operations)
+    assert not any(row[1]=='Function' and row[5].startswith('json_') for row in operations)
+
+
+def test_bundle_reference_ranking_sorts_typed_identity_and_keeps_exact_v1_ties():
+    from backend.app.intraday_research.datasets import _BUNDLE_REFS
+
+    db,research,_ = _bundle_query_fixture()
+    refs = []
+    for source_id, available in enumerate((0,9,10,99,2**63-2,2**63-1,None),20000):
+        for extra in (True,1,False,0,'é😀\\\n'):
+            projection = {'tie':extra}
+            if available is not None:
+                projection['available_at_ns'] = available
+            reference = {'table':'intraday_observations','id':source_id,'projection':projection}
+            refs.append(reference)
+            db.execute('INSERT INTO intraday_dataset_members(snapshot_id,member_kind,observation_id,payload_json) VALUES(?,?,?,?)',
+                (1,'OBSERVATION',source_id,json.dumps({'reference':reference,'replay':True,'dependencies':[]})))
+    query = _BUNDLE_REFS+''' SELECT reference_json FROM refs
+        ORDER BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')'''
+    try:
+        # Both queries also order the final output by identity. The ranking
+        # sorter itself must compare only the two identity keys, not full refs.
+        plan = db.execute('EXPLAIN '+query,{'snapshot':1}).fetchall()
+        sort_keys = [row[5] for row in plan if row[1]=='SorterOpen']
+        assert sort_keys and all(value.startswith('k(2,') for value in sort_keys)
+        actual = {json.loads(row[0])['id']:row[0] for row in db.execute(query,{'snapshot':1})
+                  if json.loads(row[0])['id']>=20000}
+        # JSON1 reference strings use compact separators and retain input key
+        # order. Compare exact text so True/1 and Unicode ties stay distinct.
+        expected = {}
+        for ref in refs:
+            text = json.dumps(ref,separators=(',',':'),ensure_ascii=True)
+            rank = (ref['projection'].get('available_at_ns',2**63-1),text)
+            if ref['id'] not in expected or rank<expected[ref['id']]:
+                expected[ref['id']] = rank
+        assert actual=={key:value[1] for key,value in expected.items()}
+        assert research._bundle_count(1)==1010
     finally:
         db.close()
 
@@ -72,8 +167,8 @@ def test_reference_dependency_scan_uses_partial_index_and_preserves_all_nonempty
     sql = _CHILD_REFS if bundle else _REFS_SQL
     relation = 'child_refs' if bundle else 'refs'
     try:
-        db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,payload_json) VALUES(?,?)',
-            [(1,json.dumps({'reference':{'table':'intraday_observations','id':10000+i},
+        db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,member_kind,observation_id,payload_json) VALUES(?,?,?,?)',
+            [(1,'OBSERVATION',10000+i,json.dumps({'reference':{'table':'intraday_observations','id':10000+i},
                             'replay':True,'dependencies':[]})) for i in range(50)])
         query = sql+f' SELECT reference_json FROM {relation}'
         before = db.total_changes
@@ -124,8 +219,8 @@ def test_bundle_news_links_include_dependency_references_and_exclude_audit_membe
         return json.dumps({'reference':{'table':'intraday_observations','id':9000,
             'projection':{'available_at_ns':available}},'replay':replay,
             'dependencies':[{'table':'intraday_news_links','id':3,'projection':{'available_at_ns':available}}]})
-    db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,payload_json) VALUES(?,?)',
-                   [(1,body(15,True)),(2,body(5,True)),(1,body(1,False))])
+    db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,member_kind,observation_id,payload_json) VALUES(?,?,?,?)',
+                   [(1,'OBSERVATION',9000,body(15,True)),(2,'OBSERVATION',9000,body(5,True)),(1,'OBSERVATION',9000,body(1,False))])
     try:
         before = db.total_changes
         assert research._links(1,9)==[{'id':1,'projection':{'available_at_ns':10}},
@@ -327,6 +422,135 @@ def test_identical_child_references_reuse_completed_validation_but_check_each_ch
         assert s.db.total_changes==before
     finally:
         s.db.set_trace_callback(None)
+        scope.close()
+
+
+def test_distinct_children_reuse_member_canonical_proof_but_keep_hash_and_closure(monkeypatch):
+    import hashlib
+
+    from test_intraday_snapshots import freeze
+
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    first,second = freeze(s),freeze(s)
+    raw = s.db.execute('SELECT payload_json FROM intraday_dataset_members '
+        'WHERE snapshot_id=? AND observation_id=1',(second.snapshot_id,)).fetchone()[0]
+    body = json.loads(raw)
+    scope = snapshots._ValidatedSources(reader,67108864,reader._read_signature())
+    try:
+        reader.open(first.snapshot_id,_source_scope=scope)
+        walks,hashes,closures = [],[],[]
+        original_walk,original_hash = snapshots._canonical_evidence_bytes,hashlib.sha256
+        original_closure = reader._closure_batch
+        def walk(value,raw_utf8):
+            if value==body:
+                walks.append(value)
+            return original_walk(value,raw_utf8)
+        def hashed(value=b'',*args,**kwargs):
+            if value==raw.encode():
+                hashes.append(True)
+            return original_hash(value,*args,**kwargs)
+        def closure(snapshot_id,rows):
+            closures.extend(snapshot_id for row in rows if row['table']=='intraday_observations')
+            return original_closure(snapshot_id,rows)
+        monkeypatch.setattr(snapshots,'_canonical_evidence_bytes',walk)
+        monkeypatch.setattr(hashlib,'sha256',hashed)
+        monkeypatch.setattr(reader,'_closure_batch',closure)
+        actual = reader.open(second.snapshot_id,_source_scope=scope)
+        assert actual.digest==first.digest and actual.snapshot_id!=first.snapshot_id
+        assert not walks
+        assert hashes and closures==[second.snapshot_id]
+    finally:
+        scope.close()
+
+
+def test_child_member_validation_reads_only_used_columns_and_decodes_only_payload(monkeypatch):
+    from test_intraday_snapshots import freeze
+
+    import backend.app.intraday.snapshots as snapshots
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    decoded,queries = [],[]
+    original = snapshots._decode_evidence
+    def decode(raw,**kwargs):
+        if 'reference' in json.loads(raw['payload_json']):
+            decoded.append(set(raw))
+        return original(raw,**kwargs)
+    monkeypatch.setattr(snapshots,'_decode_evidence',decode)
+    s.db.set_trace_callback(queries.append)
+    try:
+        result = reader.open(saved.snapshot_id)
+        assert result.digest==saved.digest
+        assert decoded and all(fields=={'payload_json','payload_hash'} for fields in decoded)
+        assert not any('SELECT * FROM intraday_dataset_members WHERE snapshot_id=' in query for query in queries)
+    finally:
+        s.db.set_trace_callback(None)
+
+
+@pytest.mark.parametrize('variant', ['whitespace','extra','dependencies','audit','projection',
+                                    'pending','discard','eviction','small_budget','bad_hash'])
+def test_member_canonical_proof_falls_back_on_any_unattested_body_and_still_checks_hash(monkeypatch,variant):
+    import hashlib
+
+    from test_intraday_snapshots import freeze
+
+    import backend.app.intraday.snapshots as snapshots
+    from backend.app.intraday.contracts import canonical_json
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = freeze(s)
+    raw = dict(s.db.execute('SELECT payload_json,payload_hash FROM intraday_dataset_members '
+        'WHERE snapshot_id=? AND observation_id=1',(saved.snapshot_id,)).fetchone())
+    scope = snapshots._ValidatedSources(reader,32768 if variant=='small_budget' else 67108864,reader._read_signature())
+    try:
+        reader.open(saved.snapshot_id,_source_scope=scope)
+        body = json.loads(raw['payload_json'])
+        ref = body['reference']
+        if variant=='extra':
+            body['extra'] = 1
+        elif variant=='dependencies':
+            body['dependencies'] = [ref.copy()]
+        elif variant=='audit':
+            body['replay'] = False
+        elif variant=='projection':
+            ref['projection']['capture_ingest_sequence'] = True
+        elif variant in {'pending','discard'}:
+            page = scope.pages[(ref['table'],ref['id']//scope._PAGE_IDS)]
+            page[2][ref['id']%scope._PAGE_IDS] |= 128
+            if variant=='discard':
+                scope.finish_child(valid=False)
+        elif variant=='eviction':
+            scope.pages.clear()
+        raw['payload_json'] = canonical_json(body)
+        if variant=='whitespace':
+            raw['payload_json'] = ' '+raw['payload_json']
+        raw['payload_hash'] = hashlib.sha256(raw['payload_json'].encode()).hexdigest()
+        if variant=='bad_hash':
+            raw['payload_hash'] = '0'*64
+        walks = []
+        original = snapshots._canonical_evidence_bytes
+        def walk(value,raw_utf8):
+            walks.append(True)
+            return original(value,raw_utf8)
+        monkeypatch.setattr(snapshots,'_canonical_evidence_bytes',walk)
+        if variant in {'whitespace','bad_hash'}:
+            with pytest.raises(ValueError,match='METADATA_INVALID'):
+                snapshots._decode_evidence(raw,_member_scope=scope)
+        else:
+            assert snapshots._decode_evidence(raw,_member_scope=scope)['payload']==body
+        assert bool(walks)==(variant!='bad_hash')
+    finally:
         scope.close()
 
 

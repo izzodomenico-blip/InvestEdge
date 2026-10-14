@@ -1159,6 +1159,11 @@ def _intraday_schema() -> tuple[str, str]:
     indexes.append("""CREATE INDEX IF NOT EXISTS idx_intraday_dataset_member_dependencies
         ON intraday_dataset_members(snapshot_id)
         WHERE json_array_length(payload_json,'$.dependencies')>0;""")
+    member_source_id = 'CASE member_kind '+' '.join(
+        f"WHEN '{kind}' THEN {column}" for kind,column in zip(member_kinds,refs,strict=True))+' END'
+    indexes.append(f"""CREATE INDEX IF NOT EXISTS idx_intraday_dataset_member_replay_keys
+        ON intraday_dataset_members(snapshot_id,member_kind,{member_source_id})
+        WHERE json_extract(payload_json,'$.replay')=1;""")
     return "\n".join(sql), "\n".join(indexes)
 
 

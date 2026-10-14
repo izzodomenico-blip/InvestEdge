@@ -9,7 +9,14 @@ from dataclasses import asdict, dataclass
 from backend.app.data_providers.alpaca_metadata import MetadataError, decode_row
 from backend.app.data_providers.transport import SafeProviderTransport
 from backend.app.intraday.quality import planned_listing_ids, quality_report, validate_manifest
-from backend.app.intraday.snapshots import FrozenTimeline, SnapshotError, _StagedTimeline
+from backend.app.intraday.snapshots import (
+    _MEMBER_SOURCE_ID_SQL,
+    _MEMBER_SOURCE_TABLE_SQL,
+    FrozenTimeline,
+    SnapshotError,
+    _locator_refs_sql,
+    _StagedTimeline,
+)
 from backend.app.intraday_research.contracts import ResearchNamespace, digest, integer
 
 
@@ -48,11 +55,15 @@ _CHILD_REFS = '''WITH child_refs AS (
       AND json_array_length(m.payload_json,'$.dependencies')>0
 )'''
 
-_BUNDLE_REFS = _CHILD_REFS + ''', ranked_refs AS (
-    SELECT *,ROW_NUMBER() OVER(PARTITION BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
-        ORDER BY COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807),reference_json) AS ordinal
-    FROM child_refs
-), refs AS (SELECT reference_json,1 AS replay FROM ranked_refs WHERE ordinal=1)'''
+# Child validation bounds availability to nonnegative int64. Its fixed-width
+# ASCII prefix preserves the v1 (availability, exact reference text) rank while
+# grouping only typed identity, without a separate window sort of full refs.
+_BUNDLE_REFS = _CHILD_REFS + ''', refs AS (
+    SELECT substr(MIN((printf('%019d',COALESCE(json_extract(reference_json,'$.projection.available_at_ns'),
+        9223372036854775807))||reference_json) COLLATE BINARY),20) AS reference_json,1 AS replay
+    FROM child_refs GROUP BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
+)'''
+_BUNDLE_ORDER_REFS = _locator_refs_sql(bundle=True)
 
 # Child validation precedes this selector. Start from the requested news's
 # typed links; dependencies use their small partial index and retain all refs.
@@ -239,9 +250,17 @@ class DatasetService:
     def _bundle_count(self, bundle_id):
         # All child references have already passed full validation. Counting
         # typed identities needs no projection ranking or reference sorting.
-        return self.db.execute(_CHILD_REFS + ''' SELECT COUNT(*) FROM (
-            SELECT json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
-            FROM child_refs GROUP BY 1,2)''', {'snapshot':bundle_id}).fetchone()[0]
+        return self.db.execute(f'''WITH identities AS (
+            SELECT {_MEMBER_SOURCE_TABLE_SQL} AS source_table,{_MEMBER_SOURCE_ID_SQL} AS source_id
+            FROM intraday_research_bundle_children c JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id
+            WHERE c.bundle_id=:snapshot AND json_extract(m.payload_json,'$.replay')=1
+            UNION ALL SELECT json_extract(dependency.value,'$.table'),json_extract(dependency.value,'$.id')
+            FROM intraday_research_bundle_children c JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id,
+                json_each(m.payload_json,'$.dependencies') dependency
+            WHERE c.bundle_id=:snapshot AND json_array_length(m.payload_json,'$.dependencies')>0
+                AND json_extract(m.payload_json,'$.replay')=1
+        ) SELECT COUNT(*) FROM (SELECT source_table,source_id FROM identities GROUP BY 1,2)''',
+            {'snapshot':bundle_id}).fetchone()[0]
 
     def open_bundle(self, bundle_id):
         try:
@@ -339,7 +358,8 @@ class DatasetService:
             {'evidence':evidence,'digest':header['bundle_digest']},candidates):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
         timeline = FrozenTimeline(self.snapshots,bundle_id,manifest,count,refs_sql=_BUNDLE_REFS,
-                                  links=lambda news_id:self._links(bundle_id,news_id),_signature=signature)
+                                  links=lambda news_id:self._links(bundle_id,news_id),_signature=signature,
+                                  _order_refs_sql=_BUNDLE_ORDER_REFS)
         timeline.validator = lambda:self.open_bundle(bundle_id)
         result = ValidatedBundle(bundle_id,header['bundle_digest'],manifest,evidence['report'],timeline,seal['recorded_at_ns'])
         if signature!=self.snapshots._read_signature():

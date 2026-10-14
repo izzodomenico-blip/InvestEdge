@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -56,6 +57,46 @@ _REFS_SQL = """WITH refs AS (
 )"""
 
 
+_MEMBER_SOURCE_TABLE_SQL = 'CASE m.member_kind '+ ' '.join(
+    f"WHEN '{kind}' THEN '{table}'" for table,(kind,column) in _REFERENCES.items())+' END'
+_MEMBER_SOURCE_ID_SQL = 'CASE m.member_kind '+ ' '.join(
+    f"WHEN '{kind}' THEN m.{column}" for kind,column in _REFERENCES.values())+' END'
+
+
+def _locator_refs_sql(*, bundle=False):
+    """Only validated handles use these small, exact member locators."""
+    relation = ('FROM intraday_research_bundle_children c JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id'
+                if bundle else 'FROM intraday_dataset_members m')
+    scope = 'c.bundle_id=:snapshot' if bundle else 'm.snapshot_id=:snapshot'
+    root_ref = ",json_extract(m.payload_json,'$.reference') AS reference_json" if bundle else ''
+    dependency_ref = ',dependency.value' if bundle else ''
+    inputs = f'''SELECT m.id AS member_id,-1 AS dependency_ordinal,
+        {_MEMBER_SOURCE_TABLE_SQL} AS source_table,{_MEMBER_SOURCE_ID_SQL} AS source_id{root_ref}
+        {relation} WHERE {scope} AND json_extract(m.payload_json,'$.replay')=1
+        UNION ALL SELECT m.id,dependency.key,json_extract(dependency.value,'$.table'),
+            json_extract(dependency.value,'$.id'){dependency_ref}
+        {relation},json_each(m.payload_json,'$.dependencies') dependency
+        WHERE {scope} AND json_extract(m.payload_json,'$.replay')=1
+          AND json_array_length(m.payload_json,'$.dependencies')>0'''
+    if not bundle:
+        return f'WITH refs AS ({inputs})'
+    # Canonical reference objects are prefix-free. A locator suffix changes
+    # only ties with identical reference text, whose selected bytes are equal.
+    # Member IDs retain the entire signed int64 domain (including INT64_MIN).
+    return f'''WITH child_refs AS NOT MATERIALIZED ({inputs}),choices AS NOT MATERIALIZED (
+        SELECT source_table,source_id,MIN(printf('%019d',COALESCE(
+            json_extract(reference_json,'$.projection.available_at_ns'),9223372036854775807))
+            ||reference_json||printf('%020d',member_id)||printf('%019d',dependency_ordinal+1)) AS choice
+        FROM child_refs GROUP BY source_table,source_id
+    ),refs AS MATERIALIZED (
+        SELECT source_table,source_id,CAST(substr(choice,-39,20) AS INTEGER) AS member_id,
+            CAST(substr(choice,-19) AS INTEGER)-1 AS dependency_ordinal FROM choices
+    )'''
+
+
+_ORDER_REFS_SQL = _locator_refs_sql()
+
+
 class SnapshotError(MetadataError):
     """Additional fixed public errors without reflecting caller or SQL text."""
     def __init__(self, code):
@@ -93,6 +134,7 @@ def _json_integer(text):
 
 
 _EVIDENCE_DECODER = json.JSONDecoder(parse_int=_json_integer)
+_LONG_INTEGER = re.compile(rb'(?<![0-9])[0-9]{309}')
 
 
 def _native_canonical(value):
@@ -116,7 +158,22 @@ def _native_canonical(value):
     return native
 
 
-def _decode_evidence(raw):
+def _canonical_evidence_bytes(payload, raw_utf8):
+    # Parsed JSON is acyclic. The stdlib C encoder preserves v1 sorting and
+    # float bytes, and rejects nonfinite floats. Integers with at most 308
+    # decimal digits are finite as floats; longer digit runs (including false
+    # positives inside strings) retain the full v1 numeric validation below.
+    if _OWNED_HEADER_ENCODER is not None and _LONG_INTEGER.search(raw_utf8) is None:
+        return ''.join(_OWNED_HEADER_ENCODER(payload,0)).encode()
+    if _native_canonical(payload):
+        try:
+            return to_json(payload)
+        except ValueError:
+            pass
+    return _envelope_bytes(payload)
+
+
+def _decode_evidence(raw, *, _member_scope=None):
     """Same canonical/hash contract, with JSON-native types validated once."""
     if raw is None:
         raise MetadataError('METADATA_MISSING')
@@ -133,13 +190,10 @@ def _decode_evidence(raw):
             payload = _EVIDENCE_DECODER.decode(row['payload_json'])
         if type(payload) is not dict:
             raise ValueError
-        if _native_canonical(payload):
-            try:
-                encoded = to_json(payload)
-            except ValueError:
-                encoded = _envelope_bytes(payload)
+        if _member_scope is not None and _member_scope.canonical_member(payload,raw_utf8):
+            encoded = raw_utf8
         else:
-            encoded = _envelope_bytes(payload)
+            encoded = _canonical_evidence_bytes(payload,raw_utf8)
         if (len(encoded)>1_048_576 or encoded!=raw_utf8
             or hashlib.sha256(encoded).hexdigest()!=row['payload_hash']):
             raise ValueError
@@ -225,6 +279,8 @@ def _reference_batches(cursor, *, max_bytes=2_097_152):
     """Bound canonical reference texts before allocating their decoded trees."""
     batch, size = [], 0
     for item in cursor:
+        if type(item[0]) is not str:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
         item_size = len(item[0].encode())
         if item_size > max_bytes:
             raise SnapshotError('RESOURCE_LIMIT')
@@ -257,10 +313,11 @@ class ValidatedDataset:
 class FrozenTimeline:
     """Re-iterable exact references. Full validation precedes every public handle."""
     def __init__(self, reader, snapshot_id, manifest, count, *, max_occurrences=10_000, max_bytes=8_388_608,
-                 refs_sql=_REFS_SQL, links=None, _signature=None):
+                 refs_sql=_REFS_SQL, links=None, _signature=None, _order_refs_sql=None):
         self.reader, self.snapshot_id, self.manifest, self.count = reader, snapshot_id, manifest, count
         self.max_occurrences, self.max_bytes = max_occurrences, max_bytes
         self.refs_sql = refs_sql
+        self._order_refs_sql = (_ORDER_REFS_SQL if refs_sql==_REFS_SQL else None) if _order_refs_sql is None else _order_refs_sql
         self.links = links or (lambda news_id: reader._frozen_links(snapshot_id,news_id))
         self.validator = lambda: reader.open(snapshot_id,max_occurrences=max_occurrences,max_bytes=max_bytes)
         self.signature = reader._read_signature() if _signature is None else _signature
@@ -279,6 +336,35 @@ class FrozenTimeline:
             self.signature = self.reader._read_signature()
 
     def _ordered(self, cutoff):
+        if self._order_refs_sql is None:
+            # Preserve custom reference selectors used by earlier callers.
+            return self._legacy_ordered(cutoff)
+        path = "(CASE WHEN r.dependency_ordinal<0 THEN '$.reference' ELSE '$.dependencies['||r.dependency_ordinal||']' END)"
+        def projection(field):
+            return f"json_extract(m.payload_json,{path}||'.projection.{field}')"
+        selects = []
+        for table in sorted(_SOURCE_TABLES):
+            selects.append(f'''SELECT r.member_id,r.dependency_ordinal,
+                raw.received_at_ns,raw.capture_id,raw.ingest_sequence,raw.id,'{table}' AS source_table,
+                COALESCE({projection('available_at_ns')},raw.available_at_ns) AS available,
+                COALESCE({projection('admission_id')},{projection('publication_id')},raw.id) AS proof_id,
+                COALESCE({projection('capture_ingest_sequence')},
+                    json_extract(raw.payload_json,'$.intake_sequence'),raw.ingest_sequence) AS intake
+                FROM refs r JOIN intraday_dataset_members m ON m.id=r.member_id
+                JOIN {table} raw ON raw.id=r.source_id WHERE r.source_table='{table}' ''')
+        query = self._order_refs_sql+',occurrences AS ('+' UNION ALL '.join(selects)+'''),visible AS (
+            SELECT *,MIN(proof_id) OVER(PARTITION BY received_at_ns,capture_id) AS anchor
+            FROM occurrences WHERE available<=:cutoff
+        ),ordered AS (
+            SELECT member_id,dependency_ordinal FROM visible
+            ORDER BY available,received_at_ns,anchor,intake,proof_id,ingest_sequence,source_table,id
+        ) SELECT (SELECT json_extract(m.payload_json,
+            CASE WHEN o.dependency_ordinal<0 THEN '$.reference'
+                ELSE '$.dependencies['||o.dependency_ordinal||']' END)
+            FROM intraday_dataset_members m WHERE m.id=o.member_id) AS reference_json FROM ordered o'''
+        return self.reader.connection.execute(query,{'snapshot':self.snapshot_id,'cutoff':cutoff})
+
+    def _legacy_ordered(self, cutoff):
         selects = []
         for table in sorted(_SOURCE_TABLES):
             selects.append(f"""SELECT r.reference_json,raw.received_at_ns,raw.capture_id,raw.ingest_sequence,
@@ -308,6 +394,7 @@ class FrozenTimeline:
         self._fence()
         cursor = self._ordered(cutoff)
         for items in _reference_batches(cursor):
+            self._fence(buffered=True)
             for rows in self.reader._hydrated_batches([json.loads(item[0]) for item in items],validated=True):
                 if _peak_rss_bytes()>self.manifest.get('resources',{}).get('max_rss_bytes',2_147_483_648):
                     raise SnapshotError('RESOURCE_LIMIT')
@@ -383,6 +470,8 @@ class _ValidatedSources:
     _PAGE_CHARGE = _PAGE_IDS * _ENTRY_BYTES + 128 + _PAGE_IDS + 1024
     _PROMOTE = bytes(value & 127 for value in range(256))
     _DISCARD = bytes(0 if value & 128 else value for value in range(256))
+    _MEMBER_PREFIX = b'{"dependencies":[],"reference":'
+    _MEMBER_SUFFIX = b',"replay":true}'
 
     def __init__(self, reader, budget, signature):
         self.reader, self.connection, self.signature = reader, reader.connection, signature
@@ -398,7 +487,7 @@ class _ValidatedSources:
     def check(self, reader, *, full=False):
         if (self.closed or reader is not self.reader or reader.connection is not self.connection
             or self.connection.total_changes-getattr(reader,'_scratch_changes',0) != self.signature[0]
-            or reader._secret_fields() != self.signature[3]
+            or reader._secret_state() != self.signature[3]
             or full and (self._namespace()!=self.namespace or reader._read_signature()!=self.signature)):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
 
@@ -497,6 +586,34 @@ class _ValidatedSources:
         row._byte_bound = size
         self.pages.move_to_end(key)
         return row
+
+    def canonical_member(self, payload, raw_utf8):
+        """Reuse only an exact canonical reference from a completed child.
+
+        The fixed v1 wrapper and the promoted full-reference SHA attest these
+        bytes without retaining a second proof. The caller still verifies the
+        current member SHA, child digest, typed binding and closure.
+        """
+        self.check(self.reader)
+        if not raw_utf8.startswith(self._MEMBER_PREFIX) or not raw_utf8.endswith(self._MEMBER_SUFFIX):
+            return False
+        reference = payload.get('reference')
+        if type(reference) is not dict:
+            return False
+        table,source_id = reference.get('table'),reference.get('id')
+        if table not in _SOURCE_TABLES or type(source_id) is not int or source_id<=0:
+            return False
+        key,offset = (table,source_id//self._PAGE_IDS),source_id%self._PAGE_IDS
+        page = self.pages.get(key)
+        if (page is None or not page[1][offset//8] & (1 << (offset%8))
+            or not page[2][offset] or page[2][offset] & 128):
+            return False
+        position = self._ENTRY_BYTES*offset+32
+        reference_bytes = memoryview(raw_utf8)[len(self._MEMBER_PREFIX):-len(self._MEMBER_SUFFIX)]
+        if hashlib.sha256(reference_bytes).digest()!=page[0][position:position+32]:
+            return False
+        self.pages.move_to_end(key)
+        return True
 
     def close(self):
         self.pages.clear()
@@ -946,6 +1063,10 @@ class SnapshotService:
         return raw,row,hashlib.sha256(encoded).hexdigest()
 
     def _secret_fields(self):
+        names,values = self._secret_state()
+        return tuple(zip(names,values,strict=True))
+
+    def _secret_state(self):
         settings = self.archive.settings
         if getattr(self,'_secret_settings',None) is not settings:
             self._secret_names = tuple(name for name in vars(settings)
@@ -954,14 +1075,19 @@ class SnapshotService:
                 if self._secret_names and not any('.' in name for name in self._secret_names) else None)
             self._secret_settings = settings
         if self._secret_getter is None:
-            return tuple((name,getattr(settings,name)) for name in self._secret_names)
+            return self._secret_names,tuple(getattr(settings,name) for name in self._secret_names)
         values = self._secret_getter(settings)
         if len(self._secret_names)==1:
             values = (values,)
-        return tuple(zip(self._secret_names,values,strict=True))
+        return self._secret_names,values
 
     def _read_signature(self):
-        secret_fields = self._secret_fields()
+        # A rolled-back TEMP DDL can reuse its schema cookie. Check the names
+        # themselves at every fence; explicit jobs own only timeline_* tables.
+        if self.connection.execute("SELECT 1 FROM temp.sqlite_master WHERE type IN ('table','view') "
+                                   "AND lower(name) GLOB 'intraday_*' LIMIT 1").fetchone():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        secret_fields = self._secret_state()
         return (self.connection.total_changes-getattr(self,'_scratch_changes',0),self.connection.execute('PRAGMA data_version').fetchone()[0],
                 self.connection.execute('PRAGMA schema_version').fetchone()[0],secret_fields)
 
@@ -1570,8 +1696,15 @@ class SnapshotService:
             or json.loads(report['limits_json']) != report['payload']['limits']
             or self.connection.execute('SELECT COUNT(*) FROM intraday_quality_reports WHERE snapshot_id=?', (snapshot_id,)).fetchone()[0] != 1):
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
-        duplicate = self.connection.execute(_REFS_SQL + ''' SELECT 1 FROM refs
-            GROUP BY json_extract(reference_json,'$.table'),json_extract(reference_json,'$.id')
+        # Include audit members too. The full pass below still binds every
+        # canonical reference to its typed key before a handle can escape.
+        duplicate = self.connection.execute(f'''WITH identities AS (
+            SELECT {_MEMBER_SOURCE_TABLE_SQL} AS source_table,{_MEMBER_SOURCE_ID_SQL} AS source_id
+            FROM intraday_dataset_members m WHERE m.snapshot_id=:snapshot
+            UNION ALL SELECT json_extract(dependency.value,'$.table'),json_extract(dependency.value,'$.id')
+            FROM intraday_dataset_members m,json_each(m.payload_json,'$.dependencies') dependency
+            WHERE m.snapshot_id=:snapshot AND json_array_length(m.payload_json,'$.dependencies')>0
+        ) SELECT 1 FROM identities GROUP BY source_table,source_id
             HAVING COUNT(*)>1 LIMIT 1''', {'snapshot': snapshot_id}).fetchone()
         if duplicate:
             raise MetadataError('SNAPSHOT_INPUT_MISSING')
@@ -1626,18 +1759,21 @@ class SnapshotService:
             pending_bytes = 0
         cursor = self.connection.cursor()
         cursor.row_factory = None
-        cursor.execute('SELECT * FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence', (snapshot_id,))
-        keys = tuple(column[0] for column in cursor.description)
+        columns = (*_SCOPE,'ingest_run_id','member_kind',*(column for _,column in _REFERENCES.values()),
+                   'persisted_at_ns','payload_json','payload_hash')
+        cursor.execute(f'SELECT {",".join(columns)} FROM intraday_dataset_members WHERE snapshot_id=? ORDER BY ingest_sequence', (snapshot_id,))
+        positions = {key:index for index,key in enumerate(columns)}
         for values in cursor:
-            raw = dict(zip(keys, values, strict=True))
-            member = _decode_evidence(raw)
+            raw = {'payload_json':values[positions['payload_json']],'payload_hash':values[positions['payload_hash']]}
+            member = (_decode_evidence(raw) if _source_scope is None else
+                      _decode_evidence(raw,_member_scope=_source_scope))
             body = member['payload']
-            if (tuple(member[key] for key in _SCOPE) != namespace or member['ingest_run_id'] != header['ingest_run_id']
+            if (values[:len(_SCOPE)] != namespace or values[positions['ingest_run_id']] != header['ingest_run_id']
                 or type(body['replay']) is not bool or type(body['dependencies']) is not list):
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
             reference = body['reference']
             kind, column = _REFERENCES[reference['table']]
-            if member['member_kind'] != kind or member[column] != reference['id']:
+            if values[positions['member_kind']] != kind or values[positions[column]] != reference['id']:
                 raise MetadataError('SNAPSHOT_INPUT_MISSING')
             text = member['payload_json'].encode()
             if len(text) > max_bytes:
@@ -1645,7 +1781,7 @@ class SnapshotService:
             hasher.update(len(text).to_bytes(8, 'big'))
             hasher.update(text)
             members += 1
-            latest = max(latest, member['persisted_at_ns'])
+            latest = max(latest, values[positions['persisted_at_ns']])
             for ref in chain((reference,), body['dependencies']):
                 if pending and pending_bytes+len(text)>2_097_152:
                     validate_pending()
