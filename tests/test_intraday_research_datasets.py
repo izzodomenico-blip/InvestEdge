@@ -406,10 +406,15 @@ def test_identical_child_references_reuse_completed_validation_but_check_each_ch
     raw_queries = []
     closures = []
     original = reader._closure_batch
+    completed_original = reader._completed_closure_batch
     def closure(snapshot_id,rows):
         closures.extend(row['id'] for row in rows if row['table']=='intraday_observations')
         return original(snapshot_id,rows)
     monkeypatch.setattr(reader,'_closure_batch',closure)
+    def completed_closure(snapshot_id,rows):
+        closures.extend(row['id'] for row in rows if row['table']=='intraday_observations')
+        return completed_original(snapshot_id,rows)
+    monkeypatch.setattr(reader,'_completed_closure_batch',completed_closure)
     before = s.db.total_changes
     try:
         first = reader.open(saved.snapshot_id,_source_scope=scope)
@@ -446,6 +451,7 @@ def test_distinct_children_reuse_member_canonical_proof_but_keep_hash_and_closur
         walks,hashes,closures = [],[],[]
         original_walk,original_hash = snapshots._canonical_evidence_bytes,hashlib.sha256
         original_closure = reader._closure_batch
+        original_completed = reader._completed_closure_batch
         def walk(value,raw_utf8):
             if value==body:
                 walks.append(value)
@@ -460,6 +466,10 @@ def test_distinct_children_reuse_member_canonical_proof_but_keep_hash_and_closur
         monkeypatch.setattr(snapshots,'_canonical_evidence_bytes',walk)
         monkeypatch.setattr(hashlib,'sha256',hashed)
         monkeypatch.setattr(reader,'_closure_batch',closure)
+        def completed_closure(snapshot_id,rows):
+            closures.extend(snapshot_id for row in rows if row['table']=='intraday_observations')
+            return original_completed(snapshot_id,rows)
+        monkeypatch.setattr(reader,'_completed_closure_batch',completed_closure)
         actual = reader.open(second.snapshot_id,_source_scope=scope)
         assert actual.digest==first.digest and actual.snapshot_id!=first.snapshot_id
         assert not walks
@@ -615,6 +625,62 @@ def test_cached_receipt_and_observation_in_same_batch_still_validate_typed_bindi
         completed = [scope.completed(ref,s.clock.now,8388608) for ref in refs]
         assert len(completed)==2 and all(row is not None for row in completed)
         reader._closure_batch(saved.snapshot_id,completed)
+    finally:
+        scope.close()
+
+
+def test_completed_child_checks_current_receipt_membership_without_rehydrating_the_edge(monkeypatch):
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    saved = reader.freeze_window(start_at_ns=OPEN,end_at_ns=OPEN+3*MINUTE,cutoff_ns=s.clock.now,
+        listing_ids=[s.listing],benchmarks={},resources={'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2})
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    closure = reader._closure_batch
+    def fresh_closure(snapshot_id, rows):
+        assert all(row['payload'] for row in rows), 'COMPLETED_EDGE_REHYDRATED'
+        return closure(snapshot_id,rows)
+    monkeypatch.setattr(reader,'_closure_batch',fresh_closure)
+    try:
+        baseline = reader.open(saved.snapshot_id,_source_scope=scope)
+        queries = []
+        s.db.set_trace_callback(queries.append)
+        again = reader.open(saved.snapshot_id,_source_scope=scope)
+        assert again.digest==baseline.digest and list(again.timeline)==list(baseline.timeline)
+        assert any('SELECT capture_event_id FROM intraday_dataset_members' in sql for sql in queries)
+    finally:
+        s.db.set_trace_callback(None)
+        scope.close()
+
+
+@pytest.mark.parametrize('corruption',['missing_receipt','receipt_body'])
+def test_completed_child_still_rejects_corrupt_receipt_in_another_child(corruption):
+    from backend.app.intraday.snapshots import _ValidatedSources
+
+    s = prepared()
+    reader = service(s)
+    reader.register_policy()
+    s.store.persist((event(s),))
+    options = {'start_at_ns':OPEN,'end_at_ns':OPEN+3*MINUTE,'cutoff_ns':s.clock.now,
+        'listing_ids':[s.listing],'benchmarks':{},'resources':{'max_disk_bytes':4*1024**3,'min_free_bytes':512*1024**2}}
+    first,second = reader.freeze_window(**options),reader.freeze_window(**options)
+    member = s.db.execute("SELECT m.id FROM intraday_dataset_members m JOIN intraday_capture_events r "
+        "ON r.id=m.capture_event_id WHERE m.snapshot_id=? AND r.kind='ADMISSION'",(second.snapshot_id,)).fetchone()[0]
+    for trigger in s.db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='intraday_dataset_members'").fetchall():
+        s.db.execute('DROP TRIGGER "'+trigger[0].replace('"','""')+'"')
+    if corruption=='missing_receipt':
+        s.db.execute('DELETE FROM intraday_dataset_members WHERE id=?',(member,))
+    else:
+        s.db.execute("UPDATE intraday_dataset_members SET payload_json='{}' WHERE id=?",(member,))
+    s.db.commit()
+    scope = _ValidatedSources(reader,67108864,reader._read_signature())
+    try:
+        reader.open(first.snapshot_id,_source_scope=scope)
+        with pytest.raises(ValueError,match='SNAPSHOT_INPUT_MISSING|METADATA_INVALID'):
+            reader.open(second.snapshot_id,_source_scope=scope)
     finally:
         scope.close()
 

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=74.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "investedge-native-reader"
+version = "0.1.0"
+requires-python = ">=3.14"
+description = "Optional offline market reader accelerator"
+
+[tool.setuptools]
+py-modules = []
+ext-modules = [{name = "_investedge_reader_native", sources = ["app/intraday/_reader_native.c"]}]

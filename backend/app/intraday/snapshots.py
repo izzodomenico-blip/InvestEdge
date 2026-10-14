@@ -1488,6 +1488,25 @@ class SnapshotService:
         raw['table'] = table
         return raw
 
+    def _completed_closure_batch(self, snapshot_id, rows):
+        """Only promoted exact-reference proofs from this unchanged read scope.
+
+        Source, visibility and receipt binding were checked by a complete prior
+        child. Every member of this child is still validated before returning a
+        handle; only membership of the already attested edge remains here.
+        Audit receipts count too, as in the full closure path.
+        """
+        ids = {row['admission_id'] for row in rows if row.get('admission_id') is not None}
+        pending = tuple(ids)
+        for start in range(0,len(pending),500):
+            part = pending[start:start+500]
+            query = f'''SELECT capture_event_id FROM intraday_dataset_members
+                WHERE snapshot_id=? AND member_kind='CAPTURE_EVENT'
+                AND capture_event_id IN ({','.join('?' for _ in part)})'''
+            ids.difference_update(row[0] for row in self.connection.execute(query,(snapshot_id,*part)))
+        if ids:
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+
     def _closure_batch(self, snapshot_id, rows):
         sources = {(row['table'],row['id']):row for row in rows}
         needed, admissions = set(), set()
@@ -1737,7 +1756,7 @@ class SnapshotService:
             if cached:
                 # A shared proof does not attest inclusion in this child. Its
                 # receipt edges are checked again against this exact snapshot.
-                self._closure_batch(snapshot_id,cached)
+                self._completed_closure_batch(snapshot_id,cached)
                 replay_count += len(cached)
             for rows in self._hydrated_batches(remaining, _source_scope=_source_scope) if remaining else ():
                 if _peak_rss_bytes()>rss_limit:
