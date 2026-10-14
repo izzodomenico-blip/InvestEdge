@@ -366,21 +366,27 @@ class IntradayStore:
         check_ns(cutoff_ns)
         if kind not in {"BAR", "QUOTE", "STATUS", "LULD"}:
             raise StoreError("OBSERVATION_INVALID")
-        sql = """
-            SELECT raw.*, proof.id AS proof_id, proof.payload_json AS proof_json, proof.payload_hash AS proof_hash,
-              proof.available_at_ns AS proof_available
-            FROM intraday_observations raw JOIN intraday_capture_events proof
-              ON proof.observation_id=raw.id AND proof.kind='ADMISSION'
-            WHERE raw.profile_id=? AND raw.data_mode=? AND raw.provenance=? AND raw.replay_grade=?
-              AND raw.kind=? AND proof.available_at_ns<=?
-        """
-        params = (*self.namespace, kind, cutoff_ns)
+        keys = """SELECT id FROM intraday_observations
+            WHERE profile_id=? AND data_mode=? AND provenance=? AND replay_grade=? AND kind=?"""
+        params = (*self.namespace, kind)
         if listing_ids is not None:
             listing_ids = tuple(listing_ids)
             if not listing_ids:
                 return []
-            sql += f" AND raw.listing_id IN ({','.join('?' for _ in listing_ids)})"
+            keys += f" AND listing_id IN ({','.join('?' for _ in listing_ids)})"
             params += listing_ids
+        # Scan the narrow ID index, then reject unavailable receipts before
+        # fetching full RAW envelopes. CROSS JOIN pins this late lookup order;
+        # event-time bounds remain after evidence validation below.
+        sql = f"""WITH source_keys AS MATERIALIZED ({keys})
+            SELECT raw.*, proof.id AS proof_id, proof.payload_json AS proof_json, proof.payload_hash AS proof_hash,
+              proof.available_at_ns AS proof_available
+            FROM source_keys selected CROSS JOIN intraday_capture_events proof
+            CROSS JOIN intraday_observations raw
+            WHERE proof.observation_id=selected.id AND proof.kind='ADMISSION'
+              AND proof.available_at_ns<=? AND raw.id=selected.id
+        """
+        params += (cutoff_ns,)
         rows = self.connection.cursor()
         rows.row_factory = None
         rows.execute(sql, params)

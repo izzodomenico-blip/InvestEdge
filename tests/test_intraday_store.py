@@ -695,7 +695,7 @@ def test_asof_receipt_lookup_uses_covering_index_without_table_fetch():
     assert any('COVERING INDEX idx_intraday_observation_receipt_read' in row[3] for row in plan)
 
 
-def test_asof_source_lookup_covers_the_complete_raw_envelope():
+def test_asof_fetches_the_complete_raw_envelope_only_after_the_visible_receipt():
     s = prepared()
     s.store.persist((event(s,kind='QUOTE'),))
     queries = []
@@ -707,4 +707,24 @@ def test_asof_source_lookup_covers_the_complete_raw_envelope():
     assert len(rows) == 1 and rows[0]['payload']['raw']['bp'] == 100
     query = next(sql for sql in queries if 'SELECT raw.*, proof.id AS proof_id' in sql)
     plan = s.db.execute('EXPLAIN QUERY PLAN '+query).fetchall()
-    assert any('SEARCH raw USING COVERING INDEX idx_intraday_observation_source_read' in row[3] for row in plan)
+    details = [row[3] for row in plan]
+    assert not any('idx_intraday_observation_source_read' in detail for detail in details)
+    assert any('COVERING INDEX idx_intraday_observations_logical' in detail for detail in details)
+    receipt = next(index for index,detail in enumerate(details) if 'SEARCH proof ' in detail)
+    raw = next(index for index,detail in enumerate(details) if 'SEARCH raw ' in detail)
+    assert receipt < raw
+
+
+@pytest.mark.parametrize('bounds', [{'start_ns':OPEN+1}, {'end_ns':OPEN}])
+def test_asof_validates_visible_raw_before_applying_event_time_bounds(bounds):
+    s = prepared()
+    ids = s.store.persist((event(s,kind='QUOTE'),))
+    # Corruption is confined to this in-memory fixture. A late lookup must not
+    # silently hide invalid evidence merely because its event is out of range.
+    triggers = s.db.execute("SELECT name FROM sqlite_master WHERE type='trigger' "
+                            "AND tbl_name='intraday_observations'").fetchall()
+    for trigger in triggers:
+        s.db.execute('DROP TRIGGER "'+trigger[0].replace('"','""')+'"')
+    s.db.execute('UPDATE intraday_observations SET payload_hash=? WHERE id=?',('0'*64,ids[0]))
+    with pytest.raises(ValueError,match='METADATA_INVALID|OBSERVATION_INVALID'):
+        s.store.read_as_of('QUOTE',cutoff_ns=s.clock.now,listing_ids=(s.listing,),**bounds)

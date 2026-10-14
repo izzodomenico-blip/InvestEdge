@@ -63,6 +63,30 @@ def test_bundle_count_deduplicates_typed_identity_without_ranking_projections():
         db.close()
 
 
+@pytest.mark.parametrize('bundle', [False, True])
+def test_reference_dependency_scan_uses_partial_index_and_preserves_all_nonempty_arrays(bundle):
+    from backend.app.intraday.snapshots import _REFS_SQL
+    from backend.app.intraday_research.datasets import _CHILD_REFS
+
+    db,_,_ = _bundle_query_fixture()
+    sql = _CHILD_REFS if bundle else _REFS_SQL
+    relation = 'child_refs' if bundle else 'refs'
+    try:
+        db.executemany('INSERT INTO intraday_dataset_members(snapshot_id,payload_json) VALUES(?,?)',
+            [(1,json.dumps({'reference':{'table':'intraday_observations','id':10000+i},
+                            'replay':True,'dependencies':[]})) for i in range(50)])
+        query = sql+f' SELECT reference_json FROM {relation}'
+        before = db.total_changes
+        plan = db.execute('EXPLAIN QUERY PLAN '+query,{'snapshot':1}).fetchall()
+        assert any('idx_intraday_dataset_member_dependencies' in row[3] for row in plan)
+        rows = [json.loads(row[0]) for row in db.execute(query,{'snapshot':1})]
+        assert sum(row['table']=='intraday_capture_events' for row in rows)==1002*(2 if bundle else 1)
+        assert sum(row['id']>=10000 for row in rows)==50
+        assert db.total_changes==before
+    finally:
+        db.close()
+
+
 def test_bundle_news_links_rank_only_matching_news_and_keep_earliest_reference():
     db,research,calls = _bundle_query_fixture()
     try:

@@ -52,7 +52,7 @@ _REFS_SQL = """WITH refs AS (
     UNION ALL
     SELECT m.id,dependency.value,json_extract(m.payload_json,'$.replay')
     FROM intraday_dataset_members m,json_each(m.payload_json,'$.dependencies') dependency
-    WHERE m.snapshot_id=:snapshot
+    WHERE m.snapshot_id=:snapshot AND json_array_length(m.payload_json,'$.dependencies')>0
 )"""
 
 

@@ -45,6 +45,7 @@ _CHILD_REFS = '''WITH child_refs AS (
     SELECT dependency.value FROM intraday_research_bundle_children c
     JOIN intraday_dataset_members m ON m.snapshot_id=c.snapshot_id,json_each(m.payload_json,'$.dependencies') dependency
     WHERE c.bundle_id=:snapshot AND json_extract(m.payload_json,'$.replay')=1
+      AND json_array_length(m.payload_json,'$.dependencies')>0
 )'''
 
 _BUNDLE_REFS = _CHILD_REFS + ''', ranked_refs AS (
