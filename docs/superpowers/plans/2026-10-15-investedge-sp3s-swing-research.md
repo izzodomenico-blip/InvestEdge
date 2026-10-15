@@ -1,0 +1,166 @@
+# InvestEdge — piano proposto SP3s: laboratorio swing USA offline
+
+**Stato: PROPOSTA DA APPROVARE, 2026-10-15. Task0 documentale IN CORSO; Task1–9 NON INIZIATI.** Le scelte tecniche e numeriche sono proposte, non evidenza di profitto. Nessun codice prima dell’approvazione di spec/piano e dell’incarico di implementazione che superi l’attuale perimetro documentale.
+
+Spec: [SP3s swing 1/5/21 sedute](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
+
+Base Task0: `origin/investedge/sp3-task-5` = `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`, checkpoint di sospensione del codice Task5 già integrato `6c32bfa`. Origin/main conservato a quest’ultimo commit; main originale `fb8ce92` pulito e intatto. Branch Task0 pubblicato come lock da quella base. Nessun merge automatico: anche il merge documentale richiede nuova conferma esplicita dell’utente.
+
+## Protocollo comune e criteri di chiusura
+
+- Task sequenziali, Codex unico writer; review in sola lettura. Prima di ogni task: leggere programma e documenti applicabili, fetch/status/base; una divergenza non spiegata dalle consegne impone il chiarimento previsto da AGENTS.md.
+- Ogni task autorizza soltanto i file elencati, più aggiornamenti di stato/checklist/Note di ripresa in questo piano e nel programma. Una modifica di regole, soglie, campione, griglia o formati pubblicati richiede proposta concreta e approvazione, non un aggiornamento di stato mascherato.
+- Tutti i task software richiedono RED per la regressione concreta, GREEN, review del diff, test mirati e suite backend offline fresca prima di FATTO. Ruff `backend scripts tests` e `pip check`; nessuna nuova dipendenza. Conservare log/JUnit, tempi, hash dei file verificati e tentativi di rete inattesi fuori Git.
+- Per test/smoke usare ambiente temporaneo senza credenziali e dotenv, DB soltanto temporanei e guard rete prima della raccolta dei test, riusando il launcher offline già verificato nella consegna SP3. Verificarne percorso/hash prima dell’uso; il wrapper storico `sp3-task2-verification/run_offline_tests.py` conta i tentativi di rete ma richiede anche la preparazione dell’ambiente prima di importare l’app. Vietato usare il solo flag REAL=false come garanzia di isolamento. Nuovi moduli puri non importano config, servizi DB, provider o clock implicito.
+- Comandi logici di gate: `backend/.venv/Scripts/python.exe <launcher-offline-verificato> -q -o addopts= -p no:cacheprovider --junitxml=<scratch>/targeted.xml <moduli-mirati>`; stesso launcher senza filtro per il backend completo; `backend/.venv/Scripts/python.exe -m ruff check backend scripts tests --no-cache`; `backend/.venv/Scripts/python.exe -m pip check`; `git diff --check`; scanner segreti con self-test e allowlist esatta. Sostituire i segnaposto con path reali nel log prima di eseguire. Frontend invariato: non serve ci/build a ogni task; eseguirli solo se un impatto accertato cambia il perimetro con autorizzazione.
+- Nessuna suite o fixture legge `data/investedge.db`, importa dati live o accede a TR. Fixture sintetiche chiaramente marcate, dati holdout REAL mai usati nei test.
+- Commit con messaggio del task; programma/checklist/evidenza/Prossimo passo nello stesso commit. Un commit non registra il proprio SHA: usare task successivo/ricevuta fuori Git. Push solo branch task con `git push -u origin HEAD`, gate `git ls-remote origin refs/heads/<branch> = HEAD`, worktree pulito. Mai force/rebase/amend pubblicati. Merge FF main esclusivamente se richiesto esplicitamente; in mancanza, consegnare il branch senza merge.
+- Nessuna modifica a SP1/SP2b/SP3, database/schema, requirements/pyproject, API, frontend o runner globale. Eventuali problemi fuori allowlist sono riportati, non corretti di nascosto. Le soglie intraday 5/20/60 restano invariate e sospese: non sono i gate dello swing.
+
+## Task 0 — Brainstorming, spec e piano da approvare
+
+**Branch:** `investedge/sp3s-task-0`. **Base:** checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`. **Owner:** Codex, solo documenti. **Dipendenze:** sospensione salvata e domande materiali risolte.
+
+**Allowlist esatta:**
+
+- `PROGRAMMA-OPERATIVO.md`
+- `docs/reports/2026-10-15-swing-sp1-inventory.md`
+- `docs/superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md`
+- `docs/superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md`
+
+- [x] Inventario SP1/fonti e sospensione pubblicati sul branch precedente; checkpoint conservato.
+- [x] Acquisire una domanda alla volta: TR, capitale, universo as-of/delistati, finestra/DST/sedute ridotte, rischio, modalità costi, drawdown, stop e dieci posizioni.
+- [x] Presentare approcci e proposta concreta: pacchetto isolato, tre famiglie/holding, execution manuale, dati/gate separati, campione e statistiche ex ante, allowlist e task.
+- [x] Review finale documentale root e controlli freschi: 50/50 verifiche, 10 link locali validi, scope esatto quattro Markdown, scanner/self-test zero candidati inattesi/placeholder e diff pulito. Evidenze fuori Git in `sp3s-task0-verification`; backend non rieseguito per sole modifiche documentali.
+- [ ] Approvazione esplicita dell’utente di spec e piano prima del codice. Il Task1 richiede inoltre incarico di implementazione fuori dall’attuale perimetro documentale.
+
+Commit della proposta: `docs: propose SP3s swing research specification and plan`. Task0 resta IN CORSO finché l’approvazione manca; consegna documentale pubblicabile senza dichiarare approvata la spec. Push e gate SHA sono verifiche post-commit; nessun merge incluso. Eventuali ulteriori commit di revisione/approvazione documentale sono checkpoint tracciati, senza riscrittura della storia.
+
+## Task 1 — Contratti, registro e confini offline
+
+**Branch:** `investedge/sp3s-task-1`. **Base:** origin/investedge/sp3s-task-0 approvato e SHA verificato. **Dipendenze:** Task0 FATTO e incarico esplicito di implementazione.
+
+**Nuovi:** `backend/app/swing_research/__init__.py`, `contracts.py`, `registry.py`; `tests/swing_research_fixtures.py`, `tests/test_swing_research_contracts.py`, `tests/test_swing_research_registry.py`, `tests/test_swing_research_boundaries.py`. I nomi abbreviati di moduli nei task seguenti sono nello stesso pacchetto.
+
+- [ ] RED: manifest/config mutabile, hash non comprende FX/benchmark/rischio, ordine variabile dei 18 candidati/2 selettori, tentativi falliti non contati, start prima della preregistrazione o input REAL/SYNTHETIC confusi.
+- [ ] Implementare dataclass/versioni canoniche, stati e reason code, capitale/rischio/finestra/holding/griglia ex ante; registro su file separato dal DB con eventi append-only e pubblicazione atomica sotto lock. Nessun import/provider o simulazione.
+- [ ] GREEN: replay/idempotenza/concorrenza/rollback/cancel senza righe orfane, tentativi no-trade/failed/cancelled conservati, seal/contaminazione metadata; protezione path e input/output separati. Nessuna promessa di isolamento globale del filesystem.
+- [ ] Confini statici e import smoke offline: niente DB/config/dotenv/provider/trading né dipendenza inversa da SP1/intraday; nessun modulo esistente modificato.
+- [ ] Mirati contracts/registry/boundaries e gate comune; programma e prossimo Task2.
+
+**Commit:** `feat: define offline swing research contracts and registry`.
+
+## Task 2 — Dataset locale, universo storico e corporate action
+
+**Branch:** `investedge/sp3s-task-2`. **Base:** origin/investedge/sp3s-task-1. **Dipendenze:** Task1 FATTO.
+
+**Nuovi:** `datasets.py`, `universe.py`, `calendar.py`, `events.py`; `tests/test_swing_research_datasets.py`, `tests/test_swing_research_universe.py`, `tests/test_swing_research_events.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_boundaries.py` soltanto per raccordi necessari del contratto approvato.
+
+- [ ] RED: lista corrente TR/asset catalog al posto di as-of, sopravvissuti selezionati, ticker riutilizzato, disponibilità futura, Stooq UNKNOWN trattato come total return, duplicati incoerenti, barra/FX/azione futura usata al cutoff.
+- [ ] Reader locale read-only/streaming e quality report §3: grain/feed/diritti, hash/count, copertura e denominatori; universo mensile ADV20/prezzo 5/252 sedute/top 500, tie stabile, nessuna esclusione opportunistica.
+- [ ] GREEN con IPO/delistato/merger/rename/split/dividendo e recupero mancante; l’assenza genera insufficienza e non liquidazione a prezzo inventato. Corporate action e prezzo/volume coerenti; cassa a pay-date, nessun doppio total return.
+- [ ] Calendario/FX a cutoff, DST e half-day; manifest con metadati holdout opachi, reader senza accesso a esiti non autorizzati. Letture a batch 10.000/8MiB e risorse fail-closed; nessun download.
+- [ ] Mirati dataset/universe/events + registry/boundaries e regressioni SP1 series; gate comune. G_SWING_DATA REAL resta NON VALUTATO in assenza di pacchetto idoneo.
+
+**Commit:** `feat: validate offline swing datasets and as-of universes`.
+
+## Task 3 — Feature e tre famiglie congelate
+
+**Branch:** `investedge/sp3s-task-3`. **Base:** origin/investedge/sp3s-task-2. **Dipendenze:** Task2 FATTO software.
+
+**Nuovi:** `features.py`, `strategies.py`; `tests/test_swing_research_features.py`, `tests/test_swing_research_strategies.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_boundaries.py` per contratti già fissati.
+
+- [ ] RED: daily odierna completa prima del close, SMA/breakout includono futuro o giorno sbagliato, volume non split-coerente, prezzo con ritardo diverso da 15m o stale, feature non valida riempita da score/ML.
+- [ ] Implementare §4–5: decisione C−40, cutoff C−55, daily fino a x, MOM/PULLBACK/BREAKOUT esatti, ranking e tie comuni; nove family/holding per modalità senza griglia nascosta. Riutilizzare solo funzioni pure SP1 semanticamente compatibili.
+- [ ] GREEN: esempi positivi/negativi a mano e ai confini, warm-up, split nel giorno del segnale, ore legali/sedute ridotte, segnale invariato modificando soltanto dati futuri. Nessun ordine o valutazione economica REAL.
+- [ ] Mirati features/strategies/datasets/boundaries + feature SP1; gate comune, programma e prossimo Task4.
+
+**Commit:** `feat: implement preregistered swing candidate signals`.
+
+## Task 4 — Costi, rischio e ledger EUR
+
+**Branch:** `investedge/sp3s-task-4`. **Base:** origin/investedge/sp3s-task-3. **Dipendenze:** Task3 FATTO.
+
+**Nuovi:** `costs.py`, `risk.py`; `tests/test_swing_research_costs.py`, `tests/test_swing_research_risk.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`.
+
+- [ ] RED: fee Best/Direct mescolate, costi stressati applicati solo alla curva finale, fee/FX duplicati o ignorati, rischio/cassa su prezzo futuro, frazioni azionarie, limite per posizione rispettato ma aggregato/pendenti violato.
+- [ ] Implementare Decimal e arrotondamenti, profili separati BASE/STRESS/SEVERE, quote intere, cap 10 nomi/10% nozionale, rischio min 100 EUR/1% e aggregato min 1.000 EUR/10%, cassa con settlement e riserva fee. Nessun collegamento al ledger reale.
+- [ ] GREEN con calcoli manuali per commissioni, fill parziale, stop, split, dividendi, FX e settlement; uscita totale sotto 100 EUR consentita, nessuna perdita tagliata al budget teorico; valori ignoti generano insufficienza.
+- [ ] Mirati cost/risk/contracts/events e regressioni SP1 costi/simulatore senza modificarli; gate comune e programma.
+
+**Commit:** `feat: account for manual TR swing costs and risk limits`.
+
+## Task 5 — Coda manuale, stop e holding dal fill
+
+**Branch:** `investedge/sp3s-task-5`. **Base:** origin/investedge/sp3s-task-4. **Dipendenze:** Task4 FATTO.
+
+**Nuovi:** `execution.py`, `simulator.py`; `tests/test_swing_research_execution.py`, `tests/test_swing_research_simulator.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`.
+
+- [ ] RED: fill al close/sul record del segnale/prima dell’arrivo, dieci ingressi senza tempo per stop, stop retroattivo, gap liquidato al livello teorico, timer da segnale anziché primo fill, deadline che impone un prezzo non osservato.
+- [ ] Implementare slot sell/buy+conferma, prezzi conservativi §4, capacità/fill parziali/no-fill, ritardi dei tre scenari e cutoff C−10; holding d+H, invalidazione, stop 2ATR e revisione solo per eventi societari approvati.
+- [ ] GREEN: ingresso tardivo e intervallo senza stop, supporto/orari/valuta per modalità, gap/halt/reopen/delisting, uscita oltreH e coda alla seduta seguente. Proxy USA distinta dall’esecuzione TR attestata; nessuna API o ordine vero.
+- [ ] P&L e drawdown a mano, giorni flat/settlement, commissioni ed eventi in ledger immutabile, cassa mai negativa; tutte le serie di scenario realmente risimulate.
+- [ ] Mirati execution/simulator/risk/strategies/events + regressioni SP1 simulator; gate comune, programma e prossimo Task6.
+
+**Commit:** `feat: simulate manual swing execution and overnight stops`.
+
+## Task 6 — Walk-forward e protocollo holdout sealed
+
+**Branch:** `investedge/sp3s-task-6`. **Base:** origin/investedge/sp3s-task-5. **Dipendenze:** Task5 FATTO.
+
+**Nuovi:** `walk_forward.py`, `holdout.py`; `tests/test_swing_research_walk_forward.py`, `tests/test_swing_research_holdout.py`. **Modificabili:** `registry.py`, `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_registry.py`.
+
+- [ ] RED R1: cambiare split/prezzi/membership nella prima seduta OOS cambia score/scelta IS; fold creati dai dati anziché calendario, perdita al cambio policy nascosta, trial senza Sharpe perso, holdout letto durante selezione o riaperto per nuovo candidato.
+- [ ] Implementare date e split §8, IS 504/OOS 126, purge/embargo 21, selettori per modalità IS-only, portafoglio OOS continuo con vecchie posizioni immutabili; ultimo resto di calendario incluso.
+- [ ] Congelare candidato finale e manifesti prima dell’apertura unica; reader capability distinto per batch holdout; stati append-only, contaminazione e crash/retry idempotente senza output economici intermedi. Nessuna lettura REAL in questi test.
+- [ ] GREEN: invarianti dei prefissi, nessun candidato idoneo->cash, ultimoH/campione irrisolto->insufficiente, accesso/esito futuro non cambia decisioni passate; stesso batch ripetibile e report non sostituibile.
+- [ ] Mirati WFO/holdout/registry/simulator + WFO SP1 R1; gate comune, programma e prossimo Task7.
+
+**Commit:** `feat: add causal swing walk-forward and sealed holdout`.
+
+## Task 7 — Statistica dipendente e verdetti
+
+**Branch:** `investedge/sp3s-task-7`. **Base:** origin/investedge/sp3s-task-6. **Dipendenze:** Task6 FATTO.
+
+**Nuovi:** `stats.py`, `evidence.py`; `tests/test_swing_research_stats.py`, `tests/test_swing_research_evidence.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`.
+
+- [ ] RED: trade/minuti trattati come indipendenti, drop giorni flat/perdenti, bootstrap indipendente per titolo/curva, solo blocco favorevole, Bonferroni senza tutti 20 tentativi, DSR scambiato per correzione seriale o non definito trasformato in zero.
+- [ ] Implementare bootstrap stationary congiunto 10.000/seed 20261015, blocchi 63 e 21, LB unilaterale con 20 percorsi; DSR>=0,95 con N=20 esplicito e dispersione OOS congelata per holdout, senza perdere no-trade/failed o aprire altri candidati; statistiche e unità dichiarate.
+- [ ] GREEN con processi sintetici dipendenti/nulli, costi/ritardi/rischio e minimi campione verificabili a mano; separare insufficienza da gate fallito e proxy da VALIDATO_TR. Nessuna fixture positiva diventa evidenza economica.
+- [ ] Gate §9 invarianti su OOS e holdout separati: OOS PASS sia per selettore sia per candidato finale scelto IS, nessun ripescaggio dopo un fallimento; concentrazione consolidata per emittente, otto fold/sei positivi, holdout due periodi positivi su tre; snapshot benchmark e FX R2 immutabili.
+- [ ] Mirati stats/evidence/WFO/holdout + stats/evidence SP1; gate comune, programma e prossimo Task8.
+
+**Commit:** `feat: evaluate swing evidence with dependent return statistics`.
+
+## Task 8 — Report, CLI offline e audit software
+
+**Branch:** `investedge/sp3s-task-8`. **Base:** origin/investedge/sp3s-task-7. **Dipendenze:** Task7 FATTO.
+
+**Nuovi:** `reports.py`, `backend/scripts/swing_research.py`, `tests/test_swing_research_reports.py`, `tests/test_swing_research_cli.py`, `docs/reports/sp3s-swing-software-gate.md`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_boundaries.py`.
+
+- [ ] RED: report rilegge latest e cambia benchmark/FX lasciando hash uguale, proxy presentata come TR validato, CLI scrive nell’input o nel DB reale, output parziale promosso dopo errore/cancel, raccolta di rete avviata implicitamente.
+- [ ] CLI esplicita su pacchetto locale e output dedicato, comandi di verifica/ricerca sintetica/report con errori redatti; nessun comando fetch/live/trade/paper. Report JSON/Markdown immutabile, unità/fonti/proxy/lacune/costi/non-fill/verdetti visibili.
+- [ ] GREEN end-to-end sintetico: fixture realistica per tutte le famiglie/holding/modalità/scenari, DST/half-day/gap/delistato, incompatibilità e cancellazione; fingerprint invariato a rilettura e diverso a revisione futura degli input.
+- [ ] Profiling offline streaming su 100 e 500 identità per 21 e 63 sedute: includere minuto per tutte le posizioni, input/righe/disco/tempo/RSS aggregati, cap 2GiB, zero perdite. Numero di sedute/names deriva dal fixture dichiarato; nessuna soglia intraday importata o abbassata. Test bounded prima della scala grande e fail-closed al cap.
+- [ ] Suite completa offline, mirati e regressioni SP1/SP2b/SP3, Ruff/pip/scanner/scope/diff, review cumulativa senza rilievi bloccanti. Report G_SWING_TECH PASS soltanto con prove fresche; G_SWING_DATA/RESEARCH/TR non valutati per sola fixture.
+- [ ] Aggiornare programma: software FATTO distinto da SP3s economico; Task9 non avviabile senza incarico e dataset idoneo.
+
+**Commit:** `feat: expose auditable offline swing research reports`.
+
+## Task 9 — Gate dati ed economico REAL, condizionale e fuori dall’incarico attuale
+
+**Branch:** `investedge/sp3s-task-9`. **Base:** origin/investedge/sp3s-task-8. **Dipendenze:** Task8 FATTO, dataset locale idoneo fornito, incarico esplicito di valutazione offline. In assenza, BLOCCATO con ragione/evidenza, senza raccolte automatiche. L’approvazione documentale non apre il holdout REAL.
+
+**Nuovo documento autorizzabile:** `docs/reports/sp3s-swing-data-economic-gate.md`. Input/output economici fuori Git; nessuna modifica di codice, parametri o soglie per correggere un risultato sfavorevole.
+
+- [ ] Verificare G_SWING_DATA senza leggere esiti holdout: fonti/diritti/universo as-of/delistati/rendimenti terminali, prezzi in finestra e stop, corporate action/FX/calendario/hash/costi. Identificare proxy e limiti TR. Se il pacchetto gratuito è incompleto, fermarsi a INSUFFICIENTE.
+- [ ] Congelare registro/tutti 20 percorsi, versioni software/input/metodo e holdout opaco; eseguire IS/OOS e i tre scenari. Niente revisione opportunistica di campione o griglia.
+- [ ] Aprire il solo batch finale idoneo una volta secondo §8, dopo PASS OOS del selettore e del candidato finale scelto IS e freeze; nessun candidato successivo sullo stesso holdout se fallisce. Conservare anche no-trade/errori/risultati negativi.
+- [ ] Documentare tutti i gate separatamente per Best/Direct e OOS/holdout; se nessuna policy passa, nessuna promossa. PASS_RICERCA_PROXY non è VALIDATO_TR. Nessuna raccomandazione di rendimento futuro, ordine, paper o spesa.
+- [ ] Review del rapporto, riproducibilità offline, programma/Prossimo passo/evidenze e commit/push del solo documento. Nessun merge senza nuova conferma FF esplicita; nessuna riattivazione SP3/SP6a implicita.
+
+**Commit:** `docs: record SP3s swing data and economic gate`.
+
+## Condizioni che non si risolvono modificando il codice
+
+Un universo gratuito completo con delistati e recuperi finali non è stato dimostrato. L’accesso Basic storico SIP non prova anagrafica as-of, disponibilità storica delle revisioni o prezzi/stop TR. La finestra manuale richiede dati a granularità più fine del daily, e stop attivi richiedono dati anche fuori da quella finestra negli orari applicabili. Nessun gate economico viene dichiarato superato prima di queste prove. Nessuna richiesta di acquisto, credenziali o raccolta live è inclusa come rimedio automatico.

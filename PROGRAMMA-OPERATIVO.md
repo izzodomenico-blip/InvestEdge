@@ -2,18 +2,18 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-15 (sospensione intraday per decisione utente; SP3 Task5 BLOCCATO operativo, codice già integrato 6c32bfa conservato; priorità swing USA 1–21 sedute, brainstorming SP3s prima della spec).
+Ultimo aggiornamento: 2026-10-15 (SP3s Task0: proposta spec/piano documentale, in attesa di approvazione; nessun codice. SP3 Task5 BLOCCATO e percorso intraday sospeso, codice conservato).
 
 ## Prossimo passo
 
-**Prossimo lavoro: SP3s — proposta strategie swing USA, holding 1/5/21 sedute. Completare le domande aperte una alla volta, poi spec e piano da approvare prima del codice. Identificativo e branch proposti: SP3s / `investedge/sp3s-task-0`, non ancora creato. Intraday SP3/SP6a SOSPESO, non cancellato: Task5 BLOCCATO per decisione utente 2026-10-15; non avviare Task6.**
+**Prossimo lavoro: review e approvazione dell’utente della proposta SP3s swing USA 1/5/21 sedute. Task0 IN CORSO documentale, Codex unico writer su `investedge/sp3s-task-0`; Task1–9 NON INIZIATI. Nessun codice prima di approvazione e incarico di implementazione, nessun merge main senza conferma FF esplicita. Intraday SP3/SP6a sospeso: Task5 BLOCCATO per decisione utente 2026-10-15; non avviare Task6.**
 
-- [Inventario SP1 e brief swing](docs/reports/2026-10-15-swing-sp1-inventory.md): analisi in sola lettura; TR manuale, 10.000 EUR, sole azioni liquide USA con universo storico as-of e delistati inclusi, criteri di liquidità ex ante. Disponibilità attuale TR solo per operatività futura. Europa/ETF separati e successivi.
-- Due modalità TR confrontate separatamente: Best Price/Direct Price. Finestra 45–10 minuti prima della chiusura USA, anche nelle sedute ridotte: normalmente 21:15–21:50 italiane, 20:15–20:50 nel disallineamento DST. Segnali su soli dati allora disponibili, anche ritardati 15 minuti; esecuzione nella finestra con costi conservativi, non close ufficiale. Rischio teorico iniziale 1%/posizione (100 EUR iniziali); gap possono superarlo. Drawdown e gestione stop ancora in chiarimento.
-- SP1 ha feature D/W/M, harness 1/5/21, WFO/Evidenza, costi TR e contabilità EUR. Non ha ancora timer swing dal fill, esecuzione nella finestra manuale, universo as-of completo/delistati, bootstrap dipendente e holdout finale completo. Alpaca Basic è candidato storico daily SIP documentale; completezza/diritti/accesso/qualità e prezzi in finestra restano da verificare, senza credenziali o raccolta in questo incarico.
-- SP3 Task0–5 già integrati: Task5 commit `6c32bfa4559336d9903af0d30c03e7145586cd52`, gate precedente 2564 backend/186 mirati PASS; codice conservato. G1_TECH acquisito, G1_DATA INSUFFICIENTE/G2 NON VALUTATO non diventano gate swing superati. Stato software storico distinto dalla nuova sospensione operativa.
-- Solo documenti nel checkpoint sul branch `investedge/sp3-task-5`, commit `chore: checkpoint SP3 Task5 suspended by user`, push e gate SHA; **nessun nuovo merge su main**. Le precedenti autorizzazioni automatiche al FF non si applicano a questa fase: serve nuova conferma esplicita dell’utente.
-- Nessun codice, credenziale, raccolta live, ordine, paper, spesa o accesso al DB reale. Nuovi spec/piano non ancora redatti; nessuna strategia dichiarata redditizia.
+- [Spec SP3s proposta](docs/superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) e [piano SP3s proposto](docs/superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md), ancora NON APPROVATI. Base documentale `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`, checkpoint di sospensione pubblicato sul branch Task5; origin/main resta `6c32bfa4559336d9903af0d30c03e7145586cd52`.
+- Brief confermato: TR manuale, 10.000 EUR, sole azioni liquide USA con universo storico as-of e delistati inclusi; disponibilità attuale TR solo filtro operativo futuro. Best Price/Direct Price separati. Finestra sempre 45–10 minuti prima della chiusura USA, anche DST/sedute ridotte; dati anche ritardati 15 minuti, prezzo simulato nella finestra, non close ufficiale.
+- Rischio massimo iniziale 1%/posizione, 100 EUR iniziali; massimo 10 posizioni senza leva e rischio iniziale aggregato fino a 1.000 EUR. Stop inseriti manualmente e lasciati attivi, supporto da verificare per titolo/modalità. Drawdown OOS massimo 2.000 EUR, 20% del capitale di riferimento, come criterio di accettazione; gap possono superare i budget teorici.
+- La spec propone tre famiglie tecniche, 18 configurazioni e due selettori WFO, campione/date e gate ex ante, costi BASE/STRESS/SEVERE e protocollo holdout. Sono proposte da approvare, non decisioni già accettate né evidenza di rendimento. [Inventario SP1](docs/reports/2026-10-15-swing-sp1-inventory.md) distingue implementato, pianificato e lacune.
+- Dati gratuiti completi as-of/delistati e prezzi/stop TR non ancora dimostrati. Software offline e ricerca su proxy USA distinti da VALIDATO_TR. Task9 economico richiederà dataset locale idoneo e incarico dedicato; nessun recupero dati automatico o apertura holdout REAL in questa consegna.
+- Solo quattro documenti sul branch Task0, commit/push/gate SHA della proposta; nessun nuovo merge. Nessuna modifica a codice intraday/SP1, credenziale, raccolta live, ordine, paper, spesa o accesso al DB reale. Gate precedenti 2564 backend/186 mirati sono prove storiche Task5, non test rieseguiti per questi documenti.
 
 ## Legenda
 
@@ -38,7 +38,7 @@ Percorso prioritario dal 2026-10-15: **SP1 già verificato → brainstorming SP3
 | SP1 | Laboratorio di verità | VERIFICATO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | `investedge/sp1-task-16` | sì, `d9a43ee` (2026-10-10, fast-forward confermato) |
 | SP2b | Dati per l'alpha | IN CORSO storico; track intraday SOSPESO (Task 12 FATTO, G1_TECH PASS; G1_DATA INSUFFICIENTE) | `2026-10-10-investedge-sp2b-intraday-data-news-design.md` approvata | `2026-10-10-investedge-sp2b-intraday-data-news.md` approvato | `investedge/sp2b-task-12` | Task 0–12 integrati; feature d182cd547562b933ed1a2c92d4cab78dc8ed1316 e FF tecnico verificati il 2026-10-12 |
 | SP3 | Segnali v2 intraday | BLOCCATO: sospeso per decisione utente 2026-10-15 | [spec conservata](docs/superpowers/specs/2026-10-13-investedge-sp3-intraday-strategies-design.md) | [piano sospeso](docs/superpowers/plans/2026-10-13-investedge-sp3-intraday-strategies.md) | `investedge/sp3-task-5` | Task0–5 già integrati; Task5 codice 6c32bfa/2564 backend/186 mirati PASS storici, ora BLOCCATO operativo; nessun avanzamento Task6 |
-| SP3s | Strategie swing USA 1–21 sedute (identificativo proposto) | NON INIZIATO; brainstorming/inventario preparatori in questa chat | da approvare dopo le domande | da approvare dopo la spec | `investedge/sp3s-task-0` proposto, non creato | no |
+| SP3s | Ricerca swing USA 1/5/21 sedute (identificativo proposto) | IN CORSO documentale Task0; proposta da approvare, nessun codice | [spec proposta](docs/superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) | [piano proposto](docs/superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md) | `investedge/sp3s-task-0` | no; nessun merge autorizzato |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP5 | Radar e società appena quotate | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP6a | Esecuzione Alpaca paper senza leva | BLOCCATO: percorso intraday sospeso 2026-10-15 | da scrivere, non avviare | da scrivere, non avviare | — | no |
@@ -720,7 +720,7 @@ G1_TECH PASS al Task 12, con target indicativi di query/replay mancati e RAM ele
 | 2 | Timeline-only, finestre v2 e bundle | FATTO; commit5733c49aed2cfb15be2c734550c954799e138405; gate5/20/60 PASS | 1 | `investedge/sp3-task-2` | Task1/main 7b708706c70a4d37d01bc10b73af299bc2052e25; checkpoint precedente e4e36e7b40c526481c8de69ae167c72c2c29179a | 2026-10-15 / Codex;329 mirati/2364 backend PASS (full-v38.xml),zero failure/error/skip/rete inattesa; Ruff/pip/review PASS. Gate v38: p955/20/60=14,577/59,837/216,307ms; replay11,293/30,320/50,281s; bundle54,199s. Tutte17 finestre e915131 occurrence con checksum originali identici, RAM worker aggregata/memoria/disco/runtime fake PASS. Push Task2 e FF main non forzato osservati, entrambi gli SHA remoti uguali5733c49 e worktree pulito; verificati alla presa Task3 |
 | 3 | Quote-size/tick attestati | FATTO; commit a8c39759ca9bf686415f8cdb497a2ec9d2da4e8f | 2/sostenibilità FATTO | `investedge/sp3-task-3` | origin/investedge/sp3-task-2 5733c49aed2cfb15be2c734550c954799e138405 | 2026-10-15 / Codex;2418 backend PASS (full-final-v2.xml),521 mirati estesi e GREEN2 ultimo guard float; Ruff/pip/scanner/audit/review PASS. Import locale append-only, authority separata, riferimenti PIT e digest legacy preservati. Push Task3/gate SHA e FF main/gate SHA osservati, entrambi uguali a8c3975; worktree pulito e checkout originale preservato, verificati alla presa Task4 |
 | 4 | Daily PIT, feature e filtri | FATTO; commit fb8ce92f173b22450d284d51d1167112832cde70 | 3 FATTO | `investedge/sp3-task-4` | origin/investedge/sp3-task-3 a8c39759ca9bf686415f8cdb497a2ec9d2da4e8f | 2026-10-15 / Codex; 2476 backend offline e58 focus finali PASS, gate comune/review PASS; push Task4/gate SHA e FF main/gate SHA osservati alla presa Task5 |
-| 5 | Setup e news ablation attestate | BLOCCATO — sospeso per decisione utente 2026-10-15 | 4 FATTO; ripresa solo su nuova decisione | `investedge/sp3-task-5` | codice 6c32bfa4559336d9903af0d30c03e7145586cd52 già integrato da base fb8ce92 | 2026-10-15 / Codex; implementazione e gate precedenti conservati: 2564 backend/186 mirati PASS, push e FF già avvenuti prima della sospensione. Checkpoint successivo solo documenti, push branch/gate SHA, nessun nuovo FF main. Note di ripresa sotto; Task6 non avviato |
+| 5 | Setup e news ablation attestate | BLOCCATO — sospeso per decisione utente 2026-10-15 | 4 FATTO; ripresa solo su nuova decisione | `investedge/sp3-task-5` | codice 6c32bfa4559336d9903af0d30c03e7145586cd52 già integrato da base fb8ce92 | 2026-10-15 / Codex; implementazione e gate precedenti conservati: 2564 backend/186 mirati PASS, push e FF già avvenuti prima della sospensione. Checkpoint documentale `3f37a44b76ba8f8c8182281dbe6301a9898bc11a` pubblicato/gate SHA verificato; nessun nuovo FF main. Note di ripresa sotto; Task6 non avviato |
 | 6 | Costi Alpaca/ledger | NON INIZIATO | 5 | `investedge/sp3-task-6` | origin/investedge/sp3-task-5 | — |
 | 7 | Fill conservativi e timer dal fill | NON INIZIATO | 6 | `investedge/sp3-task-7` | origin/investedge/sp3-task-6 | — |
 | 8 | Harness/ablation/statistica | NON INIZIATO | 7 | `investedge/sp3-task-8` | origin/investedge/sp3-task-7 | — |
@@ -731,6 +731,25 @@ G1_TECH PASS al Task 12, con target indicativi di query/replay mancati e RAM ele
 | 13 | Addendum restante SP3 | NON INIZIATO | SP6a + backlog SP2b pertinente | da fissare nell'addendum | remoto verificato al ritorno | — |
 
 Spec/piano includono allowlist, messaggi commit, test RED/GREEN e gate per ogni task. Un gate tecnico può essere chiuso con economia INSUFFICIENTE, ma non rende SP3 intero VERIFICATO né autorizza SP6a. Approvazione acquisita prima del Task1; SP2b Task13 resta successivo.
+
+## Registro SP3s — Proposta ricerca swing USA
+
+[Spec proposta](docs/superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) e [piano proposto](docs/superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md) **NON APPROVATI**. Domande materiali concluse; scelte tecniche/campione/soglie proposte ex ante. Il Task0 resta IN CORSO fino ad approvazione e verifiche documentali; nessuna implementazione già iniziata. G_SWING_TECH/DATA/RESEARCH/TR non valutati.
+
+| Task | Titolo | Stato | Dipendenze | Branch | Base | Data / owner / evidenza |
+|---|---|---|---|---|---|---|
+| 0 | Brainstorming, spec e piano | IN CORSO; proposta documentale da approvare | Sospensione pubblicata, domande concluse | `investedge/sp3s-task-0` | checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a` | 2026-10-15 / Codex; verify_documents.py 50/50 PASS, 10 link validi; scanner4/self-test/diff/scope e review documentale root PASS; backend non rieseguito. Solo quattro Markdown; push/gate SHA post-commit, nessun merge main |
+| 1 | Contratti e trial registry offline | NON INIZIATO | 0 FATTO e incarico implementazione | `investedge/sp3s-task-1` | origin/investedge/sp3s-task-0 approvato | — |
+| 2 | Dataset, universo as-of e corporate action | NON INIZIATO | 1 | `investedge/sp3s-task-2` | origin/investedge/sp3s-task-1 | — |
+| 3 | Feature e tre famiglie candidate | NON INIZIATO | 2 | `investedge/sp3s-task-3` | origin/investedge/sp3s-task-2 | — |
+| 4 | Costi, rischio e ledger | NON INIZIATO | 3 | `investedge/sp3s-task-4` | origin/investedge/sp3s-task-3 | — |
+| 5 | Esecuzione manuale, stop e holding | NON INIZIATO | 4 | `investedge/sp3s-task-5` | origin/investedge/sp3s-task-4 | — |
+| 6 | Walk-forward e holdout sealed | NON INIZIATO | 5 | `investedge/sp3s-task-6` | origin/investedge/sp3s-task-5 | — |
+| 7 | Statistica dipendente e verdetti | NON INIZIATO | 6 | `investedge/sp3s-task-7` | origin/investedge/sp3s-task-6 | — |
+| 8 | Report/CLI e audit software offline | NON INIZIATO | 7 | `investedge/sp3s-task-8` | origin/investedge/sp3s-task-7 | — |
+| 9 | Gate dati/economia REAL condizionale | NON INIZIATO; fuori incarico attuale | 8 + dataset idoneo + incarico dedicato | `investedge/sp3s-task-9` | origin/investedge/sp3s-task-8 | Nessuna raccolta/import esterno/holdout REAL autorizzato ora |
+
+Commit/push attuali soltanto documentali. Ogni nuovo FF main richiede conferma esplicita dell’utente; la vecchia autorizzazione intraday non si estende allo swing. Nessuna strategia dichiarata redditizia, nessun gate economico derivato dalle fixture.
 
 ## Backlog per i sottoprogetti futuri
 
@@ -752,6 +771,7 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 
 | Data | Decisione | Fonte |
 |---|---|---|
+| 2026-10-15 | Brainstorming swing completato: drawdown OOS massimo 2.000 EUR (20% del capitale di riferimento), stop TR inseriti manualmente e lasciati attivi previa verifica per titolo/modalità, massimo 10 posizioni senza leva e rischio iniziale aggregato fino a 1.000 EUR. Creato branch documentale SP3s Task0 dalla sospensione 3f37a44; spec/piano proposti e non approvati, nessun codice o merge. Campione/griglia/soglie tecniche richiedono approvazione della proposta. | risposte esplicite dell’utente e proposta Codex distinta dalle decisioni |
 | 2026-10-15 | Sospensione intraday 2026-10-15: SP3 Task5 BLOCCATO operativo, SP3/SP6a sospesi e non cancellati. L’utente giudica non sostenibili bootstrap UTP Snap-Shot/vendor e campione live circa 476 sedute; priorità swing 1–21 sedute su SP1. Codice già integrato, incluso Task5 6c32bfa, intatto. Solo documenti/commit/push sul branch del task; nuovi merge FF main esclusivamente dopo conferma esplicita. | utente, cambio di priorità |
 | 2026-10-15 | Brief swing: TR manuale, capitale 10.000 EUR, sole azioni liquide USA, universo storico as-of inclusi delistati e liquidità ex ante; lista corrente TR solo per operatività futura. Europa/ETF separati successivi. Finestra 45–10 minuti prima della chiusura USA, inclusi DST e sedute ridotte; prezzo nella finestra con costi conservativi, non close ufficiale, informazione anche ritardata 15 minuti. Rischio iniziale 1%/posizione; Best Price e Direct Price separati. Nuove spec/piano prima del codice, domande una alla volta. | risposte esplicite utente in questa chat |
 | 2026-10-13 | Nuova chat da origin/main12ca2c3: completare proposta SP3 con quote convertite tramite attestazione, daily point-in-time e timeline-only; autorizzati review, commit/push e merge fast-forward documentale. Presentare spec/piano concreti per approvazione prima del codice; nessuna raccolta/ordine/paper/credenziale/spesa. Checkout originale SP1 Task6 e worktree della chat precedente preservati. | utente, incarico e conferma nella nuova chat |
@@ -823,6 +843,15 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-12 | «Procedi con il prossimo task»: SP2b Task 8 sequenziale, TDD offline, review, commit/push e programma secondo il piano. Consegna sul solo branch Task 8; main resta al registro Task 7 687a20a. Root unico writer, reviewer read-only. | utente / Codex |
 
 ## Note di ripresa
+
+### Proposta SP3s Task0 dopo il brainstorming (2026-10-15)
+
+- Branch `investedge/sp3s-task-0` creato e lock pubblicato dalla base `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`, checkpoint Task5 già pubblicato e pulito. Origin/main `6c32bfa4559336d9903af0d30c03e7145586cd52` e main originale `fb8ce92f173b22450d284d51d1167112832cde70` conservati; il branch Task5 resta al checkpoint.
+- Risposte finali recepite in inventario/spec: drawdown 2.000 EUR, stop manuali lasciati attivi previa verifica, massimo dieci posizioni/rischio aggregato 1.000 EUR. Nuovi numeri progettuali chiaramente proposti, non attribuiti all’utente.
+- Proposta pronta per review e approvazione: pacchetto isolato, nessuna modifica ai moduli integrati, 18 candidati/2 selettori, campione 2016–2026 con OOS 2020–2023 e holdout 2024–2026-09-30, bootstrap dipendente/costi stressati; nessun risultato economico o accesso a dataset REAL.
+- Allowlist Task0: PROGRAMMA, inventario SP1 e due nuovi documenti SP3s. Commit `docs: propose SP3s swing research specification and plan`, push solo Task0/gate SHA; proprio SHA nella ricevuta fuori Git o nel task successivo. Nessun merge, Task0 resta IN CORSO in attesa di approvazione; Task1–9 non iniziati.
+- Verifica proposta: `verify_documents.py` fuori Git, 50/50 controlli PASS e 10 link locali validi; scanner quattro file/self-test, zero candidati inattesi/placeholder; `git diff --check` e scope PASS. Review documentale root conclusa, nessun rilievo bloccante. Codice/config/schema invariati rispetto a 3f37a44 e nessuna suite software rieseguita per questi soli documenti. Evidenze in `sp3s-task0-verification`; gate SHA/hash dei blob pubblicati nella ricevuta fuori Git.
+- Prossimo: presentare spec e piano concreti all’utente per approvazione; non implementare né aprire holdout. Dati gratuiti con universo as-of/delistati e trasferibilità TR restano da dimostrare, senza ridurre i requisiti.
 
 ### Sospensione SP3 Task5 e passaggio swing (2026-10-15)
 

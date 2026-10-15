@@ -1,6 +1,6 @@
 # Swing 1–21 sedute — inventario SP1 e cambio di priorità
 
-Data: 2026-10-15. Analisi di codice e documentazione pubblica, senza esecuzioni economiche, accesso al DB reale, credenziali o download di dati di mercato. Base verificata: `6c32bfa4559336d9903af0d30c03e7145586cd52`, già su origin/main e origin/investedge/sp3-task-5. Questo rapporto è un inventario e un brief di brainstorming: **non è la nuova spec né il piano di implementazione**.
+Data: 2026-10-15. Analisi di codice e documentazione pubblica, senza esecuzioni economiche, accesso al DB reale, credenziali o download di dati di mercato. Base verificata: `6c32bfa4559336d9903af0d30c03e7145586cd52`, già su origin/main e origin/investedge/sp3-task-5. Questo rapporto è un inventario e un brief di brainstorming: **non è la nuova spec né il piano di implementazione**. Le successive risposte al brainstorming sono recepite sotto; proposta [spec SP3s](../superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) e [piano SP3s](../superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md) separati, ancora da approvare.
 
 ## Decisione e stato conservato
 
@@ -24,10 +24,12 @@ Le Data Policies UTP pubblicate a settembre 2023 riportano 2.500 USD/mese per fi
 | Informazione al segnale | Solo quella disponibile poco prima, anche con 15 minuti di ritardo; non daily definitiva del giorno ancora aperto |
 | Prezzo di esecuzione | Nella finestra manuale con spread/slippage conservativi; mai sostituito dalla chiusura ufficiale |
 | Rischio iniziale per posizione | 1% del capitale, 100 EUR sui 10.000 EUR iniziali; perdita da gap può superarlo |
-| Drawdown e gestione stop | Ancora in chiarimento; nessun valore inventato |
+| Drawdown OOS | Massimo 2.000 EUR, 20% del capitale di riferimento, come soglia di accettazione |
+| Stop | Inseriti manualmente su TR e lasciati attivi, previa verifica del supporto per titolo e modalità Best/Direct |
+| Portafoglio | Massimo 10 posizioni senza leva, rischio iniziale aggregato fino a 1.000 EUR |
 | Europa/ETF | Eventuali studi separati successivi |
 
-Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Non creato in questo checkpoint; base documentale da fissare dopo la sospensione. Prima completare le domande, poi spec e piano da approvare prima del codice. Famiglie da discutere: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
+Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Creato dopo il checkpoint di sospensione `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`; le domande materiali sono risolte e la proposta documentale è pronta per review/approvazione, senza codice. Famiglie proposte nella nuova spec: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
 
 ## Dati daily REAL: cosa esiste e cosa manca
 
@@ -88,10 +90,10 @@ Alpaca è un confronto distinto: per account self-directed idonei la documentazi
 
 ## Proposta di sequenza, prima della spec
 
-1. Completare le decisioni aperte su rischio/uscite manuali e vincoli di simulazione. Le risposte sopra non sono un’approvazione della spec ancora inesistente.
-2. SP3s Task0 proposto: spec e piano nuovi con allowlist/branch/base espliciti e gate ex ante; nessun merge senza conferma esplicita dell’utente.
+1. Decisioni materiali raccolte una alla volta e completate con drawdown, stop e dieci posizioni; le risposte non approvano automaticamente la proposta tecnica.
+2. SP3s Task0 documentale: proposta spec e piano con allowlist/branch/base espliciti e gate ex ante, in attesa di approvazione; nessun merge senza conferma esplicita dell’utente.
 3. Nella proposta separare gate dati (universo as-of/delistati/rettifiche/prezzi in finestra) e software offline da risultati economici. Mancanze non si risolvono eliminando perdenti o riducendo soglie; restano INSUFFICIENTE.
-4. Congelare famiglie, holding 1/5/21, regole/rischio/gap, scenari Best/Direct e costi stressati, IS/OOS/holdout e tutti i tentativi prima dei test economici. Il campione swing sarà storico validato, non 476 nuove sedute live; dimensione e periodi restano da approvare.
+4. Congelare famiglie, holding 1/5/21, regole/rischio/gap, scenari Best/Direct e costi stressati, IS/OOS/holdout e tutti i tentativi prima dei test economici. Il campione swing sarà storico validato, non 476 nuove sedute live; dimensione e periodi proposti nella spec restano da approvare.
 5. Solo dopo approvazione di spec e piano, implementare i task autorizzati con TDD offline. Nessuna raccolta live, credenziale, ordine, paper o spesa; eventuali import di dataset richiederanno incarico esplicito e mai il DB reale nei test.
 
 Fonti di codice: `backend/app/lab/{series,features,resample,feature_store,score_v1,strategies,simulator,harness,walk_forward,evidence,stats,trials,universe,costs}.py`, `backend/app/data_providers/{stooq,provider_registry,alpaca_market,alpha_vantage,yahoo_finance}.py`, `backend/app/intraday_research/{contracts,registry,datasets,context,quote_units,news_features,strategies}.py`. Spec/piani SP1 e SP3 e PROGRAMMA-OPERATIVO letti. Calendario ufficiale: [NYSE](https://www.nyse.com/trade/hours-calendars), orario di chiusura 16:00 New York e sedute ridotte 13:00; conversione Europe/Rome dipendente dalla data. Solo letture del repository e pagine pubbliche, nessuna chiamata agli endpoint dati.
