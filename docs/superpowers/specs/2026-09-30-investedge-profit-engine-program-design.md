@@ -1,5 +1,7 @@
 # InvestEdge — programma "motore di profitto" (SP0–SP9)
 
+> **Priorità aggiornata dall’utente il 2026-10-15:** il percorso intraday 15–30 minuti SP3/SP6a del §2.1 e dell’ordine storico è sospeso, non cancellato. Priorità a ricerca swing USA 1–21 sedute su SP1, identificativo proposto SP3s. Stato/decisioni in PROGRAMMA-OPERATIVO e inventario del 2026-10-15; nuove spec/piano dopo brainstorming e approvazione prima del codice. Solo documenti in questa fase, nessun merge main senza conferma esplicita. Il codice e le evidenze intraday già integrati restano intatti.
+
 **Stato:** approvato dall'utente il 30 settembre 2026; priorità intraday/Alpaca aggiornata su richiesta dell'utente il 10 ottobre 2026 (§2.1).
 
 **Relazione con la spec precedente:** integra e, dove indicato al §3, supera `docs/superpowers/specs/2026-08-16-investedge-broker-grade-redesign-design.md`. Tutto ciò che il §3 non supera resta valido.

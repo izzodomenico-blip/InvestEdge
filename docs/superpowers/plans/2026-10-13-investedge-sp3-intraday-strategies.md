@@ -1,6 +1,8 @@
 # InvestEdge — piano SP3: gate strategie intraday 15/30 minuti
 
-**Stato: APPROVATO dall'utente il 2026-10-13; Task0–4 FATTI.** Task4 chiuso il 2026-10-15 con 2476 backend offline PASS e58 focus finali, gate comune e review. Task3 `a8c39759ca9bf686415f8cdb497a2ec9d2da4e8f` pubblicato e integrato FF, verificato alla presa Task4. Task2 conserva i gate5/20/60 invariati PASS. Task5–12 NON INIZIATI; Task13 dopo SP6a e completamento del backlog SP2b. Nessuna raccolta live, credenziale, ordine o paper.
+> **SOSPESO per decisione utente il 2026-10-15.** Task5 BLOCCATO operativo, Task6–13 non avviati; percorso intraday SP3/SP6a conservato. Task0–5, incluso codice Task5 `6c32bfa4559336d9903af0d30c03e7145586cd52`, erano già integrati: checkbox/gate sotto sono evidenze storiche, non autorizzazioni a continuare. Nuova priorità swing USA 1–21 sedute: inventario/brainstorming prima di nuova spec/piano. In questa fase solo documenti, push sul branch del task e **nessun merge main senza nuova conferma esplicita**; questa istruzione prevale sul protocollo automatico storico sotto.
+
+**Approvazione storica: 2026-10-13; stato operativo: SOSPESO dal 2026-10-15.** Task0–5 già implementati e integrati; Task5 ora BLOCCATO per decisione utente. Ultima evidenza software Task5: 2564 backend offline e 186 mirati PASS nella consegna precedente. Task2 conserva i gate 5/20/60 invariati PASS. Task6–13 NON INIZIATI e non avviabili durante la sospensione. Nessuna raccolta live, credenziale, ordine o paper.
 
 **Spec:** [strategie intraday](../specs/2026-10-13-investedge-sp3-intraday-strategies-design.md). **Base Task 0:** origin/main verificato a `12ca2c36a2fc19451e70a08e37514089f3e11bb6`, uguale origin/investedge/sp2b-task-12; feature precedente `d182cd547562b933ed1a2c92d4cab78dc8ed1316` già integrata. Stato: G1_TECH PASS, G1_DATA INSUFFICIENTE; [report SP2b](../../reports/2026-10-12-sp2b-intraday-data-gate.md).
 
@@ -331,7 +333,8 @@ Task4 FATTO nello stesso commit `feat: compute point-in-time intraday research f
 ## Task 5 — Setup deterministici e news ablation
 
 **Branch:** `investedge/sp3-task-5`; **Base:** origin/investedge/sp3-task-4.
-**Dipendenze:** Task4 FATTO.
+**Stato operativo:** BLOCCATO — sospeso per decisione utente 2026-10-15. Implementazione già integrata 6c32bfa; nessun codice annullato, evidenze preservate.
+**Dipendenze storiche:** Task4 FATTO; ripresa soltanto su nuova istruzione.
 **File nuovi:** `backend/app/intraday_research/strategies.py`, `news_features.py`; `tests/test_intraday_research_strategies.py`, `tests/test_intraday_research_news.py`.
 **File modificati:** `backend/app/intraday_research/contracts.py`, `registry.py`, `datasets.py` nel medesimo pacchetto; `tests/intraday_research_fixtures.py`, `tests/test_intraday_research_registry.py`, `tests/test_intraday_research_datasets.py`.
 

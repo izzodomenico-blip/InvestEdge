@@ -2,24 +2,18 @@
 
 Fonte unica dello **stato di avanzamento**. Vale per Claude Code e Codex. Regole di lavoro in `AGENTS.md`; decisioni e confini in `docs/superpowers/specs/2026-09-30-investedge-profit-engine-program-design.md`.
 
-Ultimo aggiornamento: 2026-10-15 (SP3 Task5 FATTO: 2564 backend offline PASS,186 mirati finali; setup deterministici e news attestate, gate comune e review. Prossimo Task6 fee Alpaca/ledger NON INIZIATO).
+Ultimo aggiornamento: 2026-10-15 (sospensione intraday per decisione utente; SP3 Task5 BLOCCATO operativo, codice già integrato 6c32bfa conservato; priorità swing USA 1–21 sedute, brainstorming SP3s prima della spec).
 
 ## Prossimo passo
 
-**Prossimo lavoro: SP3 Task6, fee Alpaca versionate e ledger costi, da `origin/investedge/sp3-task-5`. Task5 FATTO: 2564 backend offline PASS,186 mirati finali, Ruff/pip/scanner/audit/review PASS. Setup trend/pullback e breakout, news primarie attestate e ablation20 config/10 policy; nessuna esecuzione introdotta. Task6 NON INIZIATO; G1_DATA INSUFFICIENTE e G2 NON VALUTATO.**
+**Prossimo lavoro: SP3s — proposta strategie swing USA, holding 1/5/21 sedute. Completare le domande aperte una alla volta, poi spec e piano da approvare prima del codice. Identificativo e branch proposti: SP3s / `investedge/sp3s-task-0`, non ancora creato. Intraday SP3/SP6a SOSPESO, non cancellato: Task5 BLOCCATO per decisione utente 2026-10-15; non avviare Task6.**
 
-- [Spec SP3](docs/superpowers/specs/2026-10-13-investedge-sp3-intraday-strategies-design.md) e [piano SP3](docs/superpowers/plans/2026-10-13-investedge-sp3-intraday-strategies.md) approvati dall'utente il 2026-10-13. Task0–4 pubblicati e integrati FF; Task4 `fb8ce92f173b22450d284d51d1167112832cde70` verificato alla presa Task5. Codex unico writer nel worktree gestito; Task5 FATTO con evidenza finale sotto, Task6–13 NON INIZIATI. Push/FF e gate SHA seguono il commit di chiusura Task5 autorizzato.
-- Task1 FATTO: contratti frozen, dieci tabelle additive e registro atomico20 trial/10 policy. Gate finali offline447 mirati/2027 backend (153 nuovi), zero external inattesi, Ruff/pip/scanner/diff/scope e review PASS. Task2 preso in carico dalla base remota Task1 verificata dopo il FF.
-- Prerequisiti richiesti dall'utente il 2026-10-13: conversione quote-size attestata, daily point-in-time e timeline-only. Spec include anche tick/fonte primaria news attestati, finestre/bundle bounded e retention conservativa, regole candidate trend/pullback e breakout/continuazione, 20 config/10 policy, ablation e holding15/30 dal first fill, fee/fill/stress, selezione IS-only e holdout.
-- Soglie e campione **approvati ex ante**, senza evidenza di profitto: IS126, OOS252 su quattro blocchi63, holdout63, cinque sedute embargo (446+warm-up), minimi trade/sedute attive, bootstrap congiunto e correzione tentativi. G2 richiede dati REAL idonei, aspettativa netta/costi ricorrenti/robustezza/rischio; nessuna policy promossa oggi.
-
-- SP2b Task 1–12 FATTI. Audit cumulativo e fix TDD chiusi: scadenza/ownership dello stato collector, inventario sensibile dei job, lookup/letture/replay e capacità snapshot. Il contatore SQL è atomico, con backfill e guard sotto writer lock; nessun Critical/Important residuo nelle review.
-- Gate Task 12: **1874 backend offline (22 nuove regressioni), 162 frontend**, ci/build offline, HC0, Ruff/pip/diff/scanner e review PASS. Smoke 30 simboli ×20 sedute DEMO: 228.600 barre +228.600 quote, 914.531 membri; replay e fingerprint invariati dopo revisioni future, zero rete e zero perdite nel collector fake. [Report](docs/reports/2026-10-12-sp2b-intraday-data-gate.md).
-- **G1_TECH PASS; G1_DATA INSUFFICIENTE** per assenza di manifest REAL verificato nella consegna. I target indicativi di prestazione sono mancati: replay 280,178 s, query p95 1005,879 ms e picco RAM 10,18 GiB. Definire nel prossimo piano finestra/retention sostenibili e percorso timeline-only; il benchmark non dimostra runtime LIVE completo né un SIP tick tape.
-- Registro integrazione SP2b Task12 **12ca2c36a2fc19451e70a08e37514089f3e11bb6** verificato il 2026-10-13: origin/main e origin/investedge/sp2b-task-12 uguali; feature d182cd547562b933ed1a2c92d4cab78dc8ed1316 già pubblicata/integrata. Lo SHA del precedente registro è registrato in questo passo, senza anticipare il proprio SHA. Checkout originale main96f7299 pulito e preservato; area gestita isolata della nuova chat da origin/main, worktree della chat precedente invariato.
-- Audit frontend: **zero high/critical, una low** @babel/core (GHSA-4x5r-pxfx-6jf8), già noto e fuori perimetro; chunk Vite >500kB e deprecazioni preesistenti documentati. Dipendenze/stili invariati.
-- SP6a paper senza leva richiede G1_DATA READY e G2; SP2b intero resta IN CORSO e Task 13 dopo SP3/SP6a. G1/LIVE/G2_TECH e fixture non validano una strategia. Holdout sealed nel workflow di ricerca: ispezioni esterne dichiarate contaminano il campione e impediscono PASS, nessuna promessa di isolamento globale del filesystem/API dati.
-- Task1 con TDD offline, review, aggiornamento programma, commit/push/merge FF autorizzati esplicitamente il 2026-10-13. Nessuna cattura live, credenziale, DB reale, ordine, paper, leva o spesa in questa consegna.
+- [Inventario SP1 e brief swing](docs/reports/2026-10-15-swing-sp1-inventory.md): analisi in sola lettura; TR manuale, 10.000 EUR, sole azioni liquide USA con universo storico as-of e delistati inclusi, criteri di liquidità ex ante. Disponibilità attuale TR solo per operatività futura. Europa/ETF separati e successivi.
+- Due modalità TR confrontate separatamente: Best Price/Direct Price. Finestra 45–10 minuti prima della chiusura USA, anche nelle sedute ridotte: normalmente 21:15–21:50 italiane, 20:15–20:50 nel disallineamento DST. Segnali su soli dati allora disponibili, anche ritardati 15 minuti; esecuzione nella finestra con costi conservativi, non close ufficiale. Rischio teorico iniziale 1%/posizione (100 EUR iniziali); gap possono superarlo. Drawdown e gestione stop ancora in chiarimento.
+- SP1 ha feature D/W/M, harness 1/5/21, WFO/Evidenza, costi TR e contabilità EUR. Non ha ancora timer swing dal fill, esecuzione nella finestra manuale, universo as-of completo/delistati, bootstrap dipendente e holdout finale completo. Alpaca Basic è candidato storico daily SIP documentale; completezza/diritti/accesso/qualità e prezzi in finestra restano da verificare, senza credenziali o raccolta in questo incarico.
+- SP3 Task0–5 già integrati: Task5 commit `6c32bfa4559336d9903af0d30c03e7145586cd52`, gate precedente 2564 backend/186 mirati PASS; codice conservato. G1_TECH acquisito, G1_DATA INSUFFICIENTE/G2 NON VALUTATO non diventano gate swing superati. Stato software storico distinto dalla nuova sospensione operativa.
+- Solo documenti nel checkpoint sul branch `investedge/sp3-task-5`, commit `chore: checkpoint SP3 Task5 suspended by user`, push e gate SHA; **nessun nuovo merge su main**. Le precedenti autorizzazioni automatiche al FF non si applicano a questa fase: serve nuova conferma esplicita dell’utente.
+- Nessun codice, credenziale, raccolta live, ordine, paper, spesa o accesso al DB reale. Nuovi spec/piano non ancora redatti; nessuna strategia dichiarata redditizia.
 
 ## Legenda
 
@@ -35,18 +29,19 @@ Lo SHA di un task viene scritto dal commit successivo: un commit non può conten
 
 ## Quadro dei sottoprogetti
 
-Percorso prioritario: **SP0 → SP2a → SP1 (correzioni e gate finale) → SP2b (gate dati intraday) → SP3 (gate strategie intraday) → SP6a (Alpaca paper) → completamento SP2b/SP3 → SP4 → SP5 → SP6b (reale e leva opzionali) → SP7 → SP8 → SP9.**
+Percorso prioritario dal 2026-10-15: **SP1 già verificato → brainstorming SP3s swing USA 1–21 sedute → spec/piano approvati → implementazione offline → gate dati/economici da definire ex ante.** Il precedente percorso intraday SP2b/SP3/SP6a è sospeso e conservato; le dipendenze dei sottoprogetti successivi saranno riesaminate nella proposta, senza attivazioni automatiche.
 
 | SP | Titolo | Stato | Spec | Piano | Branch finale | In `main` |
 |---|---|---|---|---|---|---|
 | SP0 | Fondamenta (Fase 1) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-1-foundations.md` | `codex/investedge-phase-1-task-11` | sì, `2e74518` (2026-09-30) |
 | SP2a | Strumenti e dati di mercato (Fase 2) | VERIFICATO | spec 2026-08-16 | `2026-08-16-investedge-phase-2-instruments-and-market-data.md` | `codex/investedge-phase-2-task-18` | sì, `6acd3c4` (2026-10-01) |
 | SP1 | Laboratorio di verità | VERIFICATO | `2026-10-02-investedge-sp1-truth-lab-design.md` | `2026-10-02-investedge-sp1-truth-lab.md` | `investedge/sp1-task-16` | sì, `d9a43ee` (2026-10-10, fast-forward confermato) |
-| SP2b | Dati per l'alpha | IN CORSO (Task 12 FATTO, G1_TECH PASS; G1_DATA INSUFFICIENTE) | `2026-10-10-investedge-sp2b-intraday-data-news-design.md` approvata | `2026-10-10-investedge-sp2b-intraday-data-news.md` approvato | `investedge/sp2b-task-12` | Task 0–12 integrati; feature d182cd547562b933ed1a2c92d4cab78dc8ed1316 e FF tecnico verificati il 2026-10-12 |
-| SP3 | Segnali v2 | IN CORSO (Task1–5 FATTI) | [spec 2026-10-13](docs/superpowers/specs/2026-10-13-investedge-sp3-intraday-strategies-design.md) approvata | [piano 2026-10-13](docs/superpowers/plans/2026-10-13-investedge-sp3-intraday-strategies.md) approvato | `investedge/sp3-task-5` | Task1–4 integrati FF; Task5: 2564 backend/186 mirati finali PASS, gate comune e review; protocollo push/FF di chiusura autorizzato; G2 NON VALUTATO |
+| SP2b | Dati per l'alpha | IN CORSO storico; track intraday SOSPESO (Task 12 FATTO, G1_TECH PASS; G1_DATA INSUFFICIENTE) | `2026-10-10-investedge-sp2b-intraday-data-news-design.md` approvata | `2026-10-10-investedge-sp2b-intraday-data-news.md` approvato | `investedge/sp2b-task-12` | Task 0–12 integrati; feature d182cd547562b933ed1a2c92d4cab78dc8ed1316 e FF tecnico verificati il 2026-10-12 |
+| SP3 | Segnali v2 intraday | BLOCCATO: sospeso per decisione utente 2026-10-15 | [spec conservata](docs/superpowers/specs/2026-10-13-investedge-sp3-intraday-strategies-design.md) | [piano sospeso](docs/superpowers/plans/2026-10-13-investedge-sp3-intraday-strategies.md) | `investedge/sp3-task-5` | Task0–5 già integrati; Task5 codice 6c32bfa/2564 backend/186 mirati PASS storici, ora BLOCCATO operativo; nessun avanzamento Task6 |
+| SP3s | Strategie swing USA 1–21 sedute (identificativo proposto) | NON INIZIATO; brainstorming/inventario preparatori in questa chat | da approvare dopo le domande | da approvare dopo la spec | `investedge/sp3s-task-0` proposto, non creato | no |
 | SP4 | ML v2 | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP5 | Radar e società appena quotate | NON INIZIATO | da scrivere | da scrivere | — | no |
-| SP6a | Esecuzione Alpaca paper senza leva | NON INIZIATO | da scrivere | da scrivere | — | no |
+| SP6a | Esecuzione Alpaca paper senza leva | BLOCCATO: percorso intraday sospeso 2026-10-15 | da scrivere, non avviare | da scrivere, non avviare | — | no |
 | SP6b | Reale e leva opzionali dopo validazione | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP7 | Telegram bidirezionale | NON INIZIATO | da scrivere | da scrivere | — | no |
 | SP8 | Redesign UI | NON INIZIATO | spec 2026-08-16 §7–§8 + da scrivere | da scrivere | — | no |
@@ -54,7 +49,9 @@ Percorso prioritario: **SP0 → SP2a → SP1 (correzioni e gate finale) → SP2b
 
 Ogni SP senza spec parte con brainstorming → spec → piano, approvati dall'utente, prima di scrivere codice. Le spec di SP2b e SP3 distingueranno il gate intraday dal backlog restante, con task e branch sequenziali: superare il gate prioritario non rende FATTO l'intero SP. SP6a richiede quei due gate, non ML o radar; SP6b resta successivo al track record paper e ai propri gate.
 
-## Priorità approvata — intraday 15–30 minuti e Alpaca
+## Priorità storica — intraday 15–30 minuti e Alpaca (SOSPESA)
+
+**Decisione 2026-10-15:** le sezioni e i gate seguenti documentano il progetto intraday conservato, non il prossimo lavoro. Non avviare SP3 Task6 o SP6a; per riprenderli serve nuova istruzione esplicita. La nuova priorità swing non eredita automaticamente G1/G2 né altera retroattivamente codice/soglie approvati.
 
 ### Correzioni obbligatorie prima della nuova operatività
 
@@ -723,7 +720,7 @@ G1_TECH PASS al Task 12, con target indicativi di query/replay mancati e RAM ele
 | 2 | Timeline-only, finestre v2 e bundle | FATTO; commit5733c49aed2cfb15be2c734550c954799e138405; gate5/20/60 PASS | 1 | `investedge/sp3-task-2` | Task1/main 7b708706c70a4d37d01bc10b73af299bc2052e25; checkpoint precedente e4e36e7b40c526481c8de69ae167c72c2c29179a | 2026-10-15 / Codex;329 mirati/2364 backend PASS (full-v38.xml),zero failure/error/skip/rete inattesa; Ruff/pip/review PASS. Gate v38: p955/20/60=14,577/59,837/216,307ms; replay11,293/30,320/50,281s; bundle54,199s. Tutte17 finestre e915131 occurrence con checksum originali identici, RAM worker aggregata/memoria/disco/runtime fake PASS. Push Task2 e FF main non forzato osservati, entrambi gli SHA remoti uguali5733c49 e worktree pulito; verificati alla presa Task3 |
 | 3 | Quote-size/tick attestati | FATTO; commit a8c39759ca9bf686415f8cdb497a2ec9d2da4e8f | 2/sostenibilità FATTO | `investedge/sp3-task-3` | origin/investedge/sp3-task-2 5733c49aed2cfb15be2c734550c954799e138405 | 2026-10-15 / Codex;2418 backend PASS (full-final-v2.xml),521 mirati estesi e GREEN2 ultimo guard float; Ruff/pip/scanner/audit/review PASS. Import locale append-only, authority separata, riferimenti PIT e digest legacy preservati. Push Task3/gate SHA e FF main/gate SHA osservati, entrambi uguali a8c3975; worktree pulito e checkout originale preservato, verificati alla presa Task4 |
 | 4 | Daily PIT, feature e filtri | FATTO; commit fb8ce92f173b22450d284d51d1167112832cde70 | 3 FATTO | `investedge/sp3-task-4` | origin/investedge/sp3-task-3 a8c39759ca9bf686415f8cdb497a2ec9d2da4e8f | 2026-10-15 / Codex; 2476 backend offline e58 focus finali PASS, gate comune/review PASS; push Task4/gate SHA e FF main/gate SHA osservati alla presa Task5 |
-| 5 | Setup e news ablation attestate | FATTO | 4 FATTO | `investedge/sp3-task-5` | origin/investedge/sp3-task-4 fb8ce92f173b22450d284d51d1167112832cde70 | 2026-10-15 / Codex; run_offline_tests.py: 2564 backend PASS (full-final-v2.xml),186 mirati finali PASS; zero failure/error/skip/rete inattesa, due sonde intenzionali nel completo. Ruff/pip/scanner12/hash/scope/review root PASS. Commit feat: define intraday candidate setups and news ablations; push/gate SHA e FF main/gate SHA post-commit, esito nella consegna. Prossimo Task6 NON INIZIATO |
+| 5 | Setup e news ablation attestate | BLOCCATO — sospeso per decisione utente 2026-10-15 | 4 FATTO; ripresa solo su nuova decisione | `investedge/sp3-task-5` | codice 6c32bfa4559336d9903af0d30c03e7145586cd52 già integrato da base fb8ce92 | 2026-10-15 / Codex; implementazione e gate precedenti conservati: 2564 backend/186 mirati PASS, push e FF già avvenuti prima della sospensione. Checkpoint successivo solo documenti, push branch/gate SHA, nessun nuovo FF main. Note di ripresa sotto; Task6 non avviato |
 | 6 | Costi Alpaca/ledger | NON INIZIATO | 5 | `investedge/sp3-task-6` | origin/investedge/sp3-task-5 | — |
 | 7 | Fill conservativi e timer dal fill | NON INIZIATO | 6 | `investedge/sp3-task-7` | origin/investedge/sp3-task-6 | — |
 | 8 | Harness/ablation/statistica | NON INIZIATO | 7 | `investedge/sp3-task-8` | origin/investedge/sp3-task-7 | — |
@@ -755,6 +752,8 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 
 | Data | Decisione | Fonte |
 |---|---|---|
+| 2026-10-15 | Sospensione intraday 2026-10-15: SP3 Task5 BLOCCATO operativo, SP3/SP6a sospesi e non cancellati. L’utente giudica non sostenibili bootstrap UTP Snap-Shot/vendor e campione live circa 476 sedute; priorità swing 1–21 sedute su SP1. Codice già integrato, incluso Task5 6c32bfa, intatto. Solo documenti/commit/push sul branch del task; nuovi merge FF main esclusivamente dopo conferma esplicita. | utente, cambio di priorità |
+| 2026-10-15 | Brief swing: TR manuale, capitale 10.000 EUR, sole azioni liquide USA, universo storico as-of inclusi delistati e liquidità ex ante; lista corrente TR solo per operatività futura. Europa/ETF separati successivi. Finestra 45–10 minuti prima della chiusura USA, inclusi DST e sedute ridotte; prezzo nella finestra con costi conservativi, non close ufficiale, informazione anche ritardata 15 minuti. Rischio iniziale 1%/posizione; Best Price e Direct Price separati. Nuove spec/piano prima del codice, domande una alla volta. | risposte esplicite utente in questa chat |
 | 2026-10-13 | Nuova chat da origin/main12ca2c3: completare proposta SP3 con quote convertite tramite attestazione, daily point-in-time e timeline-only; autorizzati review, commit/push e merge fast-forward documentale. Presentare spec/piano concreti per approvazione prima del codice; nessuna raccolta/ordine/paper/credenziale/spesa. Checkout originale SP1 Task6 e worktree della chat precedente preservati. | utente, incarico e conferma nella nuova chat |
 | 2026-08-16 | Spec broker-grade e piani Fase 1 e Fase 2 approvati | spec 2026-08-16 |
 | 2026-09-30 | Programma SP0–SP9, orizzonti, mercati, IPO, trading reale attivabile solo dall'utente, budget e profilo a scelta dell'utente, Telegram bidirezionale | spec 2026-09-30 |
@@ -824,6 +823,15 @@ Raccolto dalla review del 2026-09-30, con priorità aggiornata il 2026-10-10. Og
 | 2026-10-12 | «Procedi con il prossimo task»: SP2b Task 8 sequenziale, TDD offline, review, commit/push e programma secondo il piano. Consegna sul solo branch Task 8; main resta al registro Task 7 687a20a. Root unico writer, reviewer read-only. | utente / Codex |
 
 ## Note di ripresa
+
+### Sospensione SP3 Task5 e passaggio swing (2026-10-15)
+
+- Stato alla richiesta pulito: HEAD=origin/investedge/sp3-task-5=origin/main `6c32bfa4559336d9903af0d30c03e7145586cd52`. Task5 era già integrato; nessuna patch locale di codice da salvare e nessun annullamento della storia. Main locale originale `fb8ce92f173b22450d284d51d1167112832cde70` conservato.
+- Task5 ora BLOCCATO per sospensione decisa dall’utente, non per test falliti; Task6–13 restano NON INIZIATI e non avanzano. SP3/SP6a e track intraday SP2b sospesi, non cancellati. Evidenze/checkbox storiche preservate; una ripresa richiede nuova decisione e verifica di registro/Git/dipendenze.
+- Checkpoint `chore: checkpoint SP3 Task5 suspended by user`: solo PROGRAMMA, spec generale (nota priorità), piano SP3 (sospensione) e nuovo inventario. Push solo Task5/gate SHA; nessun nuovo merge. Proprio SHA nel passo successivo o nella ricevuta fuori Git.
+- [Inventario](docs/reports/2026-10-15-swing-sp1-inventory.md) distingue capacità implementate, progetti incompleti e fonti documentali consultate il 2026-10-15. Nessun DB reale letto o test economico eseguito; 2564/186 sono evidenze storiche del codice Task5, non nuova ricerca.
+- Verifica documentale offline del checkpoint: `verify_documents.py` fuori Git, 28/28 controlli PASS (inclusi scope esatto di quattro Markdown, codice invariato e main originale preservato); `secret-scan.ps1`, quattro file, self-test PASS, zero candidati inattesi/placeholder; `git diff --check` PASS. Review del diff documentale conclusa senza rilievi bloccanti. Evidenze in scratch `swing-priority-verification`; nessuna suite backend rieseguita per queste sole modifiche documentali.
+- Prossimo: completare le domande del brief swing una alla volta, quindi proposta SP3s/spec/piano sul branch proposto investedge/sp3s-task-0. Nessun file di nuova spec/piano swing ancora creato; approvazioni da ottenere prima del codice. Dati gratuiti con universo as-of/delistati e prezzi manuali non ancora dimostrati; non ridurre quei requisiti per ottenere un PASS.
 
 ### Implementazione approvata B — SP3 Task2 (2026-10-14)
 
