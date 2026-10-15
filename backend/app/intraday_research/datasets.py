@@ -123,6 +123,60 @@ class DatasetService:
     def __init__(self, snapshots):
         self.snapshots, self.db = snapshots, snapshots.connection
 
+    def research_signal(self,bundle_id,*,config,listing_id,session_date,cutoff_ns,registry,quote_units,
+                        previous_frames=(),references=None,benchmark_bundle_id=None,seen_keys=(),seen_events=()):
+        """Frozen inputs to a pure setup; no execution, provider call or persistence."""
+        from backend.app.intraday.contracts import QualityPolicy
+        from backend.app.intraday.replay import select_versions
+        from backend.app.intraday_research.contracts import CandidateConfig, ResearchError
+        from backend.app.intraday_research.eligibility import evaluate_entry
+        from backend.app.intraday_research.news_features import news_as_of
+        from backend.app.intraday_research.strategies import evaluate_candidate, feature_frame
+        if (type(config) is not CandidateConfig or type(previous_frames) is not tuple or len(previous_frames)>6 or
+            registry.connection is not self.db or quote_units.registry.connection is not self.db):
+            raise ResearchError('INVALID_CONTRACT')
+        signature = self.snapshots._read_signature()
+        context = self.research_context(bundle_id,listing_id=listing_id,session_date=session_date,cutoff_ns=cutoff_ns,
+                                        benchmark_bundle_id=benchmark_bundle_id)
+        quote_refs = tuple(r for r in references if r.kind in {'QUOTE_SIZE','PRICE_INCREMENT'}) if references is not None else None
+        news_refs = tuple(r for r in references if r.kind=='NEWS_SOURCE') if references is not None else None
+        common = evaluate_entry(context,quote_units=quote_units,references=quote_refs,holding_minutes=config.holding_minutes)
+        bundle = self.open_bundle(bundle_id)
+        rows,charge = [],0
+        for row in bundle.timeline.iter_rows(cutoff_ns=cutoff_ns):
+            if row['table']!='intraday_news_versions':
+                continue
+            charge += 16*len(_json(row).encode())
+            if charge>67_108_864 or len(rows)>=10_000:
+                raise ResearchError('RESOURCE_LIMIT')
+            rows.append(row)
+        coverage = context.index.context(cutoff_ns)['news_coverage']
+        if coverage=='COVERED' and not rows:
+            coverage = 'COVERED_ZERO'
+        daily = context.daily()
+        identities = select_versions(context.index.family['IDENTITY'],family='IDENTITY',
+            cutoff_ns=context.current['open_at_ns']-1,listing_ids=(listing_id,))
+        identity = max((r for r in identities if r['valid_from_ns']<=context.current['open_at_ns'] and
+            (r['valid_to_ns'] is None or context.current['open_at_ns']<r['valid_to_ns'])),
+            key=lambda r:(r['valid_from_ns'],r['available_at_ns'],r['id']),default=None)
+        prior_close = None
+        if daily['previous_close'] is not None:
+            prior_close = {'listing_id':listing_id,'price':str(daily['previous_close']),'currency':'USD','unit':'USD_PER_SHARE',
+                'share_class':identity['payload'].get('share_class') if identity and identity['confirmed'] else None,
+                'source_digest':daily['sessions'][-1]['source_digest'],'available_at_ns':daily['sessions'][-1]['available_at_ns']}
+        news = news_as_of(rows,registry=registry,namespace=context.namespace,listing_id=listing_id,cutoff_ns=cutoff_ns,
+            references=news_refs,prior_close=prior_close,coverage=coverage)
+        frame = feature_frame(context,technical=config.arm!='NEWS_ONLY')
+        quote = context.index.quote(listing_id,cutoff_ns,QualityPolicy())
+        ask = quote['payload']['raw']['ap'] if quote and quote['executable'] else None
+        signal = evaluate_candidate(config,frames=(*previous_frames,frame),common=common,news=news,ask=ask,
+                                    seen_keys=seen_keys,seen_events=seen_events)
+        output = {'signal':signal,'frame':frame,'news':news}
+        self.snapshots.archive.safe_json(output)
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return output
+
     def research_context(self,bundle_id,*,listing_id,session_date,cutoff_ns,benchmark_bundle_id=None):
         """Read one decision and 30 prior sessions; no RAW expansion or writes.
 

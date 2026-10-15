@@ -168,3 +168,89 @@ def research_history(*, days=21, minutes=60):
     add('CONTROL',openings[0]-70*second,{'metadata_kind':'CALENDAR','complete':True,'start':dates[0].isoformat(),
         'end':dates[-1].isoformat(),'session_ids':session_ids,'member_count':len(session_ids)},kind='BOOTSTRAP')
     return namespace,rows,dates[-1].isoformat(),openings[-1]
+
+
+def news_terms_fixture(connection, *, fact=None, previous=None, origin=None, article_id=101,
+                       available=NS+10, article_available=NS+3, authorities=(), namespace=None):
+    """Independently pinned SYNTHETIC primary original and exact archived article."""
+    from dataclasses import asdict
+
+    from intraday_fixtures import common_row, insert
+
+    from backend.app.intraday.contracts import canonical_json
+    from backend.app.intraday_research.contracts import AttestationAuthority, canonical_hash
+    from backend.app.intraday_research.registry import Registry
+    namespace = namespace or manifest().namespace
+    fact = fact or {'kind':'GUIDANCE','event_id':f'GUIDANCE_{article_id}','issuer_id':'ISSUER_FIXTURE',
+        'listing_id':1,'status':'CONFIRMED','statement':'Issuer raises revenue guidance for FY2026.',
+        'period':'FY2026','units':{'revenue':'USD_MILLION','eps':'USD_PER_SHARE'},
+        'metrics':{'revenue':{'low':'110','high':'120'},'eps':{'low':'2','high':'3'}}}
+    rights = {'allow_summary':False,'allow_content':False,'retention':'NONE','evidence_hash':None,'version':'news-rights-v1'}
+    payload = {'version':'alpaca-news-row-v1','wire_source':'STREAM','source':'fixture',
+        'source_article_id':str(article_id),'headline':fact['statement'],'summary':None,'content':None,
+        'content_state':'RIGHTS_UNATTESTED','url':None,'author':None,'symbols':['FIX'],'language':None,
+        'published_at_ns':article_available-3,'updated_at_ns':article_available-3,'rights':rights}
+    stored = common_row(**asdict(namespace),id=article_id,article_id=canonical_hash({'article':article_id}),
+        published_at_ns=article_available-3,updated_at_ns=article_available-3,supersedes_id=None,
+        received_at_ns=article_available-2,persisted_at_ns=article_available-1,admitted_at_ns=article_available,
+        available_at_ns=article_available,event_time_ns=article_available-3,ingest_sequence=article_id,
+        availability_floor_ns=article_available-3,
+        payload_json=canonical_json(payload),payload_hash=canonical_hash(payload),logical_key=f'news:{article_id}')
+    insert(connection,'intraday_news_versions',stored)
+    connection.commit()
+    document = {'version':'news-source-attestation-v1','listing_id':1,'issuer_id':'ISSUER_FIXTURE',
+        'article_version_id':article_id,'article_id':stored['article_id'],'article_hash':stored['payload_hash'],
+        'fact_id':fact['event_id'],'previous_ref':asdict(previous) if previous else None,
+        'origin_ref':asdict(origin) if origin else None,
+        'valid_from_ns':article_available-100,'valid_to_ns':None,'known_at_ns':article_available-1,
+        'first_received_at_ns':article_available}
+    original = {'version':'issuer-facts-v1','issuer_id':'ISSUER_FIXTURE','published_at_ns':article_available-3,'facts':[fact]}
+    contract = {'version':'news-primary-contract-v1','schema':'issuer-facts-v1','issuer_id':'ISSUER_FIXTURE',
+        'listing_ids':[1],'archive_originals':True,'research_use':True}
+    evidence = {'version':'news-primary-publication-v1','publisher':'SYNTHETIC_FIXTURE','namespace':asdict(namespace),
+        'contract_hash':canonical_hash(contract),'original_json':canonical_json(original),'bindings':[document]}
+    authority = AttestationAuthority(namespace,'SYNTHETIC_FIXTURE',canonical_json(contract),canonical_hash(evidence))
+    registry = Registry(connection,attestation_authorities=(*authorities,authority))
+    reference = registry.import_attestation(document,namespace=namespace,evidence=evidence,
+        authority_hash=authority.authority_hash,now_ns=available)
+    row = stored | {'table':'intraday_news_versions','kind':'NEWS','payload':payload,'first_received_at_ns':stored['received_at_ns'],
+        'links':[{'id':article_id,'listing_id':1,'available_at_ns':article_available,'cluster_id':f'cluster:{fact["event_id"]}',
+                  'payload_hash':canonical_hash({'mapping':article_id}), 'payload':{'symbol':'FIX','reason_code':None,'identity':{'id':1}}}]}
+    return registry,reference,authority,row,document,evidence
+
+
+def setup_frames(*, family='TREND_PULLBACK', namespace=None):
+    """Manual frozen numeric frames; no market or economic evidence."""
+    from dataclasses import asdict
+
+    from backend.app.intraday_research.contracts import ResearchNamespace, canonical_hash
+    namespace = namespace or ResearchNamespace(PROFILE,'sip','DEMO','SYNTHETIC','RESEARCH_ONLY')
+    minute = 60_000_000_000
+    opening = NS
+    frames = []
+    for offset in range(44,51):
+        close = 100.2 if family=='TREND_PULLBACK' else 100
+        bar = {'start_at_ns':opening+(offset-1)*minute,'end_at_ns':opening+offset*minute,
+            'available_at_ns':opening+offset*minute+1,'open':close,'high':close+.1,'low':99.9,
+            'close':close,'complete':True,'segment':0}
+        f = {'ema8_1m':100,'ema20_1m':99.8,'vwap_session':100,'atr14_1m':1,'roc5_1m':.001,
+            'rvol_1m':1,'ema8_5m':101,'ema20_5m':100,'ema20_5m_slope3':.001,
+            'context15m_close':101,'ema8_15m':100,'context15m_roc2_sign':0,'rs_market15m':.001,'rs_sector15m':.002}
+        if offset==50:
+            bar.update(close=100.5,high=100.6)
+            f['rvol_1m']=1.5
+        body = {'version':'intraday-setup-frame-v1','namespace':asdict(namespace),'listing_id':1,'session_date':'2023-11-14',
+            'open_at_ns':opening,'cutoff_ns':bar['available_at_ns'],'input_hash':HASH,'bar':bar,'values':f,
+            'or_high':100.25,'or_available_at_ns':opening+15*minute+1,'or_complete':True}
+        body['fingerprint']=canonical_hash(body)
+        frames.append(body)
+    return tuple(frames)
+
+
+def setup_common(frame, *, holding=15, reasons=()):
+    from backend.app.intraday_research.contracts import canonical_hash
+    body = {'input_hash':frame['input_hash'],'cutoff_ns':frame['cutoff_ns'],'holding_minutes':holding,
+        'technical_eligible':not reasons,'reasons':list(reasons),'news_coverage':'COVERED_ZERO',
+        'quote_conversion':{'size_conversion_attested':True,'bid_shares':100,'ask_shares':100},
+        'economic_status':'NON_IDONEO'}
+    return body | {'fingerprint':canonical_hash(body)}

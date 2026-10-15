@@ -300,3 +300,31 @@ def test_dataset_reference_rejects_boolean_id_after_coherent_rehash(registry):
     registry.connection.commit()
     with pytest.raises(ResearchError, match="REGISTRY_INTEGRITY"):
         registry.read_manifest(ref["manifest_id"], namespace=saved.namespace)
+
+
+@pytest.mark.parametrize('listing_ids',[[{}],[1,'2'],[True]])
+def test_news_authority_rejects_malformed_listing_scope_with_fixed_error(listing_ids):
+    from backend.app.intraday_research.contracts import AttestationAuthority
+    body = {'version':'news-primary-contract-v1','schema':'issuer-facts-v1','issuer_id':'ISSUER_FIXTURE',
+        'listing_ids':listing_ids,'archive_originals':True,'research_use':True}
+    with pytest.raises(ResearchError,match='INVALID_CONTRACT'):
+        AttestationAuthority(manifest().namespace,'SYNTHETIC_FIXTURE',canonical_json(body),'a'*64)
+
+
+def test_news_import_is_idempotent_append_only_and_exact_bytes_are_revalidated(registry):
+    from intraday_research_fixtures import news_terms_fixture
+    news = news_terms_fixture(registry.connection)
+    reader,ref,authority,_,document,evidence = news
+    repeated=reader.import_attestation(document,namespace=manifest().namespace,evidence=evidence,
+        authority_hash=authority.authority_hash,now_ns=NS+50)
+    assert repeated==ref
+    assert reader.connection.execute('SELECT COUNT(*) FROM intraday_news_source_attestations').fetchone()[0]==1
+    for sql in ('UPDATE intraday_news_source_attestations SET valid_to_ns=1','DELETE FROM intraday_news_source_attestations'):
+        with pytest.raises(sqlite3.IntegrityError):
+            reader.connection.execute(sql)
+    reader.connection.rollback()
+    reader.connection.execute('DROP TRIGGER trg_intraday_news_versions_no_update')
+    reader.connection.execute("UPDATE intraday_news_versions SET payload_json='{}' WHERE id=101")
+    reader.connection.commit()
+    with pytest.raises(ResearchError,match='REGISTRY_INTEGRITY'):
+        reader.read_attestation(ref,namespace=manifest().namespace)

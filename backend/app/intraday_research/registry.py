@@ -26,6 +26,9 @@ from backend.app.intraday_research.contracts import (
 
 _SCOPE = ("profile_id", "feed", "data_mode", "provenance", "replay_grade")
 _WHERE = " AND ".join(f"{name}=?" for name in _SCOPE)
+_ATTESTATIONS = {'QUOTE_SIZE':('intraday_quote_size_attestations','quote_size_id'),
+                 'PRICE_INCREMENT':('intraday_price_increment_attestations','price_increment_id'),
+                 'NEWS_SOURCE':('intraday_news_source_attestations','news_source_id')}
 
 
 def _current_inventory() -> tuple[str, ...]:
@@ -57,7 +60,6 @@ class Registry:
         self.attestation_authorities = attestation_authorities
 
     def _attestation_body(self, document, namespace, evidence, authority_hash):
-        from backend.app.intraday_research.quote_units import validate_attestation
         self._namespace(namespace)
         self._guard([document,evidence,authority_hash])
         matches = []
@@ -67,7 +69,54 @@ class Registry:
                 matches.append(authority)
         if len(matches)!=1:
             raise ResearchError('AUTHORITY_UNVERIFIED')
+        if type(document) is dict and document.get('version')=='news-source-attestation-v1':
+            from backend.app.intraday_research.news_features import validate_news_attestation
+            return validate_news_attestation(document,evidence,matches[0])
+        from backend.app.intraday_research.quote_units import validate_attestation
         return validate_attestation(document,evidence,matches[0])
+
+    def _news_binding(self,body,namespace,now_ns,*,current_id):
+        """Bind exact immutable archive bytes and backwards-only proof dependencies."""
+        from backend.app.intraday_research.news_features import article_text
+        document = body['document']
+        rows = self._rows(f'SELECT * FROM intraday_news_versions WHERE id=? AND {_WHERE}',
+            (document['article_version_id'],*namespace.key))
+        if len(rows)!=1:
+            raise ResearchError('INPUT_MISSING')
+        row = rows[0]
+        self._guard(row)
+        payload = parse_object(row['payload_json'])
+        if (canonical_hash(payload)!=row['payload_hash'] or canonical_json(payload)!=row['payload_json'] or
+            row['payload_hash']!=document['article_hash'] or row['article_id']!=document['article_id'] or
+            row['available_at_ns'] is None or row['available_at_ns']>now_ns or
+            not row['published_at_ns']<=row['updated_at_ns']<=row['received_at_ns']<=row['persisted_at_ns']<=row['available_at_ns'] or
+            body['fact']['statement'] not in article_text(payload)):
+            raise ResearchError('ATTESTATION_INVALID')
+        for field in ('previous_ref','origin_ref'):
+            value = document[field]
+            if value is None:
+                continue
+            reference = AttestationRef(**value)
+            if reference.kind!='NEWS_SOURCE' or reference.attestation_id>=current_id:
+                raise ResearchError('ATTESTATION_INVALID')
+            dependency = self.read_attestation(reference,namespace=namespace)
+            if dependency['available_at_ns']>now_ns:
+                raise ResearchError('ATTESTATION_INVALID')
+            if field=='origin_ref' and any(dependency['payload']['fact'][k]!=body['fact'][k]
+                for k in ('event_id','issuer_id','listing_id')):
+                raise ResearchError('ATTESTATION_INVALID')
+        if document['origin_ref'] is None:
+            # An existence query keeps memory bounded even after many deliveries.
+            # Only the identical pinned request may be replayed without an origin.
+            prior = self._rows(f'''SELECT id FROM intraday_news_source_attestations WHERE {_WHERE}
+                AND listing_id=? AND id<? AND json_extract(payload_json,'$.fact.event_id')=?
+                AND json_extract(payload_json,'$.fact.issuer_id')=? AND
+                (json_extract(payload_json,'$.document') IS NOT ? OR authority_hash<>? OR source_hash<>?) LIMIT 1''',
+                (*namespace.key,document['listing_id'],current_id,body['fact']['event_id'],body['fact']['issuer_id'],
+                 canonical_json(document),body['authority_hash'],body['source_hash']))
+            if prior:
+                raise ResearchError('ATTESTATION_INVALID')
+        return body | {'article_available_at_ns':row['available_at_ns'],'article_received_at_ns':row['received_at_ns']}
 
     def import_attestation(self, document, *, namespace, evidence, authority_hash, now_ns):
         integer(now_ns)
@@ -75,10 +124,13 @@ class Registry:
         if now_ns<document['first_received_at_ns']:
             raise ResearchError('INVALID_TIMESTAMP')
         kind = body['kind']
-        table = 'intraday_quote_size_attestations' if kind=='QUOTE_SIZE' else 'intraday_price_increment_attestations'
-        request_hash = canonical_hash(body)
+        table = _ATTESTATIONS[kind][0]
         try:
             with self._write():
+                if kind=='NEWS_SOURCE':
+                    current_id = self._rows(f'SELECT COALESCE(MAX(id),0)+1 AS next_id FROM {table}')[0]['next_id']
+                    body = self._news_binding(body,namespace,now_ns,current_id=current_id)
+                request_hash = canonical_hash(body)
                 existing = self._rows(f'''SELECT id,attestation_hash FROM {table} WHERE {_WHERE}
                     AND source_hash=? AND authority_hash=? AND json_extract(payload_json,'$.request_hash')=?''',
                     (*namespace.key,body['source_hash'],authority_hash,request_hash))
@@ -103,8 +155,33 @@ class Registry:
         if type(reference) is not AttestationRef:
             raise ResearchError('INVALID_CONTRACT')
         self._namespace(namespace)
-        table = 'intraday_quote_size_attestations' if reference.kind=='QUOTE_SIZE' else 'intraday_price_increment_attestations'
-        self._attestation_charge(reference,namespace)
+        root = not hasattr(self,'_attestation_reads')
+        if root:
+            self._attestation_reads,self._attestation_read_charge = {},0
+        key = namespace.key,reference.kind,reference.attestation_id,reference.attestation_hash
+        try:
+            if key in self._attestation_reads:
+                found = self._attestation_reads[key]
+                if found is None:
+                    raise ResearchError('REGISTRY_INTEGRITY')
+                self._guard(found)
+                return found
+            self._attestation_read_charge += self._attestation_charge(reference,namespace)
+            if len(self._attestation_reads)>=1_000 or self._attestation_read_charge>67_108_864:
+                raise ResearchError('RESOURCE_LIMIT')
+            self._attestation_reads[key] = None
+            result = self._read_attestation(reference,namespace=namespace)
+            self._attestation_reads[key] = result
+            return result
+        finally:
+            if root:
+                del self._attestation_reads,self._attestation_read_charge
+
+    def _read_attestation(self, reference, *, namespace):
+        if type(reference) is not AttestationRef:
+            raise ResearchError('INVALID_CONTRACT')
+        self._namespace(namespace)
+        table = _ATTESTATIONS[reference.kind][0]
         rows = self._rows(f'SELECT * FROM {table} WHERE id=? AND {_WHERE}',(reference.attestation_id,*namespace.key))
         if len(rows)!=1:
             raise ResearchError('INPUT_MISSING')
@@ -112,6 +189,8 @@ class Registry:
         body = self._checked(row,namespace)
         try:
             expected = self._attestation_body(body['document'],namespace,body['evidence'],body['authority_hash'])
+            if reference.kind=='NEWS_SOURCE':
+                expected = self._news_binding(expected,namespace,row['available_at_ns'],current_id=row['id'])
             expected.update(available_at_ns=row['available_at_ns'],request_hash=canonical_hash(expected))
             if (canonical_hash(expected)!=reference.attestation_hash or row['attestation_hash']!=reference.attestation_hash
                 or body.get('available_at_ns')!=row['available_at_ns'] or row['available_at_ns']!=row['recorded_at_ns']
@@ -127,7 +206,7 @@ class Registry:
     def _attestation_charge(self,reference,namespace):
         if type(reference) is not AttestationRef:
             raise ResearchError('INVALID_CONTRACT')
-        table = 'intraday_quote_size_attestations' if reference.kind=='QUOTE_SIZE' else 'intraday_price_increment_attestations'
+        table = _ATTESTATIONS[reference.kind][0]
         rows = self._rows(f'SELECT length(CAST(payload_json AS BLOB)) AS size FROM {table} WHERE id=? AND {_WHERE}',
                           (reference.attestation_id,*namespace.key))
         if not rows:
@@ -150,10 +229,12 @@ class Registry:
                 raise ResearchError('RESOURCE_LIMIT')
         return [self.read_attestation(ref,namespace=namespace) for ref in references]
 
-    def attestations_as_of(self, *, namespace, listing_id, cutoff_ns, references=None):
+    def attestations_as_of(self, *, namespace, listing_id, cutoff_ns, references=None,kinds=('QUOTE_SIZE','PRICE_INCREMENT')):
         self._namespace(namespace)
         integer(listing_id,positive=True)
         integer(cutoff_ns)
+        if type(kinds) is not tuple or not kinds or len(set(kinds))!=len(kinds) or any(k not in _ATTESTATIONS for k in kinds):
+            raise ResearchError('INVALID_CONTRACT')
         if references is None and not any(authority.namespace==namespace for authority in self.attestation_authorities):
             return []
         if references is not None:
@@ -161,14 +242,15 @@ class Registry:
         else:
             refs = []
             trusted = {authority.authority_hash for authority in self.attestation_authorities if authority.namespace==namespace}
-            for kind,table in (('QUOTE_SIZE','intraday_quote_size_attestations'),('PRICE_INCREMENT','intraday_price_increment_attestations')):
+            for kind in kinds:
+                table = _ATTESTATIONS[kind][0]
                 found = self._rows(f'SELECT id,attestation_hash,authority_hash FROM {table} WHERE {_WHERE} AND listing_id=? AND available_at_ns<=? LIMIT 1001',
                                    (*namespace.key,listing_id,cutoff_ns))
                 if len(found)>1_000:
                     raise ResearchError('INVALID_CONTRACT')
                 refs.extend(AttestationRef(kind,row['id'],row['attestation_hash']) for row in found if row['authority_hash'] in trusted)
             rows = self.read_attestations(tuple(refs),namespace=namespace)
-        return [row for row in rows if row['listing_id']==listing_id and row['available_at_ns']<=cutoff_ns]
+        return [row for row in rows if row['listing_id']==listing_id and row['available_at_ns']<=cutoff_ns and row['payload']['kind'] in kinds]
 
     def _guard(self, payload):
         if _contains(payload, tuple(value for value in self.secret_inventory() if isinstance(value, str) and value)):
@@ -263,7 +345,7 @@ class Registry:
                             {"snapshot_id": ref.snapshot_id, "digest": ref.digest}, now_ns,
                             {"manifest_id": manifest_id, "snapshot_id": ref.snapshot_id, "dataset_digest": ref.digest})
                     for reference,_ in attested:
-                        column = 'quote_size_id' if reference.kind=='QUOTE_SIZE' else 'price_increment_id'
+                        column = _ATTESTATIONS[reference.kind][1]
                         self._insert('intraday_research_manifest_attestations',manifest.namespace,asdict(reference),now_ns,
                             {'manifest_id':manifest_id,column:reference.attestation_id,'attestation_hash':reference.attestation_hash})
                     trials = []
@@ -332,7 +414,7 @@ class Registry:
             raise ResearchError('REGISTRY_INTEGRITY')
         for link,(reference,_) in zip(linked,attested,strict=True):
             payload = self._checked(link,namespace)
-            column = 'quote_size_id' if reference.kind=='QUOTE_SIZE' else 'price_increment_id'
+            column = _ATTESTATIONS[reference.kind][1]
             if (canonical_json(payload)!=canonical_json(asdict(reference))
                 or link[column]!=reference.attestation_id or link['attestation_hash']!=reference.attestation_hash
                 or link['recorded_at_ns']!=row['recorded_at_ns']):

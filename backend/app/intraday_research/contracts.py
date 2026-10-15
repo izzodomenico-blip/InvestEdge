@@ -167,7 +167,7 @@ class AttestationRef:
     attestation_hash: str
 
     def __post_init__(self):
-        if type(self.kind) is not str or self.kind not in {'QUOTE_SIZE','PRICE_INCREMENT'}:
+        if type(self.kind) is not str or self.kind not in {'QUOTE_SIZE','PRICE_INCREMENT','NEWS_SOURCE'}:
             raise ResearchError('INVALID_CONTRACT')
         integer(self.attestation_id,positive=True)
         digest(self.attestation_hash)
@@ -192,6 +192,17 @@ class AttestationAuthority:
             raise ResearchError('INVALID_CONTRACT')
         digest(self.evidence_hash)
         contract = parse_object(self.contract_json)
+        if contract.get('version')=='news-primary-contract-v1':
+            if (canonical_json(contract)!=self.contract_json or
+                set(contract)!={'version','schema','issuer_id','listing_ids','archive_originals','research_use'} or
+                contract['schema']!='issuer-facts-v1' or type(contract['issuer_id']) is not str or
+                re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}',contract['issuer_id']) is None or
+                type(contract['listing_ids']) is not list or not 1<=len(contract['listing_ids'])<=30 or
+                any(type(i) is not int or not 0<i<=MAX_NS for i in contract['listing_ids']) or
+                contract['listing_ids']!=sorted(set(contract['listing_ids'])) or
+                contract['archive_originals'] is not True or contract['research_use'] is not True):
+                raise ResearchError('INVALID_CONTRACT')
+            return
         if (canonical_json(contract)!=self.contract_json or set(contract)!={'version','provider','feed','schema','source','size_unit'}
             or contract['version']!='quote-source-contract-v1' or contract['provider']!='alpaca'
             or contract['feed']!=self.namespace.feed or contract['schema']!='alpaca-market-row-v1'

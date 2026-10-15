@@ -1008,6 +1008,22 @@ def _small_bundle():
     return s,research,result
 
 
+def test_candidate_bundle_path_is_read_only_and_blocks_missing_context():
+    from backend.app.intraday_research.contracts import CandidateConfig, ResearchNamespace
+    from backend.app.intraday_research.quote_units import QuoteUnits
+    from backend.app.intraday_research.registry import Registry
+    s,research,bundle = _small_bundle()
+    registry = Registry(s.db)
+    ns = ResearchNamespace(*bundle.manifest['namespace'])
+    calendar = next(r for r in bundle.timeline if r['table']=='intraday_calendar_versions')
+    before = s.db.total_changes
+    result = research.research_signal(bundle.bundle_id,config=CandidateConfig('TREND_PULLBACK',15,'TECH_ONLY','R0'),
+        listing_id=s.listing,session_date=calendar['session_date'],cutoff_ns=bundle.manifest['cutoff_ns'],
+        registry=registry,quote_units=QuoteUnits(registry,ns))
+    assert not result['signal']['admitted'] and s.db.total_changes==before
+    assert research.open_bundle(bundle.bundle_id).digest==bundle.digest
+
+
 def test_attested_bundle_has_its_own_fingerprint_and_preserves_old_dataset_digest():
     from intraday_research_fixtures import quote_terms_fixture
 
