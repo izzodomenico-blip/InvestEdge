@@ -1008,6 +1008,34 @@ def _small_bundle():
     return s,research,result
 
 
+def test_attested_bundle_has_its_own_fingerprint_and_preserves_old_dataset_digest():
+    from intraday_research_fixtures import quote_terms_fixture
+
+    from backend.app.intraday_research.contracts import ResearchNamespace
+    s,research,saved = _small_bundle()
+    namespace = ResearchNamespace(*saved.manifest['namespace'])
+    registry,refs,_,_ = quote_terms_fixture(s.db,namespace=namespace,available=saved.manifest['cutoff_ns'])
+    before = s.db.total_changes
+    wrapped = research.bind_attestations(saved.bundle_id,references=refs,registry=registry,
+                                         cutoff_ns=saved.manifest['cutoff_ns'])
+    assert wrapped['bundle_digest']==saved.digest and wrapped['fingerprint']!=saved.digest
+    assert len(wrapped['attestations'])==2
+    assert research.open_bundle(saved.bundle_id).digest==saved.digest
+    assert s.db.total_changes==before
+
+
+def test_attested_bundle_rejects_proof_imported_after_its_cutoff():
+    from intraday_research_fixtures import quote_terms_fixture
+
+    from backend.app.intraday_research.contracts import ResearchNamespace
+    s,research,saved = _small_bundle()
+    registry,refs,_,_ = quote_terms_fixture(s.db,namespace=ResearchNamespace(*saved.manifest['namespace']),
+                                          available=saved.manifest['cutoff_ns']+1)
+    with pytest.raises(ValueError):
+        research.bind_attestations(saved.bundle_id,references=refs,registry=registry,
+                                   cutoff_ns=saved.manifest['cutoff_ns'])
+
+
 def test_bundle_rejects_current_sensitive_inventory_matching_public_bundle_digest():
     from dataclasses import replace
 

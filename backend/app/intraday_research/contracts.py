@@ -25,7 +25,8 @@ class ResearchError(ValueError):
     def __init__(self, code: str):
         allowed = {"INVALID_CONTRACT", "INVALID_JSON", "NAMESPACE_MISMATCH", "INPUT_MISSING",
                    "PUBLIC_METADATA_INVALID", "REGISTRY_INTEGRITY", "INVALID_TRANSITION",
-                   "INVALID_TIMESTAMP", "TRANSACTION_ALREADY_OPEN", "REGISTRY_WRITE_FAILED"}
+                   "INVALID_TIMESTAMP", "TRANSACTION_ALREADY_OPEN", "REGISTRY_WRITE_FAILED",
+                   "ATTESTATION_INVALID", "AUTHORITY_UNVERIFIED", "RESOURCE_LIMIT"}
         self.code = code if code in allowed else "INVALID_CONTRACT"
         super().__init__(self.code)
 
@@ -160,6 +161,50 @@ class DatasetRef:
 
 
 @dataclass(frozen=True)
+class AttestationRef:
+    kind: str
+    attestation_id: int
+    attestation_hash: str
+
+    def __post_init__(self):
+        if type(self.kind) is not str or self.kind not in {'QUOTE_SIZE','PRICE_INCREMENT'}:
+            raise ResearchError('INVALID_CONTRACT')
+        integer(self.attestation_id,positive=True)
+        digest(self.attestation_hash)
+
+
+@dataclass(frozen=True)
+class AttestationAuthority:
+    """Independent local trust configuration, never accepted from an import body.
+
+    The administrator pins an already authenticated original publication and
+    its contract. Hash matching proves local binding, not publisher identity.
+    No authority is configured by default, and no network verification occurs.
+    """
+    namespace: ResearchNamespace
+    publisher: str
+    contract_json: str
+    evidence_hash: str
+
+    def __post_init__(self):
+        if (type(self.namespace) is not ResearchNamespace or type(self.publisher) is not str
+            or re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}',self.publisher) is None):
+            raise ResearchError('INVALID_CONTRACT')
+        digest(self.evidence_hash)
+        contract = parse_object(self.contract_json)
+        if (canonical_json(contract)!=self.contract_json or set(contract)!={'version','provider','feed','schema','source','size_unit'}
+            or contract['version']!='quote-source-contract-v1' or contract['provider']!='alpaca'
+            or contract['feed']!=self.namespace.feed or contract['schema']!='alpaca-market-row-v1'
+            or contract['source'] not in {'STREAM','REST'}
+            or contract['size_unit'] not in {'ROUND_LOTS','SOURCE_UNATTESTED','SHARES'}):
+            raise ResearchError('INVALID_CONTRACT')
+
+    @property
+    def authority_hash(self):
+        return canonical_hash(asdict(self))
+
+
+@dataclass(frozen=True)
 class ResearchManifest:
     namespace: ResearchNamespace
     resources: ResourceLimits
@@ -170,6 +215,7 @@ class ResearchManifest:
     code_revision: str
     cost_profile_hash: str | None = None
     seed: int = 137
+    attestations: tuple[AttestationRef, ...] = ()
 
     def __post_init__(self):
         if type(self.namespace) is not ResearchNamespace or type(self.resources) is not ResourceLimits:
@@ -186,6 +232,10 @@ class ResearchManifest:
         if self.cost_profile_hash is not None:
             digest(self.cost_profile_hash)
         integer(self.seed)
+        if (type(self.attestations) is not tuple or len(self.attestations)>1_000
+            or any(type(ref) is not AttestationRef for ref in self.attestations)
+            or len({(ref.kind,ref.attestation_id) for ref in self.attestations})!=len(self.attestations)):
+            raise ResearchError('INVALID_CONTRACT')
         if self.seed != 137:
             raise ResearchError("INVALID_CONTRACT")
         canonical_json(self.to_dict())
@@ -195,7 +245,7 @@ class ResearchManifest:
         return trial_grid()
 
     def to_dict(self) -> dict:
-        return {
+        body = {
             "version": VERSION, "namespace": asdict(self.namespace), "resources": asdict(self.resources),
             "datasets": [asdict(ref) for ref in self.datasets], "start_at_ns": self.start_at_ns,
             "end_at_ns": self.end_at_ns, "cutoff_ns": self.cutoff_ns, "code_revision": self.code_revision,
@@ -225,6 +275,9 @@ class ResearchManifest:
                      "required_positive_oos_folds": 3},
             "holdout": {"state": "SEALED", "scope": "RESEARCH_WORKFLOW", "external_access_contaminates": True},
         }
+        if self.attestations:
+            body['attestations'] = [asdict(ref) for ref in self.attestations]
+        return body
 
     @property
     def config_json(self) -> str:

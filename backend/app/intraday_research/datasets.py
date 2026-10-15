@@ -123,6 +123,37 @@ class DatasetService:
     def __init__(self, snapshots):
         self.snapshots, self.db = snapshots, snapshots.connection
 
+    def bind_attestations(self,bundle_id,*,references,registry,cutoff_ns):
+        """Detached research context; original bundle/dataset bytes stay intact."""
+        from backend.app.intraday_research.contracts import AttestationRef, ResearchError, canonical_hash
+        integer(cutoff_ns)
+        if (registry.connection is not self.db or type(references) is not tuple or not 1<=len(references)<=1_000
+            or any(type(ref) is not AttestationRef for ref in references)
+            or len({(ref.kind,ref.attestation_id) for ref in references})!=len(references)):
+            raise ResearchError('INVALID_CONTRACT')
+        signature = self.snapshots._read_signature()
+        bundle = self.open_bundle(bundle_id)
+        namespace = ResearchNamespace(*bundle.manifest['namespace'])
+        if not bundle.manifest['start_at_ns']<=cutoff_ns<=bundle.manifest['cutoff_ns']:
+            raise ResearchError('INVALID_TIMESTAMP')
+        attestations = []
+        for reference,row in zip(references,registry.read_attestations(references,namespace=namespace),strict=True):
+            if row['available_at_ns']>cutoff_ns or row['listing_id'] not in bundle.manifest['listing_ids']:
+                raise ResearchError('INPUT_MISSING')
+            attestations.append(asdict(reference)|{key:row[key] for key in
+                ('payload_hash','source_hash','authority_hash','available_at_ns','listing_id','valid_from_ns','valid_to_ns')})
+        output = {'version':'attested-intraday-bundle-v1','bundle_id':bundle_id,'bundle_digest':bundle.digest,
+                  'namespace':asdict(namespace),'cutoff_ns':cutoff_ns,'attestations':attestations,
+                  'known_at_ns':max(bundle.known_at_ns,*(row['available_at_ns'] for row in attestations)),
+                  'economic_status':'NOT_EVALUATED'}
+        registry._guard(output)
+        output['fingerprint'] = canonical_hash(output)
+        registry._guard(output)
+        self.snapshots.archive.safe_json(output)
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return output
+
     def _children(self, request):
         if type(request) is not DatasetBundle:
             raise ValueError('BUNDLE_INVALID')
