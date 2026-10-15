@@ -90,3 +90,81 @@ def seed_registered_evidence(connection):
             {"manifest_id": ref["manifest_id"], column: row_id, "attestation_hash": HASH})
     connection.commit()
     return ref
+
+
+def research_history(*, days=21, minutes=60):
+    """Synthetic published rows; UTC opens explicitly model the DST change."""
+    from datetime import UTC, date, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from test_intraday_replay import row
+
+    from backend.app.intraday_research.contracts import ResearchNamespace
+
+    minute, second = 60_000_000_000, 1_000_000_000
+    namespace = ResearchNamespace('a'*64,'sip','DEMO','SYNTHETIC','RESEARCH_ONLY')
+    dates, day = [], date(2026,10,12)
+    while len(dates)<days:
+        if day.weekday()<5:
+            dates.append(day)
+        day += timedelta(days=1)
+    openings = [int(datetime(d.year,d.month,d.day,9,30,tzinfo=ZoneInfo('America/New_York')).astimezone(UTC).timestamp())*second
+                for d in dates]
+    rows = []
+    def add(family, stamp, payload, **fields):
+        value = row(family,at=stamp,received=stamp,available=stamp,row_id=len(rows)+1,
+                    data_mode='DEMO',provenance='SYNTHETIC',replay_grade='RESEARCH_ONLY',payload=payload,**fields)
+        rows.append(value)
+        return value
+    identities = {i:add('IDENTITY',openings[0]-100*second,{'mic':'XNAS'},listing_id=i) for i in (1,2,3)}
+    for source in ('bls','fed','issuer'):
+        document = add('CONTROL',openings[0]-90*second,{'metadata_kind':'EVENT_DOCUMENT'},kind='BOOTSTRAP',provider=source)
+        add('EVENT',openings[0]-80*second,{'version':'official-event-calendar-v1','source':source,
+            'coverage':'ANNOUNCED_EVENTS_ONLY','authenticity_basis':'LOCAL_OFFICIAL_COPY',
+            'document':{'id':document['id'],'hash':document['payload_hash']}},provider=source,
+            logical_key=source,listing_id=1 if source=='issuer' else None,
+            event_type='EARNINGS' if source=='issuer' else 'MACRO',scheduled_at_ns=openings[-1]+500*minute)
+    session_ids = {}
+    for day, opening in zip(dates,openings,strict=True):
+        closing, capture = opening+minutes*minute,f'fixture-{day}'
+        cal = add('CALENDAR',openings[0]-70*second,{'source':'ALPACA_CALENDAR'},session_date=day.isoformat(),
+                  open_at_ns=opening,close_at_ns=closing,logical_key=f'calendar:{day}')
+        session_ids[day.isoformat()] = cal['id']
+        add('UNIVERSE',opening-60*second,{'kind':'PROSPECTIVE','session_date':day.isoformat(),
+            'calendar_version_id':cal['id'],'calendar_hash':cal['payload_hash'],'open_at_ns':opening,'close_at_ns':closing,
+            'benchmarks':{'market':2,'sector':3},'members':[{'listing_id':i,'eligible':True,
+                'identity_version_id':v['id'],'identity_hash':v['payload_hash']} for i,v in identities.items()]})
+        subscriptions = {'market':{'bars':['fixture'],'quotes':['fixture'],'statuses':['fixture']},'news':{'news':['fixture']}}
+        add('CONTROL',opening-5*second,{'listing_ids':[1,2,3],'subscriptions':subscriptions,
+            'continuity_policy':{'version':'collector-continuity-v1','socket_silence_ns':300*second,'lease_ns':300*second}},
+            kind='CAPTURE_START',capture=capture)
+        acks = [add('CONTROL',opening-(4-i)*second,{'channel':ch,'subscriptions':subscriptions[ch],
+            'received_at_ns':opening-(4-i)*second},kind='ACK',capture=capture)
+                for i,ch in enumerate(('market','news'))]
+        checkpoints = [add('EVENT',opening-2*second,{'version':'utp-status-checkpoint-v1','state':'NORMAL',
+            'expires_at_ns':closing+30*second,'reason_code':None},capture=capture,listing_id=i,
+            event_type='RESUME',effective_at_ns=opening-2*second,logical_key=f'status:{day}:{i}') for i in (1,2,3)]
+        add('CONTROL',opening-second,{'metadata_kind':'COLLECTOR_HANDSHAKE','continuity_attested':True,
+            'barrier_at_ns':opening-second,'ack_refs':[{'id':r['id'],'hash':r['payload_hash'],
+                'publication_id':r['publication_id'],'publication_hash':r['publication_hash']} for r in acks],
+            'listings':[{'listing_id':r['listing_id'],'checkpoint_id':r['id'],'checkpoint_hash':r['payload_hash'],
+                'checkpoint_admission_id':r['admission_id'],'snapshot_at_ns':opening-2*second,
+                'expires_at_ns':closing+30*second,'status_refs':[]} for r in checkpoints]},kind='BOOTSTRAP',capture=capture)
+        for offset in range(minutes+1):
+            stamp = opening+offset*minute
+            for clock in (stamp,stamp+second):
+                add('CONTROL',clock,{'metadata_kind':'TRANSPORT_LIVENESS','channel':'news',
+                    'ping_sent_at_ns':clock-1,'pong_received_at_ns':clock},kind='CLOCK',capture=capture)
+            if offset==minutes:
+                continue
+            for listing in (1,2,3):
+                add('BAR',stamp+minute+second,{'version':'alpaca-market-row-v1','source':'STREAM','currency':'USD','adjustment':'raw',
+                    'raw':{'o':100,'h':100.1,'l':99.9,'c':100,'v':10000,'vw':100}},capture=capture,
+                    listing_id=listing,event_time_ns=stamp,bar_end_ns=stamp+minute,logical_key=f'bar:{day}:{listing}:{offset}')
+        decision = closing+second
+        add('QUOTE',decision,{'version':'alpaca-market-row-v1','source':'STREAM','currency':'USD','adjustment':'raw',
+            'size_unit':'ROUND_LOTS','reason_code':None,'raw':{'bp':99.99,'ap':100.01,'bs':2,'as':3}},
+            capture=capture,event_time_ns=closing,listing_id=1)
+    add('CONTROL',openings[0]-70*second,{'metadata_kind':'CALENDAR','complete':True,'start':dates[0].isoformat(),
+        'end':dates[-1].isoformat(),'session_ids':session_ids,'member_count':len(session_ids)},kind='BOOTSTRAP')
+    return namespace,rows,dates[-1].isoformat(),openings[-1]

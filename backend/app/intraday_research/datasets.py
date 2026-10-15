@@ -123,6 +123,83 @@ class DatasetService:
     def __init__(self, snapshots):
         self.snapshots, self.db = snapshots, snapshots.connection
 
+    def research_context(self,bundle_id,*,listing_id,session_date,cutoff_ns,benchmark_bundle_id=None):
+        """Read one decision and 30 prior sessions; no RAW expansion or writes.
+
+        An optional previously published bundle supplies the pre-open benchmark
+        choice. A retrospective bundle alone cannot attest that choice.
+        """
+        from backend.app.intraday.replay import _family, select_versions
+        from backend.app.intraday_research.context import ResearchContext
+        from backend.app.intraday_research.contracts import ResearchError
+
+        integer(cutoff_ns)
+        integer(listing_id,positive=True)
+        signature = self.snapshots._read_signature()
+        bundle = self.open_bundle(bundle_id)
+        if listing_id not in bundle.manifest['listing_ids'] or cutoff_ns>bundle.manifest['cutoff_ns']:
+            raise ResearchError('INPUT_MISSING')
+        calendars,total = [],0
+        for row in bundle.timeline.iter_rows(cutoff_ns=cutoff_ns):
+            if _family(row)=='CALENDAR':
+                total += len(_json(row).encode())*4
+                if total>67_108_864:
+                    raise ResearchError('RESOURCE_LIMIT')
+                calendars.append(row)
+        sessions = [r for r in select_versions(calendars,family='CALENDAR',cutoff_ns=cutoff_ns) if r['session_date']<=session_date]
+        sessions.sort(key=lambda r:r['open_at_ns'])
+        current = next((r for r in sessions if r['session_date']==session_date),None)
+        if current is None or cutoff_ns<current['open_at_ns']:
+            raise ResearchError('INPUT_MISSING')
+        start = sessions[-31:][0]['open_at_ns']
+        benchmarks,known,benchmark_hash = None,None,None
+        if benchmark_bundle_id is not None:
+            prior = self.open_bundle(benchmark_bundle_id)
+            benchmarks,known = prior.manifest['benchmarks'],prior.known_at_ns
+            benchmark_hash = prior.digest
+            if (tuple(prior.manifest['namespace'])!=tuple(bundle.manifest['namespace']) or known>=current['open_at_ns']
+                or benchmarks!=bundle.manifest['benchmarks'] or listing_id not in prior.manifest['listing_ids']):
+                raise ResearchError('INPUT_MISSING')
+        requested = {listing_id,*bundle.manifest['benchmarks'].values()}
+        def inputs():
+            quotes,quote_bytes = {},0
+            for row in bundle.timeline.iter_rows(cutoff_ns=cutoff_ns):
+                family = _family(row)
+                if family=='BAR':
+                    if row['listing_id'] in requested and start<=row['event_time_ns']<current['close_at_ns']:
+                        yield row
+                elif family=='QUOTE':
+                    if row['listing_id']!=listing_id:
+                        continue
+                    stamp = row['event_time_ns']
+                    if not quotes or stamp>next(iter(quotes.values()))['event_time_ns']:
+                        quotes.clear()
+                        quote_bytes = 0
+                    if not quotes or stamp==next(iter(quotes.values()))['event_time_ns']:
+                        if row['id'] not in quotes:
+                            quote_bytes += len(_json(row).encode())*16
+                        quotes[row['id']] = row
+                    if len(quotes)>10_000 or quote_bytes>8_388_608:
+                        raise ResearchError('RESOURCE_LIMIT')
+                elif family=='NEWS':
+                    continue  # This task uses durable coverage, not article contents.
+                elif family in {'STATUS','LULD'}:
+                    if row['listing_id'] in requested and row['available_at_ns']>=start-300_000_000_000:
+                        yield row
+                elif family=='CONTROL' and row['kind'] in {'CAPTURE_START','ACK','CLOCK','GAP','STOP'}:
+                    if row['available_at_ns']>=start-300_000_000_000:
+                        yield row
+                else:
+                    yield row
+            yield from quotes.values()
+        context = ResearchContext(inputs(),namespace=ResearchNamespace(*bundle.manifest['namespace']),listing_id=listing_id,
+            session_date=session_date,cutoff_ns=cutoff_ns,benchmarks=benchmarks,benchmarks_known_at_ns=known,
+            benchmark_evidence_hash=benchmark_hash)
+        self.snapshots.archive.safe_json(context.daily())
+        if signature!=self.snapshots._read_signature():
+            raise MetadataError('SNAPSHOT_INPUT_MISSING')
+        return context
+
     def bind_attestations(self,bundle_id,*,references,registry,cutoff_ns):
         """Detached research context; original bundle/dataset bytes stay intact."""
         from backend.app.intraday_research.contracts import AttestationRef, ResearchError, canonical_hash
