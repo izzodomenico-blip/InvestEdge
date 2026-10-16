@@ -1,6 +1,6 @@
 # Swing 1–21 sedute — inventario SP1 e cambio di priorità
 
-Data: 2026-10-15. Analisi di codice e documentazione pubblica, senza esecuzioni economiche, accesso al DB reale, credenziali o download di dati di mercato. Base verificata: `6c32bfa4559336d9903af0d30c03e7145586cd52`, già su origin/main e origin/investedge/sp3-task-5. Questo rapporto è un inventario e un brief di brainstorming: **non è la nuova spec né il piano di implementazione**. Le successive risposte al brainstorming sono recepite sotto; proposta [spec SP3s](../superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) e [piano SP3s](../superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md) separati, ancora da approvare.
+Data inventario: 2026-10-15; revisione documentale 2026-10-16. Analisi di codice e documentazione pubblica, senza esecuzioni economiche, accesso al DB reale, credenziali o download di dati di mercato. Base verificata: `6c32bfa4559336d9903af0d30c03e7145586cd52`, già su origin/main e origin/investedge/sp3-task-5. Questo rapporto è un inventario e un brief di brainstorming: **non è la nuova spec né il piano di implementazione**. Le successive risposte al brainstorming sono recepite sotto; proposta [spec SP3s](../superpowers/specs/2026-10-15-investedge-sp3s-swing-research-design.md) e [piano SP3s](../superpowers/plans/2026-10-15-investedge-sp3s-swing-research.md) separati, ancora da approvare.
 
 ## Decisione e stato conservato
 
@@ -29,7 +29,7 @@ Le Data Policies UTP pubblicate a settembre 2023 riportano 2.500 USD/mese per fi
 | Portafoglio | Massimo 10 posizioni senza leva, rischio iniziale aggregato fino a 1.000 EUR |
 | Europa/ETF | Eventuali studi separati successivi |
 
-Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Creato dopo il checkpoint di sospensione `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`; le domande materiali sono risolte e la proposta documentale è pronta per review/approvazione, senza codice. Famiglie proposte nella nuova spec: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
+Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Creato dopo il checkpoint di sospensione `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`; il brief è acquisito; dopo review 2026-10-16 restano decisioni su SEVERE e poi H=1, senza modifiche implicite alla griglia o ai gate. Famiglie proposte nella nuova spec: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
 
 ## Dati daily REAL: cosa esiste e cosa manca
 
@@ -90,10 +90,20 @@ Alpaca è un confronto distinto: per account self-directed idonei la documentazi
 
 ## Proposta di sequenza, prima della spec
 
-1. Decisioni materiali raccolte una alla volta e completate con drawdown, stop e dieci posizioni; le risposte non approvano automaticamente la proposta tecnica.
+1. Brief acquisito con drawdown/stop/dieci posizioni; nuove decisioni SEVERE e H=1 aperte dopo review e da chiedere una alla volta. Nessuna approvazione automatica della proposta.
 2. SP3s Task0 documentale: proposta spec e piano con allowlist/branch/base espliciti e gate ex ante, in attesa di approvazione; nessun merge senza conferma esplicita dell’utente.
-3. Nella proposta separare gate dati (universo as-of/delistati/rettifiche/prezzi in finestra) e software offline da risultati economici. Mancanze non si risolvono eliminando perdenti o riducendo soglie; restano INSUFFICIENTE.
+3. Nuovo Task3 G_SWING_FEAS documentale bloccante prima dei Task4–9 software (exTask3–8), con requisiti per campo: identità/universo inclusi delistati, classificazione e domicilio storico USA, daily/minuti/stop RTH, eventi/recuperi, FX/benchmark, calendario/settlement e diritti/costi/risorse. Oggi INSUFFICIENTE senza pacchetto locale idoneo e prove del custode del holdout; Basic richiede eventuale configurazione chiave soltanto dell’utente, mai agenti. Nessuna spesa/download automatico. Nella proposta separare gate dati (universo as-of/delistati/rettifiche/prezzi in finestra) e software offline da risultati economici. Mancanze non si risolvono eliminando perdenti o riducendo soglie; restano INSUFFICIENTE.
 4. Congelare famiglie, holding 1/5/21, regole/rischio/gap, scenari Best/Direct e costi stressati, IS/OOS/holdout e tutti i tentativi prima dei test economici. Il campione swing sarà storico validato, non 476 nuove sedute live; dimensione e periodi proposti nella spec restano da approvare.
 5. Solo dopo approvazione di spec e piano, implementare i task autorizzati con TDD offline. Nessuna raccolta live, credenziale, ordine, paper o spesa; eventuali import di dataset richiederanno incarico esplicito e mai il DB reale nei test.
 
 Fonti di codice: `backend/app/lab/{series,features,resample,feature_store,score_v1,strategies,simulator,harness,walk_forward,evidence,stats,trials,universe,costs}.py`, `backend/app/data_providers/{stooq,provider_registry,alpaca_market,alpha_vantage,yahoo_finance}.py`, `backend/app/intraday_research/{contracts,registry,datasets,context,quote_units,news_features,strategies}.py`. Spec/piani SP1 e SP3 e PROGRAMMA-OPERATIVO letti. Calendario ufficiale: [NYSE](https://www.nyse.com/trade/hours-calendars), orario di chiusura 16:00 New York e sedute ridotte 13:00; conversione Europe/Rome dipendente dalla data. Solo letture del repository e pagine pubbliche, nessuna chiamata agli endpoint dati.
+
+## Review documentale 2026-10-16: effetti e limiti
+
+Spec §7.1 contiene i costi RT/drag lineare ricalcolati: SEVERE 340/380 bps su 1.000 EUR; non è prova aritmetica di esclusione di tutte le strategie. L’extra FX 100 bps/lato non è una tariffa TR documentata per acquisto/vendita regolati in EUR, e può sovrapporsi allo spread assunto; nessuna ricalibrazione applicata. H=1 resta candidato con N20 e SEVERE gate necessario fino a risposta dell’utente.
+
+Spec §9.1/9.3 distingue frontiera di significatività da MDE 80%, su calendario documentale OOS 1006/holdout 689: Sharpe iid 1,405/1,698, ma MDE 80% 1,826/2,207 prima dei gate congiunti. Quantile 0,9975/B10000 ha 25 estrazioni di coda attese e circa 11 blocchi medi 63 nel holdout: precisione limitata esplicita. I numeri non sono potenza stimata su dati REAL.
+
+Proposti gate su eccesso rispetto all’universo EW as-of con esposizione laggata e P&L locale USD, sullo stesso bootstrap congiunto, senza aumentare N se tutti necessari. La scelta finale usa IS 2021-11-29–2023-11-29 dentro l’intervallo OOS: la curva fissa OOS è screening retrospettivo parzialmente in-sample, solo il holdout è conferma pulita. Serve funzione DSR nuova nel pacchetto swing con N/varianza espliciti, senza alterare lab.stats.
+
+Verifica documentale BCE degli estremi, non download di una serie: dollaro in EUR 2021–22 +15,05% (31 dic 2020→30dic2022), 2025 −11,58% (31 dic 2024→31 dic 2025), non P&L della strategia. Fonti: [BCE2020](https://www.ecb.europa.eu/press/annual-reports-financial-statements/wfs/2021/html/ecb.fs210106.en.html), [BCE2022](https://www.ecb.europa.eu/press/annual-reports-financial-statements/wfs/2023/html/ecb.fs230104.fi.html), [BCE2025](https://www.ecb.europa.eu/press/annual-reports-financial-statements/annual/annual-accounts/html/ecb.annualaccounts2025~ba3b593c99.en.html). Costi: [TR listino](https://traderepublic.com/it-it?openModal=pricing-scheme), [TR ex-post](https://support.traderepublic.com/en-de/809-Cosa-sono-le-informazioni-sui-costi-ex_post).
