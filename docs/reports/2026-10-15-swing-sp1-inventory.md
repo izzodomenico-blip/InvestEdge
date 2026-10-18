@@ -29,7 +29,7 @@ Le Data Policies UTP pubblicate a settembre 2023 riportano 2.500 USD/mese per fi
 | Portafoglio | Massimo 10 posizioni senza leva, rischio iniziale aggregato fino a 1.000 EUR |
 | Europa/ETF | Eventuali studi separati successivi |
 
-Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Creato dopo il checkpoint di sospensione `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`; il brief è acquisito; dopo review 2026-10-16 restano decisioni su SEVERE e poi H=1, senza modifiche implicite alla griglia o ai gate. Famiglie proposte nella nuova spec: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
+Identificativo proposto: **SP3s — Strategie swing USA 1–21 sedute**. Branch documentale proposto: `investedge/sp3s-task-0`. Creato dopo il checkpoint di sospensione `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`; il brief è acquisito; il 2026-10-18 FX condizionato e scelta b H=1 diagnostico sono approvati e applicati ai documenti, ricerca H=5/21 e N14. Approvazione complessiva spec/piano ancora pendente. Famiglie proposte nella nuova spec: trend/momentum, pullback in trend e breakout su più giorni. Non sono ancora regole approvate o strategie redditizie.
 
 ## Dati daily REAL: cosa esiste e cosa manca
 
@@ -90,10 +90,10 @@ Alpaca è un confronto distinto: per account self-directed idonei la documentazi
 
 ## Proposta di sequenza, prima della spec
 
-1. Brief acquisito con drawdown/stop/dieci posizioni; nuove decisioni SEVERE e H=1 aperte dopo review e da chiedere una alla volta. Nessuna approvazione automatica della proposta.
+1. Brief acquisito con drawdown/stop/dieci posizioni; FX condizionato e scelta b H=1 diagnostico approvati il 2026-10-18. Approvazione complessiva spec/piano ancora necessaria, nessun codice implicito nelle risposte.
 2. SP3s Task0 documentale: proposta spec e piano con allowlist/branch/base espliciti e gate ex ante, in attesa di approvazione; nessun merge senza conferma esplicita dell’utente.
 3. Nuovo Task3 G_SWING_FEAS documentale bloccante prima dei Task4–9 software (exTask3–8), con requisiti per campo: identità/universo inclusi delistati, classificazione e domicilio storico USA, daily/minuti/stop RTH, eventi/recuperi, FX/benchmark, calendario/settlement e diritti/costi/risorse. Oggi INSUFFICIENTE senza pacchetto locale idoneo e prove del custode del holdout; Basic richiede eventuale configurazione chiave soltanto dell’utente, mai agenti. Nessuna spesa/download automatico. Nella proposta separare gate dati (universo as-of/delistati/rettifiche/prezzi in finestra) e software offline da risultati economici. Mancanze non si risolvono eliminando perdenti o riducendo soglie; restano INSUFFICIENTE.
-4. Congelare famiglie, holding 1/5/21, regole/rischio/gap, scenari Best/Direct e costi stressati, IS/OOS/holdout e tutti i tentativi prima dei test economici. Il campione swing sarà storico validato, non 476 nuove sedute live; dimensione e periodi proposti nella spec restano da approvare.
+4. Congelare famiglie, holding di ricerca 5/21 e H=1 diagnostico separato, regole/rischio/gap, scenari Best/Direct e costi stressati, IS/OOS/holdout e tutti i tentativi prima dei test economici. Il campione swing sarà storico validato, non 476 nuove sedute live; dimensione e periodi proposti nella spec restano da approvare.
 5. Solo dopo approvazione di spec e piano, implementare i task autorizzati con TDD offline. Nessuna raccolta live, credenziale, ordine, paper o spesa; eventuali import di dataset richiederanno incarico esplicito e mai il DB reale nei test.
 
 Fonti di codice: `backend/app/lab/{series,features,resample,feature_store,score_v1,strategies,simulator,harness,walk_forward,evidence,stats,trials,universe,costs}.py`, `backend/app/data_providers/{stooq,provider_registry,alpaca_market,alpha_vantage,yahoo_finance}.py`, `backend/app/intraday_research/{contracts,registry,datasets,context,quote_units,news_features,strategies}.py`. Spec/piani SP1 e SP3 e PROGRAMMA-OPERATIVO letti. Calendario ufficiale: [NYSE](https://www.nyse.com/trade/hours-calendars), orario di chiusura 16:00 New York e sedute ridotte 13:00; conversione Europe/Rome dipendente dalla data. Solo letture del repository e pagine pubbliche, nessuna chiamata agli endpoint dati.
@@ -119,3 +119,9 @@ La [Execution Policy TR 07/2026, pagina 2](https://assets.traderepublic.com/asse
 Dopo la proposta pubblicata 86ffdf0 l’utente approva la ricalibrazione condizionata. Le sezioni precedenti “non applicata” documentano la proposta storica. Stato corrente: extra FX 0 bps solo sugli acquisti/vendite con prezzo/regolamento interamente EUR senza conversione di cassa; altri costi di conversione di ordini/proventi documentati o INSUFFICIENTE. Minimo SEVERE 50 bps/lato, fee 2/4 EUR e ritardo 15m invariati; RT nel caso EUR 14/18 EUR su 1.000 EUR. Il cambio economico resta nell’esposizione e nel prezzo, non è azzerato.
 
 Spec §7/7.1/7.2 aggiornate; SEVERE resta necessario. La decisione H=1 è ancora aperta, griglia/N20 invariati fino alla risposta. Nessun risultato economico, modifica software o approvazione complessiva spec/piano; prossimo passo una sola domanda H=1.
+
+## Scelta b H=1 diagnostico, stato corrente 2026-10-18
+
+L’utente approva H=1 soltanto diagnostico, fuori selezione e N. Stato corrente della proposta: 12 configurazioni H=5/21 e due selettori WFO, N14; sei percorsi H=1 preregistrati con ruolo separato e mantenuti solo a fini descrittivi. Le precedenti sezioni N20/H=1 candidato documentano il disegno superato. Nessun risultato diagnostico può modificare le altre holding, i costi o i filtri; non entra nella varianza DSR/bootstrap inferenziale, non accede al holdout e non riceve promozione. Pubblicazione solo dopo freeze/report/verdetto ricerca su dati non holdout, come spec §9.4.
+
+Derivati N14: alpha per percorso 0,05/14, quantile 0,9964285714 (formula esatta nel calcolo), z2,690110; SR soglia OOS/holdout 1,346/1,627 e MDE 80% 1,768/2,136 in ipotesi i.i.d. Con B10000 la coda attesa è 35,71, SE probabilità 0,0005965 e intervallo ranghi 9952/9976. Costi FX approvati, gate necessario SEVERE, date, minimi campione e altre soglie invariati. Nessun risultato economico o codice; spec e piano complessivi restano da approvare.

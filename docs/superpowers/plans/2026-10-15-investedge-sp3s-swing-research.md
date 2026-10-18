@@ -2,7 +2,7 @@
 
 **Stato: PROPOSTA NON APPROVATA, revisione 2026-10-18. Task0 documentale IN CORSO; Task1–10 NON INIZIATI.** Le scelte tecniche e numeriche sono proposte, non evidenza di profitto. Nessun codice prima dell’approvazione di spec/piano e dell’incarico di implementazione che superi l’attuale perimetro documentale.
 
-Spec: [SP3s swing 1/5/21 sedute](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
+Spec: [SP3s swing 5/21 sedute, H=1 diagnostico](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
 
 Prima proposta `b0566b0921eb004d5042a21b008107adbe9d70d8` (2026-10-15); questa revisione è un nuovo checkpoint, nessun amend/rebase/force. Stato Git prima della revisione 2026-10-16: branch/remote b0566b0 puliti, main remoto 6c32bfa; main locale originale pulito a 6c32bfa, preservazione confermata esplicitamente dall’utente il 2026-10-16 prima di applicare il checkpoint. Nessuno spostamento di main da parte di Codex.
 
@@ -21,7 +21,7 @@ Base Task0: `origin/investedge/sp3-task-5` = `3f37a44b76ba8f8c8182281dbe6301a989
 
 ## Task 0 — Brainstorming, spec e piano da approvare
 
-**Branch:** `investedge/sp3s-task-0`. **Base:** checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`. **Owner:** Codex, solo documenti. **Dipendenze:** sospensione salvata e brief acquisito; scelta c e valori FX condizionati approvati; decisione H=1 ancora pendente.
+**Branch:** `investedge/sp3s-task-0`. **Base:** checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`. **Owner:** Codex, solo documenti. **Dipendenze:** sospensione salvata e brief acquisito; scelta c/FX e scelta b H=1 approvate; approvazione complessiva ancora pendente.
 
 **Allowlist esatta:**
 
@@ -37,12 +37,13 @@ Base Task0: `origin/investedge/sp3-task-5` = `3f37a44b76ba8f8c8182281dbe6301a989
 - [x] Review/checkpoint 2026-10-16: costi/potenza/Monte Carlo ricalcolati, proposte beta/FX e gate fattibilità anticipato. `verify_applied.py` 60/60 PASS, 10 link locali validi, scope quattro Markdown, scanner/self-test zero candidati inattesi/placeholder e `git diff --check` PASS; registro/Note di ripresa aggiornati. Review del diff root conclusa; decisioni e approvazione restano pendenti. Evidenze fuori Git in `sp3s-task0-review-20261016`; suite software non rieseguite per soli documenti.
 - [x] Scelta c SEVERE acquisita il 2026-10-18: gate necessario, proposta FX documentata prima dell’applicazione.
 - [x] Approvazione esplicita e applicazione documentale §7.2 il 2026-10-18: extra 0 bps solo per ordini/regolamento interamente EUR senza conversione di cassa; altre conversioni documentate o INSUFFICIENTE. Riga SEVERE e tabelle aggiornate, minimo 50 bps/lato, fee 2/4 EUR e ritardo 15m invariati. RT nel solo caso EUR 14/18 EUR su 1.000 EUR; nessun codice.
-- [ ] Decisione H=1 successiva, una domanda alla volta; fino alla risposta H=1 resta in griglia e N20.
+- [x] Scelta b H=1 approvata il 2026-10-18: sei diagnostici separati, fuori selezione/N/varianza DSR/holdout; 12 candidati H=5/21 + 2 selettori, N14. Bonferroni 0,05/14 e quantile 1−0,05/14; B/seed/lunghezze e altri gate invariati.
 - [x] Controlli freschi checkpoint 2026-10-18: `verify_documents.py` 72/72 PASS, 10 link locali validi; scope esatto quattro Markdown, scanner/self-test zero candidati inattesi/placeholder, diff e review root PASS. Programma/Note di ripresa aggiornati; nessuna suite software per soli documenti. Evidenze fuori Git in `sp3s-task0-fx-20261018`.
 - [x] Controlli freschi applicazione FX approvata: `verify_documents.py` 44/44 PASS, 10 link locali validi; scanner4/self-test zero candidati inattesi/placeholder; diff/scope e review root PASS. Regole H=1, N20, campione e soglie statistiche identici a 86ffdf0. Programma/Note di ripresa aggiornati, prove fuori Git in `sp3s-task0-fx-approved-20261018`; suite software non rieseguite per soli documenti.
+- [x] Review e controlli freschi H=1 diagnostico/N14: `verify_documents.py` 62/62 PASS, 10 link locali validi; scanner4/self-test zero candidati inattesi/placeholder, scope/diff/review root PASS. Bonferroni/MDE/Monte Carlo ricalcolati; soglie economiche, costi e date preservati. Programma/Note di ripresa aggiornati; evidenze fuori Git in `sp3s-task0-h1-20261018`, nessuna suite software per soli documenti.
 - [ ] Approvazione esplicita dell’utente di spec e piano prima del codice. Il Task1 richiede inoltre incarico di implementazione fuori dall’attuale perimetro documentale.
 
-Commit della proposta: `docs: propose SP3s swing research specification and plan`. Checkpoint di revisione pubblicato `35871ec3e9936e4ae17edc5ca02e533d28915d88`: `chore: checkpoint SP3s Task0 review costs and data feasibility`. Proposta numerica pubblicata `86ffdf07d2d2dc6efb435739dc27beddddc36391`: `chore: checkpoint SP3s Task0 propose documented FX recalibration`. Checkpoint di applicazione approvata: `chore: checkpoint SP3s Task0 apply approved FX recalibration`. Task0 resta IN CORSO finché decisione H=1 e approvazione complessiva mancano; consegna documentale pubblicabile senza dichiarare approvata la spec. Push e gate SHA sono verifiche post-commit; nessun merge incluso. Eventuali ulteriori commit di revisione/approvazione documentale sono checkpoint tracciati, senza riscrittura della storia.
+Commit della proposta: `docs: propose SP3s swing research specification and plan`. Checkpoint di revisione pubblicato `35871ec3e9936e4ae17edc5ca02e533d28915d88`: `chore: checkpoint SP3s Task0 review costs and data feasibility`. Proposta numerica pubblicata `86ffdf07d2d2dc6efb435739dc27beddddc36391`: `chore: checkpoint SP3s Task0 propose documented FX recalibration`. Applicazione FX pubblicata `1a025cffd199e7481c28125633d643f205994a16`: `chore: checkpoint SP3s Task0 apply approved FX recalibration`. Nuovo checkpoint: `chore: checkpoint SP3s Task0 isolate H1 diagnostics and freeze N14`. Task0 resta IN CORSO finché l’approvazione complessiva manca; consegna documentale pubblicabile senza dichiarare approvata la spec. Push e gate SHA sono verifiche post-commit; nessun merge incluso. Eventuali ulteriori commit di revisione/approvazione documentale sono checkpoint tracciati, senza riscrittura della storia.
 
 ## Task 1 — Contratti, registro e confini offline
 
@@ -50,8 +51,8 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 **Nuovi:** `backend/app/swing_research/__init__.py`, `contracts.py`, `registry.py`; `tests/swing_research_fixtures.py`, `tests/test_swing_research_contracts.py`, `tests/test_swing_research_registry.py`, `tests/test_swing_research_boundaries.py`. I nomi abbreviati di moduli nei task seguenti sono nello stesso pacchetto.
 
-- [ ] RED: manifest/config mutabile, hash non comprende FX/benchmark/rischio, ordine variabile dei 18 candidati/2 selettori, tentativi falliti non contati, start prima della preregistrazione o input REAL/SYNTHETIC confusi.
-- [ ] Implementare dataclass/versioni canoniche, stati e reason code, capitale/rischio/finestra/holding/griglia ex ante; registro su file separato dal DB con eventi append-only e pubblicazione atomica sotto lock. Nessun import/provider o simulazione.
+- [ ] RED: manifest/config mutabile, hash non comprende FX/benchmark/rischio, ordine variabile dei 12 candidati/2 selettori, diagnostici H=1 confusi con ricerca/N14, tentativi falliti non contati, start prima della preregistrazione o input REAL/SYNTHETIC confusi.
+- [ ] Implementare dataclass/versioni canoniche, stati e reason code, capitale/rischio/finestra/holding/griglia ex ante, ruoli RESEARCH (14) e DIAGNOSTIC_ONLY (6) distinti; registro su file separato dal DB con eventi append-only e pubblicazione atomica sotto lock. Nessun import/provider o simulazione.
 - [ ] GREEN: replay/idempotenza/concorrenza/rollback/cancel senza righe orfane, tentativi no-trade/failed/cancelled conservati, seal/contaminazione metadata; protezione path e input/output separati. Nessuna promessa di isolamento globale del filesystem.
 - [ ] Confini statici e import smoke offline: niente DB/config/dotenv/provider/trading né dipendenza inversa da SP1/intraday; nessun modulo esistente modificato.
 - [ ] Mirati contracts/registry/boundaries e gate comune; programma e prossimo Task2.
@@ -93,7 +94,7 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 **Nuovi:** `features.py`, `strategies.py`; `tests/test_swing_research_features.py`, `tests/test_swing_research_strategies.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_boundaries.py` per contratti già fissati.
 
 - [ ] RED: daily odierna completa prima del close, SMA/breakout includono futuro o giorno sbagliato, volume non split-coerente, prezzo con ritardo diverso da 15m o stale, feature non valida riempita da score/ML.
-- [ ] Implementare §4–5: decisione C−40, cutoff C−55, daily fino a x, MOM/PULLBACK/BREAKOUT esatti, ranking e tie comuni; nove family/holding per modalità senza griglia nascosta. Riutilizzare solo funzioni pure SP1 semanticamente compatibili.
+- [ ] Implementare §4–5: decisione C−40, cutoff C−55, daily fino a x, MOM/PULLBACK/BREAKOUT esatti, ranking e tie comuni; sei family/holding di ricerca H=5/21 per modalità; tre H=1 diagnostiche per modalità con le medesime regole e nessun selettore. Riutilizzare solo funzioni pure SP1 semanticamente compatibili.
 - [ ] GREEN: esempi positivi/negativi a mano e ai confini, warm-up, split nel giorno del segnale, ore legali/sedute ridotte, segnale invariato modificando soltanto dati futuri. Nessun ordine o valutazione economica REAL.
 - [ ] Mirati features/strategies/datasets/boundaries + feature SP1; gate comune, programma e prossimo Task5.
 
@@ -132,10 +133,10 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 **Nuovi:** `walk_forward.py`, `holdout.py`; `tests/test_swing_research_walk_forward.py`, `tests/test_swing_research_holdout.py`. **Modificabili:** `registry.py`, `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_registry.py`.
 
-- [ ] RED R1: cambiare split/prezzi/membership nella prima seduta OOS cambia score/scelta IS; fold creati dai dati anziché calendario, perdita al cambio policy nascosta, trial senza Sharpe perso, holdout letto durante selezione o riaperto per nuovo candidato.
+- [ ] RED R1: cambiare split/prezzi/membership nella prima seduta OOS cambia score/scelta IS; fold creati dai dati anziché calendario, perdita al cambio policy nascosta, trial senza Sharpe perso, holdout letto durante selezione o riaperto per nuovo candidato, diagnostico H=1 che ottiene capability holdout o entra nel selettore di ricerca.
 - [ ] Implementare date e split §8, IS 504/OOS 126, purge/embargo 21, selettori per modalità IS-only, portafoglio OOS continuo con vecchie posizioni immutabili; ultimo resto di calendario incluso.
 - [ ] Congelare candidato finale e manifesti prima dell’apertura unica; reader capability distinto per batch holdout; stati append-only, contaminazione e crash/retry idempotente senza output economici intermedi. Nessuna lettura REAL in questi test.
-- [ ] GREEN: invarianti dei prefissi, nessun candidato idoneo->cash, ultimoH/campione irrisolto->insufficiente, accesso/esito futuro non cambia decisioni passate; stesso batch ripetibile e report non sostituibile.
+- [ ] GREEN: invarianti dei prefissi, nessun candidato idoneo->cash, ultimoH/campione irrisolto->insufficiente, accesso/esito futuro non cambia decisioni passate; stesso batch ripetibile e report non sostituibile; H=1 rifiutato dal reader holdout e dal selettore H=5/21.
 - [ ] Mirati WFO/holdout/registry/simulator + WFO SP1 R1; gate comune, programma e prossimo Task8.
 
 **Commit:** `feat: add causal swing walk-forward and sealed holdout`.
@@ -146,8 +147,8 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 **Nuovi:** `stats.py`, `evidence.py`; `tests/test_swing_research_stats.py`, `tests/test_swing_research_evidence.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`.
 
-- [ ] RED: trade/minuti trattati come indipendenti, drop giorni flat/perdenti, bootstrap indipendente per titolo/curva, solo blocco favorevole, Bonferroni senza tutti 20 tentativi, DSR scambiato per correzione seriale o non definito trasformato in zero.
-- [ ] Implementare bootstrap stationary congiunto 10.000/seed 20261015, lunghezze medie 63/21 e LB con N20 invariato finché l’utente non decide H=1. Nuova funzione DSR swing con N e varianza separati: quella SP1 usa len(trial_sharpes) e varianza della lista, rifiuta non finiti. Dispersione OOS congelata per holdout, nessuno Sharpe fittizio o modifica SP1. Riportare precisione Monte Carlo del quantile/statistiche d’ordine e limite dei circa 11 blocchi holdout.
+- [ ] RED: trade/minuti trattati come indipendenti, drop giorni flat/perdenti, bootstrap indipendente per titolo/curva, solo blocco favorevole, Bonferroni senza tutti 14 tentativi di ricerca o con diagnostici H=1 inclusi nella varianza DSR/selezione, DSR scambiato per correzione seriale o non definito trasformato in zero.
+- [ ] Implementare bootstrap stationary congiunto 10.000/seed 20261015, lunghezze medie 63/21, N14 e LB al quantile 1−0,05/14 (senza troncare). Alpha famiglia 0,05 e DSR>=0,95 invariati; H=1 fuori indici inferenziali e varianza DSR. Nuova funzione DSR swing con N e varianza separati: quella SP1 usa len(trial_sharpes) e varianza della lista, rifiuta non finiti. Dispersione OOS dei soli 14 percorsi di ricerca congelata per holdout, nessuno Sharpe fittizio o modifica SP1. Riportare precisione Monte Carlo del quantile N14/statistiche d’ordine 9952/9976 e limite dei circa 11 blocchi holdout; nessun verdetto inferenziale H=1.
 - [ ] GREEN con processi sintetici dipendenti/nulli, costi/ritardi/rischio e minimi campione verificabili a mano; separare insufficienza da gate fallito e proxy da VALIDATO_TR. Nessuna fixture positiva diventa evidenza economica.
 - [ ] Gate §9 invarianti su OOS e holdout separati; curve fisse finali scelte dall’IS 2021-11-29–2023-11-29 sono screening retrospettivo in parte in-sample, holdout unica prova pulita del candidato finale. Proposte §9.2 beta/FX da approvare: benchmark EW as-of con esposizione laggata, ledger locale/FX/interazione e gate USD sullo stesso bootstrap, tutti congiunti e senza aumentare N. Gate OOS attuali: OOS PASS sia per selettore sia per candidato finale scelto IS, nessun ripescaggio dopo un fallimento; concentrazione consolidata per emittente, otto fold/sei positivi, holdout due periodi positivi su tre; snapshot benchmark e FX R2 immutabili.
 - [ ] Mirati stats/evidence/WFO/holdout + stats/evidence SP1; gate comune, programma e prossimo Task9.
@@ -162,7 +163,7 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 - [ ] RED: report rilegge latest e cambia benchmark/FX lasciando hash uguale, proxy presentata come TR validato, CLI scrive nell’input o nel DB reale, output parziale promosso dopo errore/cancel, raccolta di rete avviata implicitamente.
 - [ ] CLI esplicita su pacchetto locale e output dedicato, comandi di verifica/ricerca sintetica/report con errori redatti; nessun comando fetch/live/trade/paper. Report JSON/Markdown immutabile, unità/fonti/proxy/lacune/costi/non-fill/verdetti visibili.
-- [ ] GREEN end-to-end sintetico: fixture realistica per tutte le famiglie/holding/modalità/scenari, DST/half-day/gap/delistato, incompatibilità e cancellazione; fingerprint invariato a rilettura e diverso a revisione futura degli input.
+- [ ] GREEN end-to-end sintetico: fixture realistica per tutte le famiglie/holding/modalità/scenari, DST/half-day/gap/delistato, incompatibilità e cancellazione; fingerprint invariato a rilettura e diverso a revisione futura degli input; H=1 solo calcolo/report descrittivo separato dopo freeze/verdetto ricerca, senza accesso holdout o effetto su selezione/N14, come §9.4.
 - [ ] Profiling offline streaming su 100 e 500 identità per 21 e 63 sedute: includere minuto per tutte le posizioni, input/righe/disco/tempo/RSS aggregati, cap 2GiB, zero perdite. Numero di sedute/names deriva dal fixture dichiarato; nessuna soglia intraday importata o abbassata. Test bounded prima della scala grande e fail-closed al cap.
 - [ ] Suite completa offline, mirati e regressioni SP1/SP2b/SP3, Ruff/pip/scanner/scope/diff, review cumulativa senza rilievi bloccanti. Report G_SWING_TECH PASS soltanto con prove fresche; G_SWING_DATA/RESEARCH/TR non valutati per sola fixture.
 - [ ] Aggiornare programma: software FATTO distinto da SP3s economico; Task10 non avviabile senza incarico e dataset idoneo.
@@ -176,8 +177,8 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 **Nuovo documento autorizzabile:** `docs/reports/sp3s-swing-data-economic-gate.md`. Input/output economici fuori Git; nessuna modifica di codice, parametri o soglie per correggere un risultato sfavorevole.
 
 - [ ] Verificare G_SWING_DATA senza leggere esiti holdout: fonti/diritti/universo as-of/delistati/rendimenti terminali, prezzi in finestra e stop, corporate action/FX/calendario/hash/costi. Identificare proxy e limiti TR. Se il pacchetto gratuito è incompleto, fermarsi a INSUFFICIENTE.
-- [ ] Congelare registro/tutti 20 percorsi, versioni software/input/metodo e holdout opaco; eseguire IS/OOS e i tre scenari. Niente revisione opportunistica di campione o griglia.
-- [ ] Aprire il solo batch finale idoneo una volta secondo §8, dopo PASS OOS del selettore e del candidato finale scelto IS e freeze; nessun candidato successivo sullo stesso holdout se fallisce. Conservare anche no-trade/errori/risultati negativi.
+- [ ] Congelare registro/tutti 14 percorsi di ricerca e sei ID diagnostici H=1 separati, versioni software/input/metodo e holdout opaco; eseguire IS/OOS e i tre scenari. Niente revisione opportunistica di campione o griglia.
+- [ ] Aprire il solo batch finale idoneo una volta secondo §8, dopo PASS OOS del selettore e del candidato finale scelto IS e freeze; nessun candidato successivo sullo stesso holdout se fallisce. Conservare anche no-trade/errori/risultati negativi. Nessuna apertura holdout per H=1; diagnostica soltanto sui dati non holdout dopo report/verdetto ricerca congelato, senza retuning.
 - [ ] Documentare tutti i gate separatamente per Best/Direct e OOS/holdout; se nessuna policy passa, nessuna promossa. PASS_RICERCA_PROXY non è VALIDATO_TR. Nessuna raccomandazione di rendimento futuro, ordine, paper o spesa.
 - [ ] Review del rapporto, riproducibilità offline, programma/Prossimo passo/evidenze e commit/push del solo documento. Nessun merge senza nuova conferma FF esplicita; nessuna riattivazione SP3/SP6a implicita.
 
