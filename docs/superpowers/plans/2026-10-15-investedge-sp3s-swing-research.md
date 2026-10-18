@@ -1,6 +1,6 @@
 # InvestEdge — piano proposto SP3s: laboratorio swing USA offline
 
-**Stato: PROPOSTA NON APPROVATA, revisione 2026-10-16. Task0 documentale IN CORSO; Task1–10 NON INIZIATI.** Le scelte tecniche e numeriche sono proposte, non evidenza di profitto. Nessun codice prima dell’approvazione di spec/piano e dell’incarico di implementazione che superi l’attuale perimetro documentale.
+**Stato: PROPOSTA NON APPROVATA, revisione 2026-10-18. Task0 documentale IN CORSO; Task1–10 NON INIZIATI.** Le scelte tecniche e numeriche sono proposte, non evidenza di profitto. Nessun codice prima dell’approvazione di spec/piano e dell’incarico di implementazione che superi l’attuale perimetro documentale.
 
 Spec: [SP3s swing 1/5/21 sedute](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
 
@@ -21,7 +21,7 @@ Base Task0: `origin/investedge/sp3-task-5` = `3f37a44b76ba8f8c8182281dbe6301a989
 
 ## Task 0 — Brainstorming, spec e piano da approvare
 
-**Branch:** `investedge/sp3s-task-0`. **Base:** checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`. **Owner:** Codex, solo documenti. **Dipendenze:** sospensione salvata e brief acquisito; nuove decisioni SEVERE/H=1 ancora pendenti.
+**Branch:** `investedge/sp3s-task-0`. **Base:** checkpoint `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`. **Owner:** Codex, solo documenti. **Dipendenze:** sospensione salvata e brief acquisito; scelta c SEVERE acquisita; approvazione valori FX e decisione H=1 ancora pendenti.
 
 **Allowlist esatta:**
 
@@ -35,10 +35,13 @@ Base Task0: `origin/investedge/sp3-task-5` = `3f37a44b76ba8f8c8182281dbe6301a989
 - [x] Presentare approcci e proposta concreta: pacchetto isolato, tre famiglie/holding, execution manuale, dati/gate separati, campione e statistiche ex ante, allowlist e task.
 - [x] Review prima proposta b0566b0: 50/50 verifiche e 10 link locali, scanner/diff/scope PASS; evidenze storiche in `sp3s-task0-verification`, non nuove prove della revisione.
 - [x] Review/checkpoint 2026-10-16: costi/potenza/Monte Carlo ricalcolati, proposte beta/FX e gate fattibilità anticipato. `verify_applied.py` 60/60 PASS, 10 link locali validi, scope quattro Markdown, scanner/self-test zero candidati inattesi/placeholder e `git diff --check` PASS; registro/Note di ripresa aggiornati. Review del diff root conclusa; decisioni e approvazione restano pendenti. Evidenze fuori Git in `sp3s-task0-review-20261016`; suite software non rieseguite per soli documenti.
-- [ ] Decisione utente su SEVERE e, successivamente, H=1, una domanda alla volta. Fino alle risposte SEVERE resta gate necessario, H=1 resta in griglia e N20.
+- [x] Scelta c SEVERE acquisita il 2026-10-18: gate necessario, proposta FX documentata prima dell’applicazione.
+- [ ] Approvazione della proposta numerica §7.2: extra 0 bps solo per ordini/regolamento interamente EUR senza conversione di cassa; altre conversioni documentate o INSUFFICIENTE. Valori attuali ancora invariati.
+- [ ] Decisione H=1 successiva, una domanda alla volta; fino alla risposta H=1 resta in griglia e N20.
+- [x] Controlli freschi checkpoint 2026-10-18: `verify_documents.py` 72/72 PASS, 10 link locali validi; scope esatto quattro Markdown, scanner/self-test zero candidati inattesi/placeholder, diff e review root PASS. Programma/Note di ripresa aggiornati; nessuna suite software per soli documenti. Evidenze fuori Git in `sp3s-task0-fx-20261018`.
 - [ ] Approvazione esplicita dell’utente di spec e piano prima del codice. Il Task1 richiede inoltre incarico di implementazione fuori dall’attuale perimetro documentale.
 
-Commit della proposta: `docs: propose SP3s swing research specification and plan`. Checkpoint di revisione: `chore: checkpoint SP3s Task0 review costs and data feasibility`. Task0 resta IN CORSO finché decisioni SEVERE/H=1 e approvazione complessiva mancano; consegna documentale pubblicabile senza dichiarare approvata la spec. Push e gate SHA sono verifiche post-commit; nessun merge incluso. Eventuali ulteriori commit di revisione/approvazione documentale sono checkpoint tracciati, senza riscrittura della storia.
+Commit della proposta: `docs: propose SP3s swing research specification and plan`. Checkpoint di revisione pubblicato `35871ec3e9936e4ae17edc5ca02e533d28915d88`: `chore: checkpoint SP3s Task0 review costs and data feasibility`. Nuovo checkpoint: `chore: checkpoint SP3s Task0 propose documented FX recalibration`. Task0 resta IN CORSO finché approvazione dei valori FX, decisione H=1 e approvazione complessiva mancano; consegna documentale pubblicabile senza dichiarare approvata la spec. Push e gate SHA sono verifiche post-commit; nessun merge incluso. Eventuali ulteriori commit di revisione/approvazione documentale sono checkpoint tracciati, senza riscrittura della storia.
 
 ## Task 1 — Contratti, registro e confini offline
 

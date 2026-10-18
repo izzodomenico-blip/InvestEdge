@@ -1,6 +1,6 @@
 # InvestEdge — proposta SP3s: ricerca swing USA, holding 1/5/21 sedute
 
-**Stato: PROPOSTA NON APPROVATA, revisione documentale 2026-10-16 (prima proposta 2026-10-15). Nessuna autorizzazione al codice è implicita nelle risposte al brainstorming.** I numeri progettuali sotto sono proposti ex ante: non sono risultati di backtest o soglie prescritte dalle fonti. Nessuna famiglia è dichiarata redditizia.
+**Stato: PROPOSTA NON APPROVATA, revisione documentale 2026-10-18 (prima proposta 2026-10-15; review 2026-10-16). Nessuna autorizzazione al codice è implicita nelle risposte al brainstorming.** I numeri progettuali sotto sono proposti ex ante: non sono risultati di backtest o soglie prescritte dalle fonti. Nessuna famiglia è dichiarata redditizia.
 
 Base documentale: `3f37a44b76ba8f8c8182281dbe6301a9898bc11a`, checkpoint SP3 Task5 pubblicato; origin/main resta `6c32bfa4559336d9903af0d30c03e7145586cd52`. Branch della proposta: `investedge/sp3s-task-0`. Il codice intraday già integrato resta intatto; SP3/SP6a sono sospesi, non cancellati.
 
@@ -19,6 +19,7 @@ Riferimenti: [programma](../../../PROGRAMMA-OPERATIVO.md), [inventario verificat
 | Rischio posizione | Massimo iniziale 1% del capitale, 100 EUR iniziali; i gap possono superarlo |
 | Portafoglio | Massimo 10 posizioni, senza leva; rischio iniziale aggregato fino a 1.000 EUR |
 | Drawdown | Soglia di accettazione OOS: 2.000 EUR, 20% del capitale di riferimento; non garanzia di perdita massima |
+| SEVERE | Scelta c confermata il 2026-10-18: resta gate necessario; costo FX da ricalibrare su fonte documentata e proporre prima di applicarlo. Valori nuovi non ancora approvati |
 | Stop | Inseriti manualmente su TR e lasciati attivi, previa verifica del supporto per titolo e modalità Best/Direct |
 | Vincoli | Nessuna credenziale, raccolta live, ordine, paper, spesa, scraping/automazione TR o accesso al DB reale. Solo documenti nel Task0; nuovi merge FF main soltanto con conferma esplicita |
 
@@ -161,7 +162,7 @@ Il calcolo conferma 340/380 bps RT in SEVERE e 40,80/45,60% di drag teorico H=21
 
 **Verifica pubblica TR al 2026-10-16:** il [listino italiano](https://traderepublic.com/it-it?openModal=pricing-scheme) documenta 1 EUR/2 EUR e spread/costi terzi; la [FAQ ex-post](https://support.traderepublic.com/en-de/809-Cosa-sono-le-informazioni-sui-costi-ex_post) menziona conversioni di dividendi esteri e rimanda ai costi dell’ordine. Non è stata trovata una tariffa esplicita di 100 bps per lato per l’acquisto/vendita di titoli USA quotati e regolati in EUR. Per un’operazione interamente EUR non va inventata una conversione USD del conto: l’esposizione economica al dollaro rimane incorporata nel prezzo EUR, che può includere spread/basis del market maker. Quest’ultima è una distinzione di modello, non prova che tutti i canali abbiano costo FX nullo. Direct Price/valuta effettiva e conversioni di dividendi richiedono documenti applicabili al conto. La frase del sito sui cambi carta non prova costi di trading azionario. I 100 bps attuali sono quindi **shock ipotetico non attestato**, con possibile sovrapposizione al costo spread già previsto; non vengono rimossi o ricalibrati in questa revisione.
 
-Decisione SEVERE da chiedere per prima, senza scelta implicita: **(a)** resta gate necessario con profilo attuale; **(b)** diventa diagnostico; **(c)** resta gate con FX ricalibrato su una fonte documentata, da proporre numericamente prima di applicarlo. Fino alla risposta **SEVERE resta gate necessario e invariato**.
+Decisione SEVERE acquisita il 2026-10-18: l’utente sceglie **c**, mantenere il gate necessario e ricevere prima dell’applicazione una proposta FX documentata. La proposta numerica §7.2 è **NON APPROVATA E NON APPLICATA**: la riga SEVERE §7 e i costi attuali 340/380 bps RT restano invariati. Dopo la decisione sui nuovi valori si passa a H=1, una domanda alla volta.
 
 Decisione H=1 successiva: **(a)** resta in griglia e in N; **(b)** soltanto diagnostico, fuori selezione e N: 18→12 configurazioni,20→14 percorsi; **(c)** eliminato, senza curva diagnostica. Nell’opzione(b) nessun uso dei risultati H=1 per modificare le altre regole; altrimenti è un nuovo tentativo. Fino alla risposta **H=1 resta in griglia e N=20**; anche H=5 resta invariato.
 
@@ -171,6 +172,27 @@ Decisione H=1 successiva: **(a)** resta in griglia e in N; **(b)** soltanto diag
 | Solo ipotesi H=1 fuori dalla ricerca selettiva |12/14 |0,003571 |2,690110 |
 
 A parità di varianza i.i.d. la soglia z scende di circa 4,17%, non azzera la barriera dei costi. Cambierebbe anche il massimo atteso del DSR a parità di dispersione. Sono confronti di sensibilità, non modifiche al conteggio attuale.
+
+### 7.2 Scelta c e proposta FX condizionata alla valuta — 2026-10-18
+
+**Da approvare prima dell’applicazione.** SEVERE resta gate necessario. Si propone di sostituire i 100 bps FX avversi per lato con **0 bps di extra FX sul nozionale dell’ordine soltanto quando prezzo e regolamento di entrata/uscita sono interamente in EUR e non avviene una conversione di cassa**. Non è una tariffa generale “TR FX gratis”: è una regola contabile per non aggiungere una conversione assente o già incorporata nel prezzo. Spread, basis valutaria e slippage restano nel prezzo EUR e nel minimo SEVERE di 50 bps per lato; valori peggiori documentati prevalgono. Restano fee SEVERE 2 EUR Best/4 EUR Direct per eseguito, ritardo 15 minuti, fill conservativi, rischio e tutti i gate. Nessuna variazione BASE/STRESS.
+
+Fonte primaria: [TR Execution Policy 07/2026, pagina 2](https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf) include la conversione valutaria nella determinazione del prezzo offerto per operazioni a prezzo fissato. È la base documentale della separazione tra prezzo EUR complessivo e ulteriore addebito FX; il valore 0 è una **proposta di modello condizionata**, non un costo totale misurato. La policy pubblica non attesta le condizioni del conto italiano o l’adeguatezza dei 50 bps per ogni titolo/finestra: G_TR_TRANSFER resta necessario.
+
+La [FAQ Direct Price](https://support.traderepublic.com/de-de/835f9deb-b864-4587-b428-7facfc55296c), versione pubblica tedesca consultata il 2026-10-18, indica conversione al momento dell’esecuzione per ordini su borse non EUR. Non estendere quindi lo zero separato a Direct su Nasdaq/NYSE in USD né presumere che ogni Best abbia regolamento EUR. Per ordini con effettiva conversione, applicare cambio bid/ask e margine documentati nel profilo specifico, al momento corretto, una sola volta. Se tasso, formula, unità, margine o applicabilità al conto non sono attestati: **FX_COST_UNKNOWN -> INSUFFICIENTE**, nessun PASS con extra FX inventato a zero o a 100 bps. Nessuna scelta ex post della sede/valuta che fa passare il backtest: profilo venue/valuta congelato ex ante, medesimi 20 percorsi, nessuna variante selettiva nascosta.
+
+Dividendi e altri proventi USD restano flussi distinti, convertiti alla data pertinente con costo documentato: lo zero sul nozionale degli ordini EUR **non azzera il costo FX dei dividendi**. La [FAQ italiana conversioni](https://support.traderepublic.com/it-it/880) descrive conversioni di redditi esteri tramite bid/ask e margini; riporta USD 0,0014. Questo valore non è una percentuale o automaticamente 14 bps: non usarlo come margine degli ordini Direct né convertirlo in bps senza unità, base di quotazione e applicabilità provate. In mancanza, costo insufficiente. Nessun riferimento ai cambi della carta come prova dei costi titoli.
+
+Confronto aritmetico a nozionale costante 1.000 EUR, due eseguiti, stesse ipotesi §7.1: le righe proposte valgono **solo nel caso senza conversione di cassa**, non per tutti gli ordini Best/Direct. Nessun risultato economico è stato calcolato.
+
+| Profilo SEVERE | Extra FX per lato | RT EUR | RT bps | Drag H=1 % | Drag H=5 % | Drag H=21 % |
+|---|---|---|---|---|---|---|
+| Attuale Best | 100 bps | 34,00 | 340 | 856,80 | 171,36 | 40,80 |
+| Proposta Best, ordine/regolamento EUR | 0 bps | 14,00 | 140 | 352,80 | 70,56 | 16,80 |
+| Attuale Direct | 100 bps | 38,00 | 380 | 957,60 | 191,52 | 45,60 |
+| Proposta Direct, sede e regolamento EUR | 0 bps | 18,00 | 180 | 453,60 | 90,72 | 21,60 |
+
+La riduzione è 20 EUR/200 bps per RT su 1.000 EUR, equivalente ai due extra da 100 bps rimossi; non certifica redditività e lascia frizioni elevate soprattutto su H=1. Eventuali conversioni di proventi, costi terzi e ricorrenti restano da sommare ai flussi reali senza duplicazioni. Il rischio economico EUR/USD e la scomposizione §9.2 restano invariati. Approvare il valore proposto non dimostra dati o trasferibilità TR. **Nessuna sostituzione della riga SEVERE attuale prima della risposta dell’utente.**
 
 ## 8. Campione, walk-forward e holdout proposti
 
@@ -260,4 +282,4 @@ Ogni task software: RED offline per il comportamento concreto, implementazione m
 
 Causalità obbligatoria: cambiare prezzi, split, membership, FX e corrispettivi successivi al cutoff non cambia segnali, size, IS o selezione; conservare gap e delistati, evitare il close ufficiale nei fill; contabilità a mano per stop/gap/dividendi/FX/settlement; stato del holdout e snapshot benchmark immutabili. Verifiche scalari di streaming/RAM e profiling offline senza attenuare i cap dopo un fallimento.
 
-L’implementazione autorizzabile finisce al software offline; nessuna valutazione REAL, import esterno o apertura del holdout in questa consegna documentale. Il nuovo Task3 richiede dataset/prove di fattibilità prima dei Task4–9; la fase economica finale Task10 richiederà dataset locale idoneo e incarico dedicato. Se nessun pacchetto gratuito soddisfa universo/delistati/finestra, dichiarare il limite e fermare quel gate: non comprare dati, raccogliere live o sostituire sopravvissuti. Il piano specifica task sequenziali, allowlist e commit; Decisioni SEVERE e poi H=1 ancora aperte, una domanda alla volta; approvazione complessiva della presente spec e del piano richiesta prima del Task1. Merge FF su main soltanto dopo conferma esplicita dell’utente, anche per Task0.
+L’implementazione autorizzabile finisce al software offline; nessuna valutazione REAL, import esterno o apertura del holdout in questa consegna documentale. Il nuovo Task3 richiede dataset/prove di fattibilità prima dei Task4–9; la fase economica finale Task10 richiederà dataset locale idoneo e incarico dedicato. Se nessun pacchetto gratuito soddisfa universo/delistati/finestra, dichiarare il limite e fermare quel gate: non comprare dati, raccogliere live o sostituire sopravvissuti. Il piano specifica task sequenziali, allowlist e commit; Scelta c SEVERE acquisita, proposta numerica FX §7.2 ancora da approvare prima di applicarla; poi decisione H=1, una domanda alla volta; approvazione complessiva della presente spec e del piano richiesta prima del Task1. Merge FF su main soltanto dopo conferma esplicita dell’utente, anche per Task0.
