@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError, replace
 from decimal import Decimal
 
 import pytest
-from swing_research_fixtures import data_record, local_packet, utc_ns
+from swing_research_fixtures import data_record, listing_record, listing_record_without_domicile, local_packet, utc_ns
 
 from backend.app.swing_research.calendar import Session, TradingCalendar, fx_at
 from backend.app.swing_research.contracts import (
@@ -462,3 +462,14 @@ def test_explicit_settlement_days_are_used_not_weekday_arithmetic():
     assert calendar.settlement("2020-11-25", lag=1, asof_ns=utc_ns("2020-11-25T22:00:00Z")) == "2020-11-27"
     with pytest.raises(SwingError):
         calendar.settlement("2020-11-30", lag=1, asof_ns=utc_ns("2020-11-30T22:00:00Z"))
+
+
+@pytest.mark.parametrize("domicile", ["USA", "CAN", None, "OMITTED"])
+def test_local_identity_packet_accepts_optional_domicile_and_preserves_original_bytes(tmp_path, domicile):
+    identity = listing_record_without_domicile() if domicile == "OMITTED" else listing_record(domicile=domicile)
+    dataset, root = open_packet(tmp_path, [identity, data_record()])
+    original_files = {path.name: path.read_bytes() for path in root.glob("*.ndjson")}
+    report = dataset.verify()
+    assert report.state == "SYNTHETIC_ONLY"
+    assert list(dataset.as_of("IDENTITY", utc_ns("2020-02-03T20:20:00Z"))) == [identity]
+    assert {path.name: path.read_bytes() for path in root.glob("*.ndjson")} == original_files

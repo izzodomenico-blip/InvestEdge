@@ -1,10 +1,17 @@
 from decimal import Decimal
 
 import pytest
-from swing_research_fixtures import daily_history, data_record, listing_record, synthetic_calendar, utc_ns
+from swing_research_fixtures import (
+    daily_history,
+    data_record,
+    listing_record,
+    listing_record_without_domicile,
+    synthetic_calendar,
+    utc_ns,
+)
 
 from backend.app.swing_research.contracts import SwingError
-from backend.app.swing_research.universe import build_monthly_universe, resolve_ticker
+from backend.app.swing_research.universe import ListingFact, build_monthly_universe, resolve_ticker
 
 
 def build(names=100, facts=None, bars=None, **kwargs):
@@ -107,19 +114,21 @@ def test_current_catalog_or_survivor_filter_cannot_replace_asof():
         build(names=1, universe_basis="SURVIVORS")
 
 
-def test_unknown_domicile_or_class_is_insufficient_not_a_convenient_exclusion():
+def test_unknown_class_still_blocks_when_domicile_is_not_required():
     calendar, _ = synthetic_calendar()
     facts = [listing_record("L000", domicile=None), listing_record("L001", security_type=None)]
     result = build(names=2, facts=facts, bars=daily_history(calendar, 2))
     assert result.state == "INSUFFICIENTE"
-    assert {candidate.reason for candidate in result.candidates} == {"DOMICILE_UNKNOWN", "CLASSIFICATION_UNKNOWN"}
+    assert {candidate.reason for candidate in result.candidates} == {"INCLUDED", "CLASSIFICATION_UNKNOWN"}
+    assert result.selected == ("L000",)
+    assert "CLASSIFICATION_UNKNOWN" in result.issues
     assert result.daily_expected == result.daily_observed == 504
 
 
-def test_documented_non_us_and_adr_are_excluded_with_reasons():
+def test_foreign_common_stock_is_included_but_adr_is_still_excluded():
     result = build(names=2, facts=[listing_record("L000", domicile="CAN"), listing_record("L001", security_type="ADR")])
-    assert not result.selected
-    assert {row.reason for row in result.candidates} == {"NON_US_ISSUER", "NOT_COMMON_STOCK"}
+    assert result.selected == ("L000",)
+    assert {row.reason for row in result.candidates} == {"INCLUDED", "NOT_COMMON_STOCK"}
 
 
 def test_ipo_warmup_nominal_price_and_liquidity_are_fixed_exante():
@@ -196,3 +205,94 @@ def test_midmonth_recomputation_is_rejected():
         build_monthly_universe(
             [listing_record()], [], calendar, calendar.sessions[-2].day, cutoff_ns=utc_ns("2020-02-03T20:20:00Z")
         )
+
+
+@pytest.mark.parametrize("domicile", ["USA", "CAN", None, "OMITTED"])
+def test_optional_domicile_does_not_rewrite_identity_record(domicile):
+    record = listing_record_without_domicile() if domicile == "OMITTED" else listing_record(domicile=domicile)
+    before = record.to_dict()
+    before_hash = record.record_hash
+    fact = ListingFact.from_record(record)
+    assert fact.domicile == (None if domicile == "OMITTED" else domicile)
+    assert fact.record is record
+    assert record.to_dict() == before
+    assert record.record_hash == before_hash
+    assert ("domicile" in record.data) is (domicile != "OMITTED")
+
+
+def test_monthly_minimum_is_met_by_foreign_and_unattributed_primary_us_listings():
+    facts = [
+        listing_record(f"L{i:03d}", domicile="CAN")
+        if i % 2
+        else listing_record_without_domicile(f"L{i:03d}")
+        for i in range(100)
+    ]
+    result = build(facts=facts)
+    assert result.state == "READY_SYNTHETIC"
+    assert len(result.selected) == 100
+    assert result.daily_expected == result.daily_observed == 25200
+    assert result.coverage == Decimal("1")
+    assert result.issues == ()
+
+
+@pytest.mark.parametrize(
+    "changes,reason",
+    [
+        ({"security_type": "ADR"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "ETF"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "FUND"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "PREFERRED"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "WARRANT"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "UNIT"}, "NOT_COMMON_STOCK"),
+        ({"security_type": "LEVERAGED"}, "NOT_COMMON_STOCK"),
+        ({"primary": False}, "LISTING_NOT_ELIGIBLE"),
+        ({"venue": "OTC"}, "LISTING_NOT_ELIGIBLE"),
+        ({"venue": "LSE"}, "LISTING_NOT_ELIGIBLE"),
+        ({"currency": "EUR"}, "LISTING_NOT_ELIGIBLE"),
+        ({"security_type": None}, "CLASSIFICATION_UNKNOWN"),
+    ],
+)
+def test_listing_rule_preserves_class_venue_currency_and_primary_filters(changes, reason):
+    result = build(names=1, facts=[listing_record_without_domicile(**changes)])
+    assert result.selected == ()
+    assert result.candidates[0].reason == reason
+
+
+@pytest.mark.parametrize("field", ["security_type", "primary", "venue", "currency", "source_hash", "valid_from"])
+def test_only_domicile_is_optional_in_identity_payload(field):
+    record = listing_record_without_domicile()
+    data = record.data
+    del data[field]
+    invalid = type(record).from_dict(record.to_dict() | {"data": data})
+    with pytest.raises(SwingError, match="^INVALID_CONTRACT$"):
+        ListingFact.from_record(invalid)
+
+
+@pytest.mark.parametrize("domicile", ["CAN", None, "OMITTED"])
+def test_required_daily_gap_blocks_foreign_or_unknown_domicile_above_99_percent(domicile):
+    calendar, _ = synthetic_calendar()
+    fact = listing_record_without_domicile() if domicile == "OMITTED" else listing_record(domicile=domicile)
+    bars = list(daily_history(calendar, 1))[1:]
+    result = build(names=1, facts=[fact], bars=bars)
+    assert result.daily_expected == 252
+    assert result.daily_observed == 251
+    assert result.coverage > Decimal("0.99")
+    assert result.candidates[0].reason == "REQUIRED_DAILY_GAP"
+    assert "REQUIRED_DAILY_GAP" in result.issues
+    assert result.state == "INSUFFICIENTE"
+
+
+def test_future_class_revision_cannot_remove_foreign_common_stock_at_old_cutoff():
+    original = listing_record(domicile="CAN")
+    revision = type(original).from_dict(
+        original.to_dict()
+        | {
+            "version": 2,
+            "available_ns": utc_ns("2020-02-03T21:00:00Z"),
+            "data": original.data | {"security_type": "ADR"},
+        }
+    )
+    before = build(names=1, facts=[original])
+    after = build(names=1, facts=[original, revision])
+    assert before.selected == ("L000",)
+    assert after == before

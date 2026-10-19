@@ -85,6 +85,8 @@ class ListingFact:
     @classmethod
     def from_record(cls, record: DataRecord) -> ListingFact:
         data = record.data
+        # Preserve legacy metadata without requiring it or rewriting the source record.
+        data.setdefault("domicile", None)
         expected = {
             "issuer_id",
             "class_id",
@@ -201,12 +203,8 @@ class MonthlyUniverse:
 def _classification_reason(fact, on):
     if not fact.active(on):
         return "NOT_ACTIVE_ASOF"
-    if fact.domicile is None:
-        return "DOMICILE_UNKNOWN"
     if fact.security_type is None:
         return "CLASSIFICATION_UNKNOWN"
-    if fact.domicile != "USA":
-        return "NON_US_ISSUER"
     if fact.security_type != "COMMON_STOCK":
         return "NOT_COMMON_STOCK"
     if not fact.primary or fact.venue not in ("NYSE", "NASDAQ", "NYSE_AMERICAN") or fact.currency != "USD":
@@ -277,7 +275,7 @@ def build_monthly_universe(
             reason = _classification_reason(fact, on)
             required = (
                 tuple(s for s in previous if s.day >= fact.listed_session)
-                if reason in (None, "DOMICILE_UNKNOWN", "CLASSIFICATION_UNKNOWN")
+                if reason in (None, "CLASSIFICATION_UNKNOWN")
                 else ()
             )
             observed_bars = [prices[(listing_id, s.day)] for s in required if (listing_id, s.day) in prices]
@@ -287,7 +285,7 @@ def build_monthly_universe(
                 input_refs.update(bytes.fromhex(bar.record.record_hash))
             adv = None
             valid = sum(bar.close is not None and bar.basis == "RAW" for bar in observed_bars)
-            if reason in ("DOMICILE_UNKNOWN", "CLASSIFICATION_UNKNOWN"):
+            if reason == "CLASSIFICATION_UNKNOWN":
                 issues.add(reason)
             elif reason is None:
                 if len(required) < 252:

@@ -2,7 +2,12 @@ from dataclasses import FrozenInstanceError, replace
 from decimal import Decimal
 
 import pytest
-from swing_research_fixtures import manifest
+from swing_research_fixtures import (
+    LEGACY_EXPERIMENT_HASH,
+    LEGACY_POLICY_HASH,
+    legacy_manifest,
+    manifest,
+)
 
 from backend.app.swing_research.contracts import (
     DataContext,
@@ -159,3 +164,42 @@ def test_input_refs_are_closed_and_all_required_once():
         InputRef("api_key", "a" * 64)
     with pytest.raises(SwingError):
         InputRef("FX", "not-a-hash")
+
+
+def test_listing_policy_declares_primary_us_common_stock_without_domicile_filter():
+    policy = Policy().to_dict()
+    assert policy["version"] == "swing-policy-v2"
+    assert policy["universe"] == {
+        "monthly_asof": True,
+        "security_type": "COMMON_STOCK",
+        "primary": True,
+        "venues": ["NYSE", "NASDAQ", "NYSE_AMERICAN"],
+        "currency": "USD",
+        "price_min_usd": "5",
+        "warmup": 252,
+        "adv_sessions": 20,
+        "adv_min_usd": "20000000",
+        "max_names": 500,
+        "min_names": 100,
+        "daily_coverage": "0.99",
+    }
+
+
+def test_listing_policy_changes_hashes_without_changing_other_frozen_rules():
+    old = legacy_manifest()
+    current = manifest()
+    assert canonical_hash(old["policy"]) == LEGACY_POLICY_HASH
+    assert canonical_hash(old) == LEGACY_EXPERIMENT_HASH
+    assert current.policy.policy_hash != LEGACY_POLICY_HASH
+    assert current.experiment_hash != LEGACY_EXPERIMENT_HASH
+    assert len(current.grid) == len(old["grid"]) == 20
+    assert current.n_trials == old["n_trials"] == 14
+    for config, old_config in zip(current.grid, old["grid"], strict=True):
+        assert config.config_hash != canonical_hash(old_config)
+
+
+def test_previous_domicile_policy_cannot_be_relabelled_as_listing_policy():
+    with pytest.raises(SwingError, match="^INVALID_CONTRACT$"):
+        Policy(version="swing-policy-v1")
+    with pytest.raises(SwingError, match="^INVALID_CONTRACT$"):
+        type(manifest()).from_dict(legacy_manifest())

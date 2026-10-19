@@ -1,6 +1,6 @@
 # InvestEdge — piano SP3s: laboratorio swing USA offline
 
-**Stato: APPROVATO dall’utente il 2026-10-18, con custode holdout e beta IS approvati separatamente il 2026-10-19. Task0–2 FATTI; Task3 BLOCCATO: G_SWING_FEAS INSUFFICIENTE per prove dati mancanti, rapporto documentale prodotto il 2026-10-19; Task4–10 NON INIZIATI.** Solo gate documentale di fattibilità, soglie/griglia/campione/costi invariati. Nessun codice, accesso DB reale/holdout, raccolta live o merge main.
+**Stato: APPROVATO dall’utente il 2026-10-18, con custode holdout/beta IS e scelta B sull’universo approvati il 2026-10-19. Task0–2 FATTI; raccordo software Task1–2 alla scelta B FATTO per incarico separato, con 210 mirati / 2763 backend offline PASS. Task3 BLOCCATO: G_SWING_FEAS INSUFFICIENTE per prove dati mancanti; Task4–10 NON INIZIATI.** Solo il raccordo software e le verifiche offline qui autorizzati; altri filtri/soglie/griglia/campione/costi invariati. Nessun merge, acquisizione, download, credenziale, ordine, paper, spesa o accesso DB reale/holdout.
 
 Spec: [SP3s swing 5/21 sedute, H=1 diagnostico](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
 
@@ -111,6 +111,27 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 **Esito Task3 (2026-10-19): BLOCCATO, G_SWING_FEAS INSUFFICIENTE.** [Rapporto documentale](../../reports/sp3s-swing-data-feasibility-gate.md) prodotto con nove aree di prova non dimostrate: nessun pacchetto idoneo/diritti/copertura/risorse o attestazione forniti. Le fonti pubbliche candidate non sostituiscono i dati locali. La checkbox di PASS resta aperta; inventario/fonti/esito/review documentali eseguiti non rendono FATTO il task. Nessuna modifica alla spec o codice; nessun accesso a DB reale/holdout. Task4–9 non partono. Ripresa soltanto sulle prove elencate nel rapporto, senza recuperi automatici, spesa o soglie ridotte.
 
 **Verifica documentale fresca:** `verify_documents.py --final` 86/86 PASS, 21 link locali, scanner3/self-test8 zero candidati inattesi, scope/diff e review root del rapporto PASS. Spec e tutti gli altri task invariati. Nessuna suite software o verifica del pacchetto/holdout eseguita; prove in `sp3s-task3-verification`. G_SWING_FEAS resta INSUFFICIENTE e Task3 BLOCCATO.
+
+## Raccordo software Task1–2 alla scelta B — FATTO (2026-10-19)
+
+**Incarico esplicito:** raccordo di contratti e universo alla scelta B della spec §3.2, TDD offline, review, programma, commit e push. **Branch:** `investedge/sp3s-task-3`; **base:** checkpoint documentale `75663761418ba4b982f2e4389dcd4ee64580f60a`. Codex unico writer. Questa eccezione software è separata dal gate documentale Task3 e non autorizza Task4 o prove REAL.
+
+**Allowlist esatta:** `backend/app/swing_research/contracts.py`, `backend/app/swing_research/universe.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_contracts.py`, `tests/test_swing_research_universe.py`, `tests/test_swing_research_registry.py`, `tests/test_swing_research_datasets.py`, questa pagina e `PROGRAMMA-OPERATIVO.md`. Spec, rapporto Task3, altri moduli e runner globale invariati.
+
+- [x] RED: domicilio estero/nullo/assente non deve escludere common stock con listing primario ammesso; policy precedente non deve essere riutilizzata come scelta B.
+- [x] GREEN: domicilio opzionale come solo metadato legacy, record originali immutati; filtri di classe/listing/valuta, liquidità, copertura e causalità invariati.
+- [x] Policy versionata e nuovi hash; manifest/registry precedenti rifiutati senza riscritture o migrazioni automatiche, N14 e sei diagnostici invariati.
+- [x] Mirati contracts/universe/datasets/registry/boundaries, suite backend offline completa, Ruff/pip/scanner con self-test, scope/diff e review.
+- [x] Aggiornare programma e prossimo passo, commit/push con gate SHA del solo branch task. Task3 resta BLOCCATO/G_SWING_FEAS INSUFFICIENTE; nessun merge o acquisizione.
+
+**Commit:** `fix: align swing research universe with approved listing rule`.
+**Note di ripresa:** presa in carico sulla base pubblicata/pulita e main originale/remoto `6c32bfa` preservato. Chiavi, dati reali e holdout non accessibili in questo incarico; sole fixture sintetiche e percorsi temporanei isolati.
+
+**Esito del raccordo:** RED previsto 25 fallimenti; GREEN finale **210/210 mirati** (33.77 s), **2763/2763 backend offline** (1183.07 s), zero failure/error/skip e tentativi di rete inattesi, due self-test intenzionali della guardia bloccati. Ruff backend/scripts/tests e pip check PASS; scanner9/self-test8 zero candidati inattesi, 17 link locali, scope/diff e review root senza rilievi bloccanti PASS. I sette hash software/test sono invariati durante i gate. Evidenze fuori Git in `C:/Users/izzod/.codex/visualizations/2026/10/13/01a133e6-50e2-77e2-9d48-90799c3e1852/sp3s-listing-rule-verification`; il primo tentativo dei gate finali respinto per argomenti PowerShell prima della raccolta non conta come prova. Frontend invariato: build non eseguita, nessuna dipendenza scaricata.
+
+**Compatibilità:** policy swing-policy-v2, nuovi policy/config/experiment hash e N14 invariato; i vecchi manifest/registry non vengono reinterpretati o riscritti. Per la scelta B serve una nuova preregistrazione in output separato, conservando la storia precedente. Domicilio legacy estero/nullo/omesso consentito; i payload originali conservano byte e hash. Nessuna modifica alle altre regole o alla spec.
+
+**Prossimo passo:** Task3 resta BLOCCATO/G_SWING_FEAS INSUFFICIENTE per prove dati mancanti; definire il pacchetto minimo del censimento/casi OTC sul solo 2016–2023. Nessuna acquisizione o esecuzione del censimento autorizzata da questa chiusura. Push/gate SHA sul solo branch Task3 sono verifiche post-commit; nessun merge, credenziale, ordine, paper, spesa o accesso DB reale/holdout.
 
 ## Task 4 — Feature e tre famiglie congelate
 

@@ -207,3 +207,29 @@ def action_record(kind="SPLIT", **changes):
         available_ns=utc_ns("2020-01-02T14:00:00Z"),
         data=data | changes,
     )
+
+LEGACY_POLICY_HASH = "f7a17fb800577f7bb32b25d4e8384e17acdeb6fb4bbedcb36754b617ae8ee57a"
+LEGACY_EXPERIMENT_HASH = "f2ca727c96449b2a6ae395bad89cf220c60028049537d9856a167316be9b4be8"
+
+
+def legacy_manifest():
+    """Reconstruct the synthetic Task1 policy, preserving its published fingerprint."""
+    value = manifest().to_dict()
+    policy = value["policy"]
+    policy["version"] = "swing-policy-v1"
+    policy["universe"] = {
+        key: item
+        for key, item in policy["universe"].items()
+        if key not in {"security_type", "primary", "venues", "currency"}
+    } | {"domicile": "USA"}
+    old_hash = canonical_hash(policy)
+    for config in value["grid"]:
+        config["policy_hash"] = old_hash
+    return value
+
+
+def listing_record_without_domicile(key="L000", **changes):
+    record = listing_record(key, **changes)
+    data = record.data
+    del data["domicile"]
+    return type(record).from_dict(record.to_dict() | {"data": data})

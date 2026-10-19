@@ -180,10 +180,10 @@ class ResourceLimits:
 
 @dataclass(frozen=True)
 class Policy:
-    version: str = "swing-policy-v1"
+    version: str = "swing-policy-v2"
 
     def __post_init__(self):
-        if type(self.version) is not str or self.version != "swing-policy-v1":
+        if type(self.version) is not str or self.version != "swing-policy-v2":
             raise SwingError("INVALID_CONTRACT")
 
     def to_dict(self) -> dict:
@@ -218,7 +218,10 @@ class Policy:
             "settlement": "USA_T_PLUS_1_COUNTERFACTUAL_2026",
             "universe": {
                 "monthly_asof": True,
-                "domicile": "USA",
+                "security_type": "COMMON_STOCK",
+                "primary": True,
+                "venues": ["NYSE", "NASDAQ", "NYSE_AMERICAN"],
+                "currency": "USD",
                 "price_min_usd": "5",
                 "warmup": 252,
                 "adv_sessions": 20,
@@ -413,7 +416,7 @@ class ResearchManifest:
             raise SwingError("INVALID_CONTRACT") from None
 
 
-# Additive local packet types. The published Task1 policy and hashes are unchanged.
+# Local packet formats are unchanged; the approved listing rule has its own policy version.
 DATA_KINDS = ("ACTION", "BENCHMARK", "DAILY", "FX", "GAP", "IDENTITY", "MINUTE", "SESSION")
 
 

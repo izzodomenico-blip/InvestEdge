@@ -5,9 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from swing_research_fixtures import manifest, registry, request
+from swing_research_fixtures import LEGACY_EXPERIMENT_HASH, legacy_manifest, manifest, registry, request
 
-from backend.app.swing_research.contracts import SwingError, canonical_hash
+from backend.app.swing_research.contracts import SwingError, canonical_hash, canonical_json
 
 
 def register(r):
@@ -343,3 +343,32 @@ def test_marker_initialisation_stale_size_cannot_write_before_lock(tmp_path, mon
     assert not waiting.is_alive() and not holding.is_alive()
     assert not errors
     assert results == ["REGISTRY_BUSY"]
+
+
+def test_legacy_policy_registry_is_rejected_without_rewriting_history(tmp_path):
+    r = registry(tmp_path)
+    old_manifest = legacy_manifest()
+    assert canonical_hash(old_manifest) == LEGACY_EXPERIMENT_HASH
+    record = {
+        "seq": 0,
+        "previous": "0" * 64,
+        "request_id": request("legacy-register"),
+        "now_ns": 1,
+        "operation": "REGISTER",
+        "payload": {"manifest": old_manifest, "experiment_hash": canonical_hash(old_manifest)},
+    }
+    record["hash"] = canonical_hash(record)
+    raw = (canonical_json(record) + "\n").encode("utf-8")
+    path = tmp_path / "registry" / "0000000000.json"
+    path.write_bytes(raw)
+    operations = [
+        r.snapshot,
+        lambda: r.register(manifest(), request_id=request("new-policy"), now_ns=2),
+        lambda: move(r, "STARTED", "EXECUTION_STARTED"),
+    ]
+    for operation in operations:
+        with pytest.raises(SwingError, match="^REGISTRY_INTEGRITY$"):
+            operation()
+        assert path.read_bytes() == raw
+        assert list((tmp_path / "registry").glob("*.json")) == [path]
+        assert not list((tmp_path / "registry").glob(".pending-*"))
