@@ -286,3 +286,60 @@ def test_clock_cannot_regress_when_starting_another_trial(tmp_path):
         r.transition(
             manifest().grid[1].config_hash, "STARTED", "EXECUTION_STARTED", request_id=request("old"), now_ns=4
         )
+
+
+def test_marker_initialisation_stale_size_cannot_write_before_lock(tmp_path, monkeypatch):
+    """A stale empty-file observation must still acquire the OS lock first."""
+    import threading
+
+    import backend.app.swing_research.registry as module
+
+    r = registry(tmp_path)
+    original_stat = module.os.fstat
+    ready = threading.Event()
+    owner_locked = threading.Event()
+    waiter_done = threading.Event()
+    stale = []
+    errors = []
+    results = []
+
+    def controlled_stat(fd):
+        if threading.current_thread().name == "sp3s-init-waiter":
+            if not stale:
+                stale.append(original_stat(fd))
+                assert stale[0].st_size == 0
+                ready.set()
+                assert owner_locked.wait(5)
+            return stale[0]
+        return original_stat(fd)
+
+    def waiter():
+        try:
+            with r._lock():
+                results.append("UNEXPECTED_LOCK")
+        except SwingError as error:
+            results.append(error.code)
+        except BaseException as error:
+            errors.append(type(error).__name__)
+        finally:
+            waiter_done.set()
+
+    def owner():
+        try:
+            with r._lock():
+                owner_locked.set()
+                assert waiter_done.wait(5)
+        except BaseException as error:
+            errors.append(type(error).__name__)
+
+    monkeypatch.setattr(module.os, "fstat", controlled_stat)
+    waiting = threading.Thread(target=waiter, name="sp3s-init-waiter")
+    holding = threading.Thread(target=owner, name="sp3s-init-owner")
+    waiting.start()
+    assert ready.wait(5)
+    holding.start()
+    waiting.join(10)
+    holding.join(10)
+    assert not waiting.is_alive() and not holding.is_alive()
+    assert not errors
+    assert results == ["REGISTRY_BUSY"]

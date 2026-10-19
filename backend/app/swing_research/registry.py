@@ -137,8 +137,6 @@ class Registry:
             fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
             if not stat.S_ISREG(os.fstat(fd).st_mode) or os.fstat(fd).st_nlink != 1:
                 raise SwingError("REGISTRY_INTEGRITY")
-            if os.fstat(fd).st_size == 0:
-                os.write(fd, b"\0")
             os.lseek(fd, 0, os.SEEK_SET)
             try:
                 if os.name == "nt":
@@ -152,6 +150,8 @@ class Registry:
             except OSError:
                 raise SwingError("REGISTRY_BUSY") from None
             locked = True
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
             yield
         except OSError:
             raise SwingError("REGISTRY_WRITE_FAILED") from None

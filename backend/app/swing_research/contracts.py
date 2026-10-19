@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from decimal import Decimal
+from pathlib import PurePosixPath
 
 VERSION = "swing-research-v1"
 MAX_DOCUMENT_BYTES = 1_048_576
@@ -40,6 +44,11 @@ class SwingError(ValueError):
             "RESOURCE_LIMIT",
             "NOT_PREREGISTERED",
             "MANIFEST_MISMATCH",
+            "DATASET_INTEGRITY",
+            "DATASET_CHANGED",
+            "INSUFFICIENT_DATA",
+            "NON_IDONEO",
+            "HOLDOUT_SEALED",
         }
         self.code = code if code in codes else "INVALID_CONTRACT"
         super().__init__(self.code)
@@ -402,3 +411,309 @@ class ResearchManifest:
             return result
         except (KeyError, TypeError, ValueError, AttributeError):
             raise SwingError("INVALID_CONTRACT") from None
+
+
+# Additive local packet types. The published Task1 policy and hashes are unchanged.
+DATA_KINDS = ("ACTION", "BENCHMARK", "DAILY", "FX", "GAP", "IDENTITY", "MINUTE", "SESSION")
+
+
+def session_day(value: object) -> date:
+    try:
+        if type(value) is not str or re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+            raise ValueError
+        return date.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise SwingError("INVALID_CONTRACT") from None
+
+
+def identifier(value: object) -> None:
+    if type(value) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value) is None:
+        raise SwingError("INVALID_CONTRACT")
+
+
+def decimal_value(value: object, *, positive=False, nonnegative=False) -> Decimal:
+    if type(value) is not str or len(value) > 128 or re.fullmatch(r"-?(?:0|[1-9]\d*)(?:\.\d+)?", value) is None:
+        raise SwingError("INVALID_CONTRACT")
+    result = Decimal(value)
+    if positive and result <= 0 or nonnegative and result < 0:
+        raise SwingError("INVALID_CONTRACT")
+    return result
+
+
+def payload_fields(data: dict, expected: set[str]) -> None:
+    if type(data) is not dict or set(data) != expected:
+        raise SwingError("INVALID_CONTRACT")
+
+
+@dataclass(frozen=True)
+class DataRecord:
+    """Effective session/grain and monotonic source revision, with explicit availability.
+
+    For CAPTURED records acquired_ns is first receipt; HISTORICAL_CURRENT exports
+    cannot use the modeled past availability to claim capture or STRICT_PIT.
+    """
+
+    kind: str
+    key: str
+    session: str
+    event_ns: int
+    available_ns: int
+    acquired_ns: int
+    version: int
+    availability: str
+    data_json: str
+
+    def __post_init__(self):
+        if type(self.kind) is not str or self.kind not in DATA_KINDS:
+            raise SwingError("INVALID_CONTRACT")
+        identifier(self.key)
+        session_day(self.session)
+        for value in (self.event_ns, self.available_ns, self.acquired_ns):
+            integer(value)
+        integer(self.version, positive=True)
+        if self.availability not in ("PROVEN", "MODELED") or type(self.availability) is not str:
+            raise SwingError("INVALID_CONTRACT")
+        if canonical_json(parse_object(self.data_json)) != self.data_json:
+            raise SwingError("INVALID_CONTRACT")
+
+    @property
+    def data(self) -> dict:
+        return parse_object(self.data_json)
+
+    @property
+    def grain(self) -> tuple:
+        return (*self.logical_key, self.version)
+
+    @property
+    def logical_key(self) -> tuple:
+        return self.session, self.key, self.event_ns if self.kind in ("MINUTE", "FX", "GAP") else 0
+
+    def to_dict(self) -> dict:
+        return {name: value for name, value in asdict(self).items() if name != "data_json"} | {"data": self.data}
+
+    @property
+    def record_hash(self) -> str:
+        return canonical_hash(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, value: dict) -> DataRecord:
+        try:
+            expected = {
+                "kind",
+                "key",
+                "session",
+                "event_ns",
+                "available_ns",
+                "acquired_ns",
+                "version",
+                "availability",
+                "data",
+            }
+            payload_fields(value, expected)
+            return cls(
+                **{key: item for key, item in value.items() if key != "data"}, data_json=canonical_json(value["data"])
+            )
+        except (ValueError, TypeError, KeyError):
+            raise SwingError("INVALID_CONTRACT") from None
+
+
+@dataclass(frozen=True)
+class Partition:
+    kind: str
+    path: str
+    sha256: str
+    rows: int
+    bytes: int
+    first_session: str
+    last_session: str
+
+    def __post_init__(self):
+        if type(self.kind) is not str or self.kind not in DATA_KINDS or type(self.path) is not str:
+            raise SwingError("INVALID_CONTRACT")
+        path = PurePosixPath(self.path)
+        forbidden = {"con", "prn", "aux", "nul"} | {f"{prefix}{i}" for prefix in ("com", "lpt") for i in range(1, 10)}
+        if (
+            path.is_absolute()
+            or path.as_posix() != self.path
+            or not self.path.endswith(".ndjson")
+            or "\\" in self.path
+            or any(
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", part) is None
+                or part.rstrip(". ") != part
+                or part.split(".")[0].casefold() in forbidden
+                for part in path.parts
+            )
+            or any(part.casefold() in {".git", ".env", "investedge.db"} for part in path.parts)
+        ):
+            raise SwingError("INVALID_PATH")
+        digest(self.sha256)
+        integer(self.rows, positive=True)
+        integer(self.bytes, positive=True)
+        if session_day(self.first_session) > session_day(self.last_session):
+            raise SwingError("INVALID_CONTRACT")
+
+
+def supersedes(candidate: DataRecord, previous: DataRecord | None) -> bool:
+    """Call only after availability filtering; a delayed old version never wins."""
+    if previous is None:
+        return True
+    if candidate.version == previous.version and candidate.record_hash != previous.record_hash:
+        raise SwingError("DATASET_INTEGRITY")
+    return candidate.version > previous.version
+
+
+@dataclass(frozen=True)
+class OpaqueHoldout:
+    sha256: str
+    rows: int
+    bytes: int
+    first_session: str
+    last_session: str
+
+    def __post_init__(self):
+        digest(self.sha256)
+        integer(self.rows, positive=True)
+        integer(self.bytes, positive=True)
+        if (self.first_session, self.last_session) != ("2024-01-02", "2026-09-30"):
+            raise SwingError("INVALID_CONTRACT")
+
+
+@dataclass(frozen=True)
+class DataGap:
+    kind: str
+    key: str
+    first_session: str
+    last_session: str
+    state: str
+
+    def __post_init__(self):
+        identifier(self.key)
+        if self.kind not in DATA_KINDS or self.state not in ("MISSING", "NO_TRADES", "HALT"):
+            raise SwingError("INVALID_CONTRACT")
+        if session_day(self.first_session) > session_day(self.last_session):
+            raise SwingError("INVALID_CONTRACT")
+
+
+@dataclass(frozen=True)
+class DatasetManifest:
+    context: DataContext
+    source_id: str
+    rights: str
+    rights_hash: str | None
+    currency: str
+    calendar_hash: str
+    universe_basis: str
+    price_basis: str
+    availability: str
+    acquired_ns: int
+    partitions: tuple[Partition, ...]
+    gaps: tuple[DataGap, ...]
+    expected_daily_rows: int
+    coverage_hash: str | None
+    holdout: OpaqueHoldout
+
+    def __post_init__(self):
+        if type(self.context) is not DataContext or type(self.holdout) is not OpaqueHoldout:
+            raise SwingError("INVALID_CONTRACT")
+        identifier(self.source_id)
+        digest(self.calendar_hash)
+        for value in (self.rights_hash, self.coverage_hash):
+            if value is not None:
+                digest(value)
+        integer(self.acquired_ns)
+        integer(self.expected_daily_rows)
+        if (
+            self.rights not in ("ALLOWED", "UNKNOWN", "INCOMPATIBLE", "SYNTHETIC")
+            or self.currency != "USD"
+            or self.universe_basis not in ("ASOF", "CURRENT", "SURVIVORS", "UNKNOWN")
+            or self.price_basis not in ("RAW", "SPLIT_ADJUSTED", "TOTAL_RETURN", "UNKNOWN")
+            or self.availability not in ("PROVEN", "MODELED")
+            or type(self.partitions) is not tuple
+            or not self.partitions
+            or any(type(p) is not Partition for p in self.partitions)
+            or type(self.gaps) is not tuple
+            or any(type(g) is not DataGap for g in self.gaps)
+        ):
+            raise SwingError("INVALID_CONTRACT")
+        if self.rights == "SYNTHETIC" and self.context.data_mode != "SYNTHETIC":
+            raise SwingError("INVALID_NAMESPACE")
+        if len({part.path for part in self.partitions}) != len(self.partitions) or self.partitions != tuple(
+            sorted(self.partitions, key=lambda p: (p.kind, p.first_session, p.path))
+        ):
+            raise SwingError("INVALID_CONTRACT")
+        if any(part.kind != "SESSION" and part.last_session >= self.holdout.first_session for part in self.partitions):
+            raise SwingError("HOLDOUT_SEALED")
+        if any(gap.kind != "SESSION" and gap.last_session >= self.holdout.first_session for gap in self.gaps):
+            raise SwingError("HOLDOUT_SEALED")
+        canonical_json(self.to_dict())
+
+    def to_dict(self) -> dict:
+        return {"version": "swing-dataset-v1"} | asdict(self)
+
+    @property
+    def dataset_hash(self) -> str:
+        return canonical_hash(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, value: dict) -> DatasetManifest:
+        try:
+            result = cls(
+                **{
+                    key: item
+                    for key, item in value.items()
+                    if key not in {"version", "context", "partitions", "gaps", "holdout"}
+                },
+                context=DataContext(**value["context"]),
+                partitions=tuple(Partition(**part) for part in value["partitions"]),
+                gaps=tuple(DataGap(**gap) for gap in value["gaps"]),
+                holdout=OpaqueHoldout(**value["holdout"]),
+            )
+            if canonical_json(value) != canonical_json(result.to_dict()):
+                raise SwingError("INVALID_CONTRACT")
+            return result
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise SwingError("INVALID_CONTRACT") from None
+
+
+def resident_bytes() -> int:
+    """Observable process RSS, no implicit clock or application services."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD)] + [
+                (name, ctypes.c_size_t)
+                for name in (
+                    "peak",
+                    "working",
+                    "paged_peak",
+                    "paged",
+                    "nonpaged_peak",
+                    "nonpaged",
+                    "pagefile",
+                    "pagefile_peak",
+                )
+            ]
+
+        counters = Counters()
+        counters.cb = ctypes.sizeof(counters)
+        try:
+            function = ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo
+            function.argtypes = (wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD)
+            function.restype = wintypes.BOOL
+            if not function(wintypes.HANDLE(-1), ctypes.byref(counters), counters.cb):
+                raise OSError
+            return counters.working
+        except OSError:
+            raise SwingError("RESOURCE_LIMIT") from None
+    import resource
+
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+
+
+def working_budget(resources: ResourceLimits, retained_bytes: int = 0) -> None:
+    if type(resources) is not ResourceLimits:
+        raise SwingError("INVALID_CONTRACT")
+    if retained_bytes > resources.max_rss_bytes or resident_bytes() > resources.max_rss_bytes:
+        raise SwingError("RESOURCE_LIMIT")

@@ -1,6 +1,6 @@
 # InvestEdge — piano SP3s: laboratorio swing USA offline
 
-**Stato: APPROVATO dall’utente il 2026-10-18. Task0 FATTO documentale; Task1 FATTO per incarico esplicito successivo, Codex unico writer; Task2–10 NON INIZIATI.** Regole/soglie/campione della spec invariati. Task1 consegnato con TDD offline, review e commit/push; nessun merge main.
+**Stato: APPROVATO dall’utente il 2026-10-18. Task0–2 FATTI; Task2 chiuso il 2026-10-19, Codex unico writer; Task3–10 NON INIZIATI.** Spec/regole/soglie/campione invariati. Task2 autorizza TDD offline, review, programma, commit/push; nessun merge main.
 
 Spec: [SP3s swing 5/21 sedute, H=1 diagnostico](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
 
@@ -68,13 +68,17 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 **Nuovi:** `datasets.py`, `universe.py`, `calendar.py`, `events.py`; `tests/test_swing_research_datasets.py`, `tests/test_swing_research_universe.py`, `tests/test_swing_research_events.py`. **Modificabili:** `contracts.py`, `tests/swing_research_fixtures.py`, `tests/test_swing_research_boundaries.py` soltanto per raccordi necessari del contratto approvato.
 
-- [ ] RED: lista corrente TR/asset catalog al posto di as-of, sopravvissuti selezionati, ticker riutilizzato, disponibilità futura, Stooq UNKNOWN trattato come total return, duplicati incoerenti, barra/FX/azione futura usata al cutoff.
-- [ ] Reader locale read-only/streaming e quality report §3: grain/feed/diritti, hash/count, copertura e denominatori; universo mensile ADV20/prezzo 5/252 sedute/top 500, tie stabile, nessuna esclusione opportunistica.
-- [ ] GREEN con IPO/delistato/merger/rename/split/dividendo e recupero mancante; l’assenza genera insufficienza e non liquidazione a prezzo inventato. Corporate action e prezzo/volume coerenti; cassa a pay-date, nessun doppio total return.
-- [ ] Calendario/FX a cutoff, DST e half-day; manifest con metadati holdout opachi, reader senza accesso a esiti non autorizzati. Letture a batch 10.000/8MiB e risorse fail-closed; nessun download.
-- [ ] Mirati dataset/universe/events + registry/boundaries e regressioni SP1 series; gate comune. G_SWING_DATA REAL resta NON VALUTATO in assenza di pacchetto idoneo. Prossimo Task3: gate documentale G_SWING_FEAS; vietato saltarlo per iniziare feature/simulazione.
+- [x] RED: lista corrente TR/asset catalog al posto di as-of, sopravvissuti selezionati, ticker riutilizzato, disponibilità futura, Stooq UNKNOWN trattato come total return, duplicati incoerenti, barra/FX/azione futura usata al cutoff.
+- [x] Reader locale read-only/streaming e quality report §3: grain/feed/diritti, hash/count, copertura e denominatori; universo mensile ADV20/prezzo 5/252 sedute/top 500, tie stabile, nessuna esclusione opportunistica.
+- [x] GREEN con IPO/delistato/merger/rename/split/dividendo e recupero mancante; l’assenza genera insufficienza e non liquidazione a prezzo inventato. Corporate action e prezzo/volume coerenti; cassa a pay-date, nessun doppio total return.
+- [x] Calendario/FX a cutoff, DST e half-day; manifest con metadati holdout opachi, reader senza accesso a esiti non autorizzati. Letture a batch 10.000/8MiB e risorse fail-closed; nessun download.
+- [x] Mirati dataset/universe/events + registry/boundaries e regressioni SP1 series; gate comune. G_SWING_DATA REAL resta NON VALUTATO in assenza di pacchetto idoneo. Prossimo Task3: gate documentale G_SWING_FEAS; vietato saltarlo per iniziare feature/simulazione.
+
+**Estensione allowlist approvata dall’utente il 2026-10-19:** soli `backend/app/swing_research/registry.py` e `tests/test_swing_research_registry.py`, per la race Task1 di inizializzazione marker. Scrittura del byte dopo il lock OS e regressione deterministica; nessuna modifica di soglie, policy, griglia o aspettative.
 
 **Commit:** `feat: validate offline swing datasets and as-of universes`.
+
+**Note di ripresa Task2 (2026-10-19):** base Task1 `67196403d9f71dc13ee1f77d06f769258985a859` pubblicata/verificata; lock Task2 pubblicato. FATTO software offline: 175/175 mirati (32.48 s), 2728/2728 backend (1121.22 s), zero fallimenti/errori/skip/rete inattesa, due self-test intenzionali bloccati nel completo. RED/GREEN per moduli assenti, revisioni tardive, identità/copertura, calendario/cutoff, risorse, valuta degli eventi e race marker Task1 (estensione esplicitamente approvata). Ruff backend/scripts/tests, pip check, scanner14/self-test zero candidati inattesi, 15 link locali, scope/diff e review root PASS; hash dei 12 file codice/test identici prima/dopo il completo. Batch 10.000/8MiB e soglie universo invariati; prove in `sp3s-task2-verification/full-approved-final-v2.xml` e ricevute fuori Git. Esecuzioni interrotte per fix escluse dai PASS. Nessun pacchetto REAL/holdout letto, nessuna modifica spec, download, DB reale o merge. Push/gate SHA verifiche post-commit. Prima del Task3: proporre/approvare separatamente custode/attestazione strutturale holdout senza rendimenti, poi beta del benchmark, una domanda alla volta. Task3–10 NON INIZIATI; G_SWING_FEAS attuale INSUFFICIENTE e G_SWING_DATA REAL NON VALUTATO.
 
 ## Task 3 — Fattibilità dati, prima delle strategie
 

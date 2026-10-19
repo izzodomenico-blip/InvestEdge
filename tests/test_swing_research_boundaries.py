@@ -18,6 +18,10 @@ import sys
 from pathlib import Path
 import backend.app.swing_research.contracts
 import backend.app.swing_research.registry
+import backend.app.swing_research.datasets
+import backend.app.swing_research.calendar
+import backend.app.swing_research.universe
+import backend.app.swing_research.events
 assert not any(x in sys.modules for x in ['sqlite3','dotenv','backend.app.config','backend.app.database','backend.app.lab','backend.app.intraday','backend.app.intraday_research'])
 """
     subprocess.run([sys.executable, "-c", script], cwd=PACKAGE.parents[2], check=True, capture_output=True)
@@ -37,6 +41,26 @@ def test_static_imports_are_stdlib_or_same_package():
             else:
                 continue
             assert all(name in sys.stdlib_module_names or name == "__future__" for name in names)
+
+
+@pytest.mark.parametrize("value", [r"\\synthetic.invalid\share\input", r"\\?\C:\synthetic-input", "relative-input"])
+def test_dataset_roots_reject_remote_device_and_relative_before_probe(tmp_path, monkeypatch, value):
+    from swing_research_fixtures import data_record, local_packet
+
+    from backend.app.swing_research.contracts import ResourceLimits
+    from backend.app.swing_research.datasets import Dataset
+
+    _, packet = local_packet(tmp_path, [data_record()])
+    original = Path.is_symlink
+
+    def forbidden(path):
+        if str(path).startswith("\\\\"):
+            pytest.fail("remote root was probed")
+        return original(path)
+
+    monkeypatch.setattr(Path, "is_symlink", forbidden)
+    with pytest.raises(SwingError, match="^INVALID_PATH$"):
+        Dataset(value, packet, expected_hash=packet.dataset_hash, resources=ResourceLimits(8_388_608))
 
 
 @pytest.mark.parametrize("kind", ["same", "nested", "reverse", "traversal", "relative", "database"])
