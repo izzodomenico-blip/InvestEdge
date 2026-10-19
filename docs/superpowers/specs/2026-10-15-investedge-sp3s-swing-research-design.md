@@ -10,7 +10,7 @@ Riferimenti: [programma](../../../PROGRAMMA-OPERATIVO.md), [inventario verificat
 
 | Area | Decisione esplicita acquisita |
 |---|---|
-| Mercato | Sole azioni liquide USA. Universo storico as-of, incluse quelle poi delistate; liquidità fissata ex ante. Lista corrente TR solo per operatività futura. Europa/ETF come eventuali studi separati |
+| Mercato | Common stock con listing primario USA, esclusi ADR; nessun filtro sul domicilio dell’emittente (scelta B approvata il 2026-10-19, §3.2). Universo storico as-of, incluse quelle poi delistate; gli altri filtri e le soglie restano invariati. Lista corrente TR solo per operatività futura. Europa/ETF come eventuali studi separati |
 | Capitale | 10.000 EUR di riferimento; nessun movimento di denaro |
 | Esecuzione | TR manuale dell’utente; Best Price e Direct Price confrontati separatamente |
 | Finestra | Sempre da 45 a 10 minuti prima della chiusura USA, inclusi DST e chiusure anticipate. Normalmente 21:15–21:50 Europe/Rome, 20:15–20:50 nelle settimane disallineate |
@@ -53,7 +53,7 @@ Reader streaming, massimo 10.000 righe o 8 MiB decodificati per batch, limite pi
 
 ### 3.2 Universo as-of approvato
 
-Al primo giorno di ogni mese, prima del segnale, determinare eleggibilità sul precedente close disponibile. Common stock di emittenti USA, listing primario NYSE/Nasdaq/NYSE American, USD; escludere ETF/fondi, ADR, preferred, warrant, unit e veicoli a leva mediante classificazione storica verificabile. Il criterio “emittenti USA” richiede inoltre domicilio storico dell’emittente con intervallo di validità e fonte, distinto da valuta, borsa di listing o luogo d’incorporazione non equivalente. Non si amplia silenziosamente a qualsiasi emittente con listing USA. Domicilio o classificazione mancanti sono lacune di G_SWING_FEAS/G_SWING_DATA, non titoli arbitrariamente scartabili.
+Al primo giorno di ogni mese, prima del segnale, determinare eleggibilità sul precedente close disponibile. Common stock con listing primario NYSE/Nasdaq/NYSE American, USD; escludere ETF/fondi, ADR, preferred, warrant, unit e veicoli a leva mediante classificazione storica verificabile. **Scelta B approvata dall’utente il 2026-10-19:** nessun filtro sul domicilio dell’emittente e nessun requisito di ricostruzione del suo domicilio storico. Sono ammesse anche common stock di emittenti esteri con listing primario USA, esclusi ADR; gli altri filtri e le soglie restano invariati. Classificazione o listing primario mancanti sono lacune di G_SWING_FEAS/G_SWING_DATA, non titoli arbitrariamente scartabili.
 
 Regole congelate: prezzo raw dell’ultima seduta almeno 5 USD; almeno 252 sedute precedenti valide dopo quotazione; ADV20 in USD almeno 20 milioni, calcolato come media dei 20 controvalori `raw_close × raw_volume` precedenti, senza volume del giorno del segnale. Fra gli eleggibili, primi 500 per ADV20, tie su identità stabile. Nessuna lista odierna TR/S&P500/Alpaca sostituisce l’anagrafica storica. La soglia di 252 sedute esclude IPO recenti per una regola stabilita prima dei test, non perché poi fallite.
 
@@ -79,7 +79,7 @@ Prima dei nuovi Task4–9 (già Task3–8) serve il Task3 documentale G_SWING_FE
 |---|---|---|
 | Calendario e regolamento | Tutte le sedute 2016–2026-09-30, open/close UTC/NY, half-day, chiusure straordinarie, giorni settlement, versione/hash | Calendari ufficiali NYSE; calendario applicabile al listing e regolamento non inferiti da lunedì–venerdì |
 | Universo e identità | ID emittente/classe/listing, ticker valid_from/to, IPO/delisting, venue/valuta primaria, membership as-of anche dei poi delistati | Catalogo corrente Alpaca non prova universo storico completo; nessuna fonte gratuita completa già dimostrata |
-| Classificazione/domicilio | Common stock vs ADR/preferred/fondo/unit/leva, domicilio USA storico con fonte/date, inclusi titoli inattivi | Filing storici SEC possono supportare singoli attributi, non sono automaticamente un catalogo di tutte le azioni/delistati; incorporazione non sostituisce domicilio |
+| Classificazione | Common stock vs ADR/preferred/fondo/unit/leva con fonte/date, inclusi titoli inattivi; listing primario USA secondo §3.2, senza filtro sul domicilio | Filing storici SEC possono supportare singoli attributi, non sono automaticamente un catalogo di tutte le azioni/delistati né una prova completa del listing primario storico |
 | Daily raw e liquidità | OHLCV/valuta/feed, warm-up252, ADV20 e filtro nominale, chiavi/grain univoci, rettifiche/versioni/lacune | Alpaca storico candidato; Stooq UNKNOWN non attesta rettifiche o corporate action |
 | Minuti e stop | Prezzo entro5m dal cutoff C−55, copertura C−55…C−10 e tutte le ore RTH delle posizioni potenziali, volume SIP, halt/reopen e missingness distinguibili | Basic permette storico SIP arretrato, realtime IEX è parziale; prezzi/minuti e diritti completi del pacchetto non verificati |
 | Corporate action/uscite | Split/rename/spin-off/merger, ex/pay-date e cash/azioni, recuperi/prezzi terminali, tempi di disponibilità | Corporate action Alpaca con ritardi dichiarati; OTC è riservato a speciale abbonamento broker partner, quindi non presumere recuperi gratuiti completi |
