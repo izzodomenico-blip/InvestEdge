@@ -1,6 +1,6 @@
 # InvestEdge — piano SP3s: laboratorio swing USA offline
 
-**Stato: APPROVATO dall’utente il 2026-10-18, con custode holdout e beta IS approvati separatamente il 2026-10-19. Task0–2 FATTI; Task3–10 NON INIZIATI.** Checkpoint solo documentale sul branch Task2; soglie/griglia/campione/costi invariati. Nessun nuovo codice, esecuzione REAL o merge main.
+**Stato: APPROVATO dall’utente il 2026-10-18, con custode holdout e beta IS approvati separatamente il 2026-10-19. Task0–2 FATTI; Task3 BLOCCATO: G_SWING_FEAS INSUFFICIENTE per prove dati mancanti, rapporto documentale prodotto il 2026-10-19; Task4–10 NON INIZIATI.** Solo gate documentale di fattibilità, soglie/griglia/campione/costi invariati. Nessun codice, accesso DB reale/holdout, raccolta live o merge main.
 
 Spec: [SP3s swing 5/21 sedute, H=1 diagnostico](../specs/2026-10-15-investedge-sp3s-swing-research-design.md). Stato unico: [PROGRAMMA-OPERATIVO](../../../PROGRAMMA-OPERATIVO.md). Inventario: [SP1 e fonti](../../reports/2026-10-15-swing-sp1-inventory.md).
 
@@ -92,17 +92,21 @@ Commit della proposta: `docs: propose SP3s swing research specification and plan
 
 ## Task 3 — Fattibilità dati, prima delle strategie
 
-**Branch:** `investedge/sp3s-task-3`. **Base:** origin/investedge/sp3s-task-2 con checkpoint documentale approvato. **Dipendenze:** Task2 FATTO; spec/piano e decisioni custode/beta approvati il 2026-10-19. Task documentale, nessun codice; avvio solo su incarico esplicito successivo.
+**Branch:** `investedge/sp3s-task-3`. **Base:** origin/investedge/sp3s-task-2 `24907e5619c9afb489e13f9dfd160b3cb41e743e`. **Dipendenze:** Task2 FATTO; spec/piano e decisioni custode/beta approvati il 2026-10-19. **Owner:** Codex, incarico esplicito Task3 acquisito il 2026-10-19. Task documentale, nessun codice o accesso al holdout.
 
 **Nuovo:** `docs/reports/sp3s-swing-data-feasibility-gate.md`; aggiornamenti di stato in piano/programma. Input/prove del pacchetto fuori Git, nessuna chiave o dato sensibile nei documenti.
 
-- [ ] Inventario per ogni campo della spec §3.4 sull’intero campione: anagrafica as-of/delistati, classi e domicilio storico, raw daily/minuti SIP/cutoff/stop RTH, eventi/recuperi terminali, FX/benchmark, calendario e settlement, diritti/costi e risorse.
-- [ ] Identificare fonti candidate e prove effettivamente fornite; Basic richiede una chiave eventualmente configurata solo dall’utente per un suo export, non dagli agenti. Nessuna API/download o spesa del writer. Il fatto che una fonte sia configurabile non dimostra il pacchetto.
+- [x] Inventario per ogni campo della spec §3.4 sull’intero campione: anagrafica as-of/delistati, classi e domicilio storico, raw daily/minuti SIP/cutoff/stop RTH, eventi/recuperi terminali, FX/benchmark, calendario e settlement, diritti/costi e risorse.
+- [x] Identificare fonti candidate e prove effettivamente fornite; Basic richiede una chiave eventualmente configurata solo dall’utente per un suo export, non dagli agenti. Nessuna API/download o spesa del writer. Il fatto che una fonte sia configurabile non dimostra il pacchetto.
 - [ ] PASS G_SWING_FEAS soltanto con copertura documentata di ogni requisito, dati locali non-holdout verificabili e attestazione strutturale del custode utente secondo spec §3.5: versione/hash verificatore e input, conteggi aggregati/denominatori/copertura/codici, fonti/diritti e conferma digest; nessun path, titolo, membership, prezzo, rendimento, segnale o esito. Log/errori con gli stessi divieti. Verificatore mancante o non verificabile -> INSUFFICIENTE, proposta software separata prima di implementarlo; il Task3 non scrive/esegue script né legge holdout. Fattibilità non sostituisce G_SWING_DATA finale.
-- [ ] Assenza, diritto non dimostrato, recuperi non osservati, sole liste correnti, domicilio ignoto o budget non attestato -> INSUFFICIENTE; eventuale provenienza incompatibile -> NON_IDONEO. Registrare costo/azione eventualmente richiesti all’utente senza attivarli. Non reinterpretare la lista TR corrente o eliminare i delistati per passare.
-- [ ] Review/link/scope/scanner/diff e programma. Se INSUFFICIENTE, Task3 BLOCCATO e **Task4–9 non partono**, senza proclamare completato tutto il software prima di verificare i dati. Nessuna modifica silenziosa delle soglie o del campione.
+- [x] Assenza, diritto non dimostrato, recuperi non osservati, sole liste correnti, domicilio ignoto o budget non attestato -> INSUFFICIENTE; eventuale provenienza incompatibile -> NON_IDONEO. Registrare costo/azione eventualmente richiesti all’utente senza attivarli. Non reinterpretare la lista TR corrente o eliminare i delistati per passare.
+- [x] Review/link/scope/scanner/diff e programma. Se INSUFFICIENTE, Task3 BLOCCATO e **Task4–9 non partono**, senza proclamare completato tutto il software prima di verificare i dati. Nessuna modifica silenziosa delle soglie o del campione.
 
 **Commit:** `docs: gate swing data feasibility before strategy implementation`.
+
+**Esito Task3 (2026-10-19): BLOCCATO, G_SWING_FEAS INSUFFICIENTE.** [Rapporto documentale](../../reports/sp3s-swing-data-feasibility-gate.md) prodotto con nove aree di prova non dimostrate: nessun pacchetto idoneo/diritti/copertura/risorse o attestazione forniti. Le fonti pubbliche candidate non sostituiscono i dati locali. La checkbox di PASS resta aperta; inventario/fonti/esito/review documentali eseguiti non rendono FATTO il task. Nessuna modifica alla spec o codice; nessun accesso a DB reale/holdout. Task4–9 non partono. Ripresa soltanto sulle prove elencate nel rapporto, senza recuperi automatici, spesa o soglie ridotte.
+
+**Verifica documentale fresca:** `verify_documents.py --final` 86/86 PASS, 21 link locali, scanner3/self-test8 zero candidati inattesi, scope/diff e review root del rapporto PASS. Spec e tutti gli altri task invariati. Nessuna suite software o verifica del pacchetto/holdout eseguita; prove in `sp3s-task3-verification`. G_SWING_FEAS resta INSUFFICIENTE e Task3 BLOCCATO.
 
 ## Task 4 — Feature e tre famiglie congelate
 
